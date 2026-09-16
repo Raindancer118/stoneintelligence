@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: intelligence-worker
+
+  datasource:
+    url: ${STONEINTELLIGENCE_DB_URL:jdbc:postgresql://localhost:5432/stoneintelligence}
+    username: ${STONEINTELLIGENCE_DB_USER:stoneintelligence}
+    password: ${STONEINTELLIGENCE_DB_PASSWORD:}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+
+  flyway:
+    schemas: worker
+    default-schema: worker
+    locations: classpath:db/migration/worker
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    root: INFO

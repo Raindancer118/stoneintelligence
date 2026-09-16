@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: mcp-adapter
+
+stoneintelligence:
+  platform-api:
+    base-url: ${STONEINTELLIGENCE_PLATFORM_API_URL:http://localhost:8080}
+  intelligence-worker:
+    base-url: ${STONEINTELLIGENCE_INTELLIGENCE_WORKER_URL:http://localhost:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    root: INFO

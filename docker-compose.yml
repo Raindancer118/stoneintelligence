@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: stoneintelligence
+      POSTGRES_USER: ${STONEINTELLIGENCE_DB_USER:-stoneintelligence}
+      POSTGRES_PASSWORD: ${STONEINTELLIGENCE_DB_PASSWORD:?set STONEINTELLIGENCE_DB_PASSWORD}
+    volumes:
+      - stoneintelligence-postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  platform-api:
+    build:
+      context: .
+      dockerfile: platform-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      STONEINTELLIGENCE_DB_URL: jdbc:postgresql://postgres:5432/stoneintelligence
+      STONEINTELLIGENCE_DB_USER: ${STONEINTELLIGENCE_DB_USER:-stoneintelligence}
+      STONEINTELLIGENCE_DB_PASSWORD: ${STONEINTELLIGENCE_DB_PASSWORD:?set STONEINTELLIGENCE_DB_PASSWORD}
+      STONEINTELLIGENCE_OIDC_ISSUER_URI: ${STONEINTELLIGENCE_OIDC_ISSUER_URI:-}
+    ports:
+      - "8080:8080"
+
+  intelligence-worker:
+    build:
+      context: .
+      dockerfile: intelligence-worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      STONEINTELLIGENCE_DB_URL: jdbc:postgresql://postgres:5432/stoneintelligence
+      STONEINTELLIGENCE_DB_USER: ${STONEINTELLIGENCE_DB_USER:-stoneintelligence}
+      STONEINTELLIGENCE_DB_PASSWORD: ${STONEINTELLIGENCE_DB_PASSWORD:?set STONEINTELLIGENCE_DB_PASSWORD}
+    ports:
+      - "8081:8081"
+
+  mcp-adapter:
+    build:
+      context: .
+      dockerfile: mcp-adapter/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - platform-api
+      - intelligence-worker
+    environment:
+      STONEINTELLIGENCE_PLATFORM_API_URL: http://platform-api:8080
+      STONEINTELLIGENCE_INTELLIGENCE_WORKER_URL: http://intelligence-worker:8081
+    ports:
+      - "8082:8082"
+
+volumes:
+  stoneintelligence-postgres:

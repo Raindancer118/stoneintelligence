@@ -1,0 +1,36 @@
+spring:
+  application:
+    name: platform-api
+
+  datasource:
+    url: ${STONEINTELLIGENCE_DB_URL:jdbc:postgresql://localhost:5432/stoneintelligence}
+    username: ${STONEINTELLIGENCE_DB_USER:stoneintelligence}
+    password: ${STONEINTELLIGENCE_DB_PASSWORD:}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+
+  flyway:
+    schemas: platform
+    default-schema: platform
+    locations: classpath:db/migration/platform
+
+# OIDC-Anbindung (Authentik) ist Gegenstand von Phase 3 (Identity & Authorization, s. Plan.md
+# Abschnitt 6). Die konkrete spring.security.oauth2.*-Konfiguration wird dort ergaenzt, sobald
+# Issuer/Client-Registrierung feststehen - ein leerer/ungueltiger Registrierungs-Block wuerde
+# den Spring-Kontext schon beim Start scheitern lassen, deshalb bewusst noch nicht hier.
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    root: INFO
