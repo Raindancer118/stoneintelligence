@@ -65,8 +65,8 @@ class PlatformSchemaMigrationIT {
                 statement.execute(("INSERT INTO platform.note_snapshots (note_id, server_sequence, state) "
                     + "VALUES ('%s', 1, decode('00', 'hex'))").formatted(noteId));
                 statement.execute(("INSERT INTO platform.note_tombstones "
-                    + "(vault_id, note_id, operation_id, deleted_by) VALUES ('%s', '%s', gen_random_uuid(), 'tom')")
-                    .formatted(vaultId, UUID.randomUUID()));
+                    + "(vault_id, note_id, operation_id, deleted_by) VALUES ('%s', '%s', 'op-%s', 'tom')")
+                    .formatted(vaultId, UUID.randomUUID(), UUID.randomUUID()));
                 statement.execute(("INSERT INTO platform.audit_events (vault_id, note_id, actor, action) "
                     + "VALUES ('%s', '%s', 'tom', 'note.created')").formatted(vaultId, noteId));
 

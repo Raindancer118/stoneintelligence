@@ -63,7 +63,7 @@ CREATE TABLE platform.note_tombstones (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     vault_id        uuid NOT NULL REFERENCES platform.vaults(id) ON DELETE CASCADE,
     note_id         uuid NOT NULL,
-    operation_id    uuid NOT NULL,
+    operation_id    text NOT NULL,
     server_sequence bigserial NOT NULL,
     deleted_by      text NOT NULL,
     deleted_at      timestamptz NOT NULL DEFAULT now(),
