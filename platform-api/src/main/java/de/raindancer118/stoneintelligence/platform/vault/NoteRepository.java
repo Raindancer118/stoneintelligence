@@ -15,6 +15,9 @@ public interface NoteRepository {
 
     Optional<Note> findById(NoteId id);
 
+    /** Umbenennen/Verschieben aendert nur den Pfad - die {@link NoteId} bleibt stabil (Fehlerklasse 5). */
+    Note rename(VaultId vaultId, NoteId noteId, String newPath);
+
     /**
      * Keyset-paginierte Vault-Reconciliation (Fehlerklasse 2). {@code cursorToken} ist der
      * Wert aus {@link ReconciliationPage#nextCursor()} der vorherigen Seite, oder {@code null}

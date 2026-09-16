@@ -9,6 +9,7 @@ import de.raindancer118.stoneintelligence.platform.sync.relay.SyncRelayService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -67,6 +68,16 @@ public class NoteController {
             page.notes().stream().map(NoteResponse::from).toList());
     }
 
+    @PatchMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
+    public NoteResponse rename(
+        @PathVariable String vaultId,
+        @PathVariable String noteId,
+        @RequestBody RenameNoteRequest request
+    ) {
+        var note = notes.rename(VaultId.of(vaultId), NoteId.of(noteId), request.path());
+        return NoteResponse.from(note);
+    }
+
     @DeleteMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
     public TombstoneResponse delete(
         @PathVariable String vaultId,
@@ -82,6 +93,9 @@ public class NoteController {
     }
 
     public record CreateNoteRequest(String path, int noteLevel) {
+    }
+
+    public record RenameNoteRequest(String path) {
     }
 
     public record NoteResponse(String id, String vaultId, String path, int noteLevel, String createdBy, Instant createdAt) {

@@ -32,6 +32,18 @@ public final class FakeNoteRepository implements NoteRepository {
     }
 
     @Override
+    public synchronized Note rename(VaultId vaultId, NoteId noteId, String newPath) {
+        var existing = notes.get(noteId);
+        if (existing == null) {
+            throw new IllegalArgumentException("no such note: " + noteId);
+        }
+        var renamed = new Note(existing.id(), existing.vaultId(), newPath, existing.level(),
+            existing.createdBy(), existing.createdAt());
+        notes.put(noteId, renamed);
+        return renamed;
+    }
+
+    @Override
     public synchronized ReconciliationPage list(VaultId vaultId, String cursorToken, int pageSize) {
         var cursor = ReconciliationCursor.decode(cursorToken);
         var epochId = cursor.map(ReconciliationCursor::epochId).orElseGet(UUID::randomUUID);

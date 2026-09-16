@@ -1,6 +1,7 @@
 package de.raindancer118.stoneintelligence.platform.sync.relay;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import de.raindancer118.stoneintelligence.domain.id.NoteId;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
@@ -10,11 +11,16 @@ import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 
 /**
  * Duenner Adapter zwischen Spring-WebSocket und {@link SyncRelayService}. Yjs-Updates sind
- * binaer, deshalb {@link BinaryWebSocketHandler} statt Text - der Server parst den Inhalt nicht
- * ("dummer Server").
+ * binaer, deshalb {@link BinaryWebSocketHandler} statt Text - der Server parst den
+ * Yjs-Dokumentinhalt nicht ("dummer Server"), muss aber zwischen Dokument-Updates und
+ * Awareness-/Cursor-Nachrichten unterscheiden (erstes Byte = Nachrichtentyp), da nur Erstere
+ * persistiert werden duerfen.
  */
 @Component
 public class SyncWebSocketHandler extends BinaryWebSocketHandler {
+
+    public static final byte MESSAGE_TYPE_DOC_UPDATE = 0;
+    public static final byte MESSAGE_TYPE_AWARENESS = 1;
 
     private final SyncRelayService relay;
 
@@ -29,10 +35,22 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
 
     @Override
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
-        var payload = new byte[message.getPayloadLength()];
-        message.getPayload().get(payload);
-        var ciphertext = isCiphertextNote(session);
-        relay.onUpdate(noteIdOf(session), new WebSocketSyncSession(session), payload, ciphertext);
+        var raw = new byte[message.getPayloadLength()];
+        message.getPayload().get(raw);
+        if (raw.length == 0) {
+            return;
+        }
+
+        var messageType = raw[0];
+        var payload = Arrays.copyOfRange(raw, 1, raw.length);
+        var syncSession = new WebSocketSyncSession(session);
+        var noteId = noteIdOf(session);
+
+        if (messageType == MESSAGE_TYPE_AWARENESS) {
+            relay.onAwarenessUpdate(noteId, syncSession, payload);
+        } else {
+            relay.onUpdate(noteId, syncSession, payload, isCiphertextNote(session));
+        }
     }
 
     @Override
@@ -50,7 +68,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         return false;
     }
 
-    /** Wrappt eine Spring-{@link WebSocketSession} als {@link SyncSession}. */
+    /** Wrappt eine Spring-{@link WebSocketSession} als {@link SyncSession}, fuegt die Typ-Byte-Framing hinzu. */
     private record WebSocketSyncSession(WebSocketSession session) implements SyncSession {
 
         @Override
@@ -59,9 +77,22 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         }
 
         @Override
-        public void sendUpdate(byte[] payload) {
+        public void sendDocUpdate(byte[] payload) {
+            send(MESSAGE_TYPE_DOC_UPDATE, payload);
+        }
+
+        @Override
+        public void sendAwarenessUpdate(byte[] payload) {
+            send(MESSAGE_TYPE_AWARENESS, payload);
+        }
+
+        private void send(byte messageType, byte[] payload) {
+            var framed = ByteBuffer.allocate(1 + payload.length);
+            framed.put(messageType);
+            framed.put(payload);
+            framed.flip();
             try {
-                session.sendMessage(new BinaryMessage(ByteBuffer.wrap(payload)));
+                session.sendMessage(new BinaryMessage(framed));
             } catch (java.io.IOException e) {
                 throw new SyncSessionSendException(session.getId(), e);
             }

@@ -3,11 +3,8 @@ package de.raindancer118.stoneintelligence.platform.sync.ticket;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Base64;
-import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import de.raindancer118.stoneintelligence.domain.id.NoteId;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
 
@@ -16,47 +13,33 @@ import de.raindancer118.stoneintelligence.domain.id.VaultId;
  * Muster aus stonesync): der Obsidian-WS-Client kann keine Custom-Header senden, das Ticket wird
  * deshalb ueber die Query-Zeichenkette beim Handshake uebergeben.
  *
- * <p>Bewusst In-Memory (ConcurrentHashMap), keine DB-Tabelle: Tickets leben Sekunden, nicht
- * Tage - ein Neustart des Prozesses waehrend eines Handshakes ist ein akzeptabler Sonderfall.
- * Bei Mehr-Instanz-Betrieb (mehrere platform-api-Prozesse hinter einem Load Balancer) muss dieser
- * Store durch einen geteilten (z. B. Redis) ersetzt werden - das ist ein dokumentierter
- * Folgeschritt, kein Blocker fuer den vertikalen Sync-Slice.
+ * <p>Persistenz ist ueber {@link TicketStore} ausgelagert: Produktion nutzt
+ * {@link JdbcTicketStore} (Mehr-Instanz-faehig, mehrere platform-api-Prozesse teilen sich den
+ * Store), Tests koennen {@link InMemoryTicketStore} verwenden.
  */
 public class TicketService {
 
     private final Clock clock;
     private final Duration ttl;
-    private final Map<String, SyncTicket> store = new ConcurrentHashMap<>();
+    private final TicketStore store;
     private final SecureRandom random = new SecureRandom();
 
-    public TicketService(Clock clock, Duration ttl) {
+    public TicketService(Clock clock, Duration ttl, TicketStore store) {
         this.clock = clock;
         this.ttl = ttl;
+        this.store = store;
     }
 
     public SyncTicket issue(VaultId vaultId, NoteId noteId, String actor) {
-        evictExpired();
-
         var now = clock.instant();
         var ticket = new SyncTicket(newToken(), vaultId, noteId, actor, now, now.plus(ttl));
-        store.put(ticket.token(), ticket);
+        store.put(ticket);
         return ticket;
     }
 
     public Optional<TicketClaims> redeem(String token) {
-        var ticket = store.remove(token);
-        if (ticket == null) {
-            return Optional.empty();
-        }
-        if (clock.instant().isAfter(ticket.expiresAt())) {
-            return Optional.empty();
-        }
-        return Optional.of(new TicketClaims(ticket.vaultId(), ticket.noteId(), ticket.actor()));
-    }
-
-    private void evictExpired() {
-        var now = clock.instant();
-        store.values().removeIf(ticket -> now.isAfter(ticket.expiresAt()));
+        return store.takeIfValid(token, clock.instant())
+            .map(ticket -> new TicketClaims(ticket.vaultId(), ticket.noteId(), ticket.actor()));
     }
 
     private String newToken() {

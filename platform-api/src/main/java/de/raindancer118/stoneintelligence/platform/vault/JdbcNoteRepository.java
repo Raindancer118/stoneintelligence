@@ -64,6 +64,16 @@ public class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
+    public Note rename(VaultId vaultId, NoteId noteId, String newPath) {
+        jdbcClient.sql("UPDATE platform.notes SET path = :path WHERE id = :id AND vault_id = :vaultId")
+            .param("path", newPath)
+            .param("id", noteId.value())
+            .param("vaultId", vaultId.value())
+            .update();
+        return findById(noteId).orElseThrow(() -> new IllegalArgumentException("no such note: " + noteId));
+    }
+
+    @Override
     public ReconciliationPage list(VaultId vaultId, String cursorToken, int pageSize) {
         var cursor = ReconciliationCursor.decode(cursorToken);
         var epochId = cursor.map(ReconciliationCursor::epochId).orElseGet(UUID::randomUUID);

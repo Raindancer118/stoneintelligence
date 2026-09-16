@@ -28,10 +28,10 @@ public class SyncRoomRegistry {
         });
     }
 
-    public void broadcastExcept(NoteId noteId, SyncSession sender, byte[] payload) {
+    public void broadcastExcept(NoteId noteId, SyncSession sender, java.util.function.Consumer<SyncSession> action) {
         for (var session : rooms.getOrDefault(noteId, Set.of())) {
             if (!session.id().equals(sender.id())) {
-                session.sendUpdate(payload);
+                action.accept(session);
             }
         }
     }

@@ -140,4 +140,42 @@ public abstract class NoteRepositoryContractTest {
             assertThat(secondTombstone.serverSequence()).isGreaterThan(firstTombstone.serverSequence());
         }
     }
+
+    @Nested
+    class Rename {
+
+        @Test
+        void should_updatePath_when_renamed() {
+            var repository = repository();
+            var vaultId = VaultId.newId();
+            var note = repository.create(vaultId, "old.md", NoteLevel.of(1), "tom");
+
+            var renamed = repository.rename(vaultId, note.id(), "new.md");
+
+            assertThat(renamed.path()).isEqualTo("new.md");
+            assertThat(repository.findById(note.id())).contains(renamed);
+        }
+
+        @Test
+        void should_beReflectedInReconciliationListing_when_renamed() {
+            var repository = repository();
+            var vaultId = VaultId.newId();
+            var note = repository.create(vaultId, "old.md", NoteLevel.of(1), "tom");
+
+            repository.rename(vaultId, note.id(), "new.md");
+
+            assertThat(repository.list(vaultId, null, 10).notes()).extracting(Note::path).containsExactly("new.md");
+        }
+
+        @Test
+        void should_preserveNoteId_when_renamed() {
+            var repository = repository();
+            var vaultId = VaultId.newId();
+            var note = repository.create(vaultId, "old.md", NoteLevel.of(1), "tom");
+
+            var renamed = repository.rename(vaultId, note.id(), "new.md");
+
+            assertThat(renamed.id()).isEqualTo(note.id());
+        }
+    }
 }

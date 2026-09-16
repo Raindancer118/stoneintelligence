@@ -25,7 +25,7 @@ class TicketServiceTest {
     private final Instant now = Instant.parse("2026-09-20T10:00:00Z");
 
     private TicketService serviceAt(Instant instant) {
-        return new TicketService(new MutableClock(instant, ZoneOffset.UTC), TTL);
+        return new TicketService(new MutableClock(instant, ZoneOffset.UTC), TTL, new InMemoryTicketStore());
     }
 
     @Nested
@@ -79,7 +79,7 @@ class TicketServiceTest {
         @Test
         void should_returnEmpty_when_ticketExpired() {
             var clock = new MutableClock(now, ZoneOffset.UTC);
-            var service = new TicketService(clock, TTL);
+            var service = new TicketService(clock, TTL, new InMemoryTicketStore());
             var ticket = service.issue(VAULT_ID, NOTE_ID, "tom");
 
             clock.advanceTo(now.plus(TTL).plusSeconds(1));

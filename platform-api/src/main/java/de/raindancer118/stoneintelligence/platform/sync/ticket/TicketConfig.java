@@ -17,8 +17,9 @@ public class TicketConfig {
     @Bean
     public TicketService ticketService(
         Clock systemClock,
+        TicketStore ticketStore,
         @Value("${stoneintelligence.sync.ticket-ttl-seconds:30}") long ticketTtlSeconds
     ) {
-        return new TicketService(systemClock, Duration.ofSeconds(ticketTtlSeconds));
+        return new TicketService(systemClock, Duration.ofSeconds(ticketTtlSeconds), ticketStore);
     }
 }

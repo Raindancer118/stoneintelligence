@@ -26,14 +26,23 @@ public class SyncRelayService {
     public void onJoin(NoteId noteId, SyncSession session) {
         registry.join(noteId, session);
         for (var update : snapshotStore.listSince(noteId, 0)) {
-            session.sendUpdate(update.payload());
+            session.sendDocUpdate(update.payload());
         }
     }
 
-    /** Eingehendes Yjs-Update: persistieren, dann an alle anderen Sessions im Room verteilen. */
+    /** Eingehendes Yjs-Dokument-Update: persistieren, dann an alle anderen Sessions im Room verteilen. */
     public void onUpdate(NoteId noteId, SyncSession sender, byte[] payload, boolean ciphertext) {
         snapshotStore.append(noteId, payload, ciphertext);
-        registry.broadcastExcept(noteId, sender, payload);
+        registry.broadcastExcept(noteId, sender, session -> session.sendDocUpdate(payload));
+    }
+
+    /**
+     * Eingehende Awareness-/Cursor-Nachricht (Anforderungen.md: "Über Websocket-Verbindungen
+     * sollen die Cursor anderer Nutzer live sichtbar sein"): NUR weiterleiten, NIE persistieren
+     * - das waere kein Dokument-Zustand, sondern ephemere Praesenz-Information.
+     */
+    public void onAwarenessUpdate(NoteId noteId, SyncSession sender, byte[] payload) {
+        registry.broadcastExcept(noteId, sender, session -> session.sendAwarenessUpdate(payload));
     }
 
     public void onLeave(NoteId noteId, SyncSession session) {

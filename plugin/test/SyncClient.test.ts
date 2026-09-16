@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { SyncClient, type WebSocketLike } from "../src/sync/SyncClient";
 
+const MESSAGE_TYPE_DOC_UPDATE = 0;
+const MESSAGE_TYPE_AWARENESS = 1;
+
+function framed(type: number, payload: Uint8Array): ArrayBuffer {
+  const buffer = new Uint8Array(1 + payload.length);
+  buffer[0] = type;
+  buffer.set(payload, 1);
+  return buffer.buffer;
+}
+
+function messageType(buffer: ArrayBuffer): number {
+  return new Uint8Array(buffer)[0];
+}
+
 /** Minimaler In-Memory-WebSocket-Fake: zwei Instanzen, ueber ein gemeinsames Array verbunden. */
 class FakeWebSocket implements WebSocketLike {
   binaryType = "";
@@ -31,54 +45,96 @@ class FakeWebSocket implements WebSocketLike {
 }
 
 describe("SyncClient", () => {
-  it("should_applyIncomingBinaryMessage_toItsYDoc", () => {
-    const socket = new FakeWebSocket();
-    const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
-    client.connect();
+  describe("document updates", () => {
+    it("should_applyIncomingDocUpdateMessage_toItsYDoc", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      client.connect();
 
-    const sourceDoc = new Y.Doc();
-    sourceDoc.getText("content").insert(0, "hello");
-    const update = Y.encodeStateAsUpdate(sourceDoc);
+      const sourceDoc = new Y.Doc();
+      sourceDoc.getText("content").insert(0, "hello");
+      const update = Y.encodeStateAsUpdate(sourceDoc);
 
-    socket.onmessage?.({ data: update.buffer as ArrayBuffer } as MessageEvent);
+      socket.onmessage?.({ data: framed(MESSAGE_TYPE_DOC_UPDATE, update) } as MessageEvent);
 
-    expect(client.doc.getText("content").toString()).toBe("hello");
+      expect(client.doc.getText("content").toString()).toBe("hello");
+    });
+
+    it("should_notEchoBack_when_applyingAnIncomingDocUpdate", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      client.connect();
+
+      const sourceDoc = new Y.Doc();
+      sourceDoc.getText("content").insert(0, "hello");
+      const update = Y.encodeStateAsUpdate(sourceDoc);
+
+      socket.onmessage?.({ data: framed(MESSAGE_TYPE_DOC_UPDATE, update) } as MessageEvent);
+
+      expect(socket.sent).toHaveLength(0);
+    });
+
+    it("should_sendLocalDocChanges_withDocUpdateTypeByte", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      client.connect();
+
+      client.doc.getText("content").insert(0, "local edit");
+
+      expect(socket.sent).toHaveLength(1);
+      expect(messageType(socket.sent[0])).toBe(MESSAGE_TYPE_DOC_UPDATE);
+    });
+
+    it("should_convergeToSameState_when_twoClientsEditConcurrentlyOverAFakeNetwork", () => {
+      const [socketA, socketB] = FakeWebSocket.pair();
+      const clientA = new SyncClient("wss://example.invalid/ws/sync", () => socketA);
+      const clientB = new SyncClient("wss://example.invalid/ws/sync", () => socketB);
+      clientA.connect();
+      clientB.connect();
+
+      clientA.doc.getText("content").insert(0, "from-a ");
+      clientB.doc.getText("content").insert(0, "from-b ");
+
+      expect(clientA.doc.getText("content").toString()).toBe(clientB.doc.getText("content").toString());
+    });
   });
 
-  it("should_notEchoBack_when_applyingAnIncomingUpdate", () => {
-    const socket = new FakeWebSocket();
-    const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
-    client.connect();
+  describe("awareness (cursor presence)", () => {
+    it("should_sendAwarenessTypeByte_when_localAwarenessStateChanges", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      client.connect();
 
-    const sourceDoc = new Y.Doc();
-    sourceDoc.getText("content").insert(0, "hello");
-    const update = Y.encodeStateAsUpdate(sourceDoc);
+      client.awareness.setLocalStateField("cursor", { pos: 42 });
 
-    socket.onmessage?.({ data: update.buffer as ArrayBuffer } as MessageEvent);
+      expect(socket.sent).toHaveLength(1);
+      expect(messageType(socket.sent[0])).toBe(MESSAGE_TYPE_AWARENESS);
+    });
 
-    expect(socket.sent).toHaveLength(0);
-  });
+    it("should_propagateCursorPosition_toAConnectedPeer_overAFakeNetwork", () => {
+      const [socketA, socketB] = FakeWebSocket.pair();
+      const clientA = new SyncClient("wss://example.invalid/ws/sync", () => socketA);
+      const clientB = new SyncClient("wss://example.invalid/ws/sync", () => socketB);
+      clientA.connect();
+      clientB.connect();
 
-  it("should_sendLocalDocChanges_overTheSocket", () => {
-    const socket = new FakeWebSocket();
-    const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
-    client.connect();
+      clientA.awareness.setLocalStateField("cursor", { pos: 42 });
 
-    client.doc.getText("content").insert(0, "local edit");
+      const remoteState = clientB.awareness.getStates().get(clientA.doc.clientID);
+      expect(remoteState?.cursor).toEqual({ pos: 42 });
+    });
 
-    expect(socket.sent).toHaveLength(1);
-  });
+    it("should_notAffectDocContent_when_onlyAwarenessChanges", () => {
+      const [socketA, socketB] = FakeWebSocket.pair();
+      const clientA = new SyncClient("wss://example.invalid/ws/sync", () => socketA);
+      const clientB = new SyncClient("wss://example.invalid/ws/sync", () => socketB);
+      clientA.connect();
+      clientB.connect();
+      clientA.doc.getText("content").insert(0, "hello");
 
-  it("should_convergeToSameState_when_twoClientsEditConcurrentlyOverAFakeNetwork", () => {
-    const [socketA, socketB] = FakeWebSocket.pair();
-    const clientA = new SyncClient("wss://example.invalid/ws/sync", () => socketA);
-    const clientB = new SyncClient("wss://example.invalid/ws/sync", () => socketB);
-    clientA.connect();
-    clientB.connect();
+      clientA.awareness.setLocalStateField("cursor", { pos: 3 });
 
-    clientA.doc.getText("content").insert(0, "from-a ");
-    clientB.doc.getText("content").insert(0, "from-b ");
-
-    expect(clientA.doc.getText("content").toString()).toBe(clientB.doc.getText("content").toString());
+      expect(clientB.doc.getText("content").toString()).toBe("hello");
+    });
   });
 });

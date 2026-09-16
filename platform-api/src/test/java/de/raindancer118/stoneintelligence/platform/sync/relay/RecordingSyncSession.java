@@ -6,7 +6,8 @@ import java.util.List;
 final class RecordingSyncSession implements SyncSession {
 
     private final String id;
-    final List<byte[]> received = new ArrayList<>();
+    final List<byte[]> receivedDocUpdates = new ArrayList<>();
+    final List<byte[]> receivedAwarenessUpdates = new ArrayList<>();
     Integer closedWithCode;
     String closedWithReason;
 
@@ -20,8 +21,13 @@ final class RecordingSyncSession implements SyncSession {
     }
 
     @Override
-    public void sendUpdate(byte[] payload) {
-        received.add(payload);
+    public void sendDocUpdate(byte[] payload) {
+        receivedDocUpdates.add(payload);
+    }
+
+    @Override
+    public void sendAwarenessUpdate(byte[] payload) {
+        receivedAwarenessUpdates.add(payload);
     }
 
     @Override

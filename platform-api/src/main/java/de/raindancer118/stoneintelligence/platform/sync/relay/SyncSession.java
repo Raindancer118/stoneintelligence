@@ -9,7 +9,15 @@ public interface SyncSession {
 
     String id();
 
-    void sendUpdate(byte[] payload);
+    /** Ein persistiertes Yjs-Dokument-Update (wird als Snapshot gespeichert, bevor es rausgeht). */
+    void sendDocUpdate(byte[] payload);
+
+    /**
+     * Eine ephemere Awareness-/Cursor-Nachricht (Yjs Awareness-Protokoll) - wird NIEMALS
+     * persistiert, nur an aktuell verbundene Sessions weitergereicht. Vermischen mit dem
+     * Dokument-Update-Log wuerde dessen Reihenfolge/Semantik korrumpieren.
+     */
+    void sendAwarenessUpdate(byte[] payload);
 
     void close(int code, String reason);
 }

@@ -30,8 +30,8 @@ class SyncRelayServiceTest {
 
             relay.onUpdate(noteId, sender, bytes("update-1"), false);
 
-            assertThat(other.received).containsExactly(bytes("update-1"));
-            assertThat(sender.received).isEmpty();
+            assertThat(other.receivedDocUpdates).containsExactly(bytes("update-1"));
+            assertThat(sender.receivedDocUpdates).isEmpty();
         }
 
         @Test
@@ -44,7 +44,50 @@ class SyncRelayServiceTest {
 
             relay.onUpdate(noteId, sessionOnThisNote, bytes("update"), false);
 
-            assertThat(sessionOnOtherNote.received).isEmpty();
+            assertThat(sessionOnOtherNote.receivedDocUpdates).isEmpty();
+        }
+    }
+
+    @Nested
+    class AwarenessBroadcast {
+
+        @Test
+        void should_deliverAwarenessUpdateToOthers_butNotBackToSender_when_onAwarenessUpdateCalled() {
+            var sender = new RecordingSyncSession("sender");
+            var other = new RecordingSyncSession("other");
+            relay.onJoin(noteId, sender);
+            relay.onJoin(noteId, other);
+
+            relay.onAwarenessUpdate(noteId, sender, bytes("cursor-at-42"));
+
+            assertThat(other.receivedAwarenessUpdates).containsExactly(bytes("cursor-at-42"));
+            assertThat(sender.receivedAwarenessUpdates).isEmpty();
+        }
+
+        @Test
+        void should_notPersistAwarenessUpdates_when_broadcasting() {
+            var sender = new RecordingSyncSession("sender");
+            var other = new RecordingSyncSession("other");
+            relay.onJoin(noteId, sender);
+            relay.onJoin(noteId, other);
+
+            relay.onAwarenessUpdate(noteId, sender, bytes("cursor-at-42"));
+
+            assertThat(snapshotStore.listSince(noteId, 0)).isEmpty();
+        }
+
+        @Test
+        void should_notMixAwarenessIntoLateJoinerDocUpdateCatchup_when_bothOccurred() {
+            var early = new RecordingSyncSession("early");
+            relay.onJoin(noteId, early);
+            relay.onUpdate(noteId, early, bytes("doc-update"), false);
+            relay.onAwarenessUpdate(noteId, early, bytes("cursor-at-42"));
+
+            var lateJoiner = new RecordingSyncSession("late");
+            relay.onJoin(noteId, lateJoiner);
+
+            assertThat(lateJoiner.receivedDocUpdates).containsExactly(bytes("doc-update"));
+            assertThat(lateJoiner.receivedAwarenessUpdates).isEmpty();
         }
     }
 
@@ -61,7 +104,7 @@ class SyncRelayServiceTest {
             var lateJoiner = new RecordingSyncSession("late");
             relay.onJoin(noteId, lateJoiner);
 
-            assertThat(lateJoiner.received).containsExactly(bytes("update-1"), bytes("update-2"));
+            assertThat(lateJoiner.receivedDocUpdates).containsExactly(bytes("update-1"), bytes("update-2"));
         }
     }
 
@@ -78,7 +121,7 @@ class SyncRelayServiceTest {
 
             relay.onUpdate(noteId, sender, bytes("update"), false);
 
-            assertThat(leaver.received).isEmpty();
+            assertThat(leaver.receivedDocUpdates).isEmpty();
         }
     }
 

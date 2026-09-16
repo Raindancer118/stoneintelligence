@@ -1,5 +1,9 @@
-import { Plugin, TFile } from "obsidian";
+import { Compartment } from "@codemirror/state";
+import type { EditorView } from "@codemirror/view";
+import { App, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
+import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
+import { NoteApiClient } from "./sync/NoteApiClient";
 import { OperationJournal } from "./sync/OperationJournal";
 import { SyncClient } from "./sync/SyncClient";
 import { TicketClient } from "./sync/TicketClient";
@@ -32,38 +36,55 @@ function hashContent(content: string): string {
   return (hash >>> 0).toString(16);
 }
 
-interface ActiveSync {
+interface NoteSyncSession {
   path: string;
   noteId: string;
   client: SyncClient;
   unbindDocObserver: () => void;
+  /**
+   * true, waehrend die aktive Notiz direkt per CodeMirror-6 (y-codemirror.next) an den Editor
+   * gebunden ist - dann uebernehmen yCollab + Obsidians eigenes Autosave die Persistenz
+   * zeichengenau, und der grobe Volltext-Bruecken-Pfad (text.observe -> vault.modify /
+   * vault.read -> Y.Text-Ersatz) wird fuer diesen Pfad ausgesetzt, um Doppelverarbeitung zu
+   * vermeiden.
+   */
+  hasLiveEditorBinding: boolean;
 }
 
 /**
- * MVP-Scope (Plan.md Abschnitt 6, Phase 2): synchronisiert die aktuell GEOEFFNETE Notiz
- * volltext-basiert (ganzer Dateiinhalt in einem Y.Text, kein CodeMirror-6-Live-Binding auf
- * Zeichenebene). Deckt NICHT die Anforderung "das ganze Vault soll aktuell gehalten werden,
- * nicht erst beim Oeffnen" ab - das ist ein dokumentierter Folgeschritt (Hintergrund-Sync aller
- * Notes), kein Teil dieses vertikalen Slices.
+ * Haelt das GESAMTE Vault synchron (nicht nur die geoeffnete Notiz, s. Project.md fuer die
+ * Historie dieser Entscheidung) - je Notiz eine eigene WebSocket-Verbindung/Y.Doc-Session.
+ * Fuer Hintergrund-Notes: Volltext-Sync (ganzer Dateiinhalt in einem Y.Text). Fuer die AKTIVE
+ * Notiz: echtes CodeMirror-6-Zeichen-Binding via y-codemirror.next (yCollab), inkl.
+ * Cursor-Presence ueber die geteilte Awareness-Instanz von {@link SyncClient}.
  */
 export default class StoneIntelligencePlugin extends Plugin {
   settings: StoneIntelligenceSettings = DEFAULT_SETTINGS;
   private readonly journal = new OperationJournal();
-  private activeSync: ActiveSync | null = null;
+  private readonly sessions = new Map<string, NoteSyncSession>();
+  private noteApiClient!: NoteApiClient;
+  private readonly liveBindingCompartment = new Compartment();
+  private liveBoundPath: string | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl, this.settings.actor);
+    this.addSettingTab(new StoneIntelligenceSettingTab(this.app, this));
 
+    this.registerEditorExtension([this.liveBindingCompartment.of([])]);
     this.registerEvent(
       this.app.workspace.on("file-open", (file) => {
-        if (file instanceof TFile && file.extension === "md") {
-          void this.syncActiveFile(file);
-        } else {
-          this.teardownActiveSync();
-        }
+        void this.updateLiveEditorBinding(file instanceof TFile && file.extension === "md" ? file : null);
       }),
     );
 
+    this.registerEvent(
+      this.app.vault.on("create", (file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          void this.startSync(file);
+        }
+      }),
+    );
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
         if (file instanceof TFile) {
@@ -71,14 +92,43 @@ export default class StoneIntelligencePlugin extends Plugin {
         }
       }),
     );
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
+        if (file instanceof TFile) {
+          void this.handleLocalDelete(file);
+        }
+      }),
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (file instanceof TFile) {
+          void this.handleLocalRename(file, oldPath);
+        }
+      }),
+    );
 
     this.registerInterval(
       window.setInterval(() => this.journal.evictOlderThan(5 * 60_000), 60_000) as unknown as number,
     );
+
+    this.app.workspace.onLayoutReady(() => {
+      void this.syncAllNotes();
+    });
   }
 
   onunload(): void {
-    this.teardownActiveSync();
+    for (const path of [...this.sessions.keys()]) {
+      this.stopSync(path);
+    }
+  }
+
+  private async syncAllNotes(): Promise<void> {
+    if (!this.settings.vaultId) {
+      return;
+    }
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      await this.startSync(file);
+    }
   }
 
   private async ensureNoteId(file: TFile): Promise<string> {
@@ -86,23 +136,16 @@ export default class StoneIntelligencePlugin extends Plugin {
     if (existing) {
       return existing;
     }
-
-    const response = await fetch(`${this.settings.platformApiUrl}/api/v1/vaults/${this.settings.vaultId}/notes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Actor": this.settings.actor },
-      body: JSON.stringify({ path: file.path, noteLevel: 1 }),
-    });
-    if (!response.ok) {
-      throw new Error(`failed to register note with platform-api: HTTP ${response.status}`);
-    }
-    const created = (await response.json()) as { id: string };
-    this.settings.noteIds[file.path] = created.id;
+    const noteId = await this.noteApiClient.createNote(this.settings.vaultId, file.path, 1);
+    this.settings.noteIds[file.path] = noteId;
     await this.saveSettings();
-    return created.id;
+    return noteId;
   }
 
-  private async syncActiveFile(file: TFile): Promise<void> {
-    this.teardownActiveSync();
+  private async startSync(file: TFile): Promise<void> {
+    if (this.sessions.has(file.path) || !this.settings.vaultId) {
+      return;
+    }
 
     const noteId = await this.ensureNoteId(file);
     const ticketClient = new TicketClient(this.settings.platformApiUrl, this.settings.actor);
@@ -117,19 +160,83 @@ export default class StoneIntelligencePlugin extends Plugin {
     const client = new SyncClient(wsUrl, (url) => new WebSocket(url), doc);
     client.connect();
 
+    const session: NoteSyncSession = {
+      path: file.path,
+      noteId,
+      client,
+      unbindDocObserver: () => text.unobserve(observer),
+      hasLiveEditorBinding: false,
+    };
+
     const observer = (): void => {
+      if (session.hasLiveEditorBinding) {
+        // yCollab haelt den Editor bereits zeichengenau synchron, Obsidians eigenes Autosave
+        // uebernimmt das Schreiben auf die Datei - der grobe Volltext-Pfad wuerde nur
+        // redundant/konfliktaer dieselbe Aenderung ein zweites Mal auf die Datei schreiben.
+        return;
+      }
       void this.applyRemoteContentToFile(file, text.toString());
     };
     text.observe(observer);
 
-    this.activeSync = { path: file.path, noteId, client, unbindDocObserver: () => text.unobserve(observer) };
+    this.sessions.set(file.path, session);
   }
 
-  private teardownActiveSync(): void {
-    if (this.activeSync) {
-      this.activeSync.unbindDocObserver();
-      this.activeSync.client.disconnect();
-      this.activeSync = null;
+  /**
+   * Bindet (oder loest) das echte CodeMirror-6-Live-Binding fuer die gerade geoeffnete Notiz.
+   * Hintergrund-Notes bleiben beim Volltext-Sync - nur der aktive Editor bekommt yCollab.
+   */
+  private async updateLiveEditorBinding(file: TFile | null): Promise<void> {
+    const view = this.activeEditorView();
+
+    if (this.liveBoundPath) {
+      const previous = this.sessions.get(this.liveBoundPath);
+      if (previous) {
+        previous.hasLiveEditorBinding = false;
+      }
+      this.liveBoundPath = null;
+    }
+
+    if (!view) {
+      return;
+    }
+    if (!file) {
+      view.dispatch({ effects: this.liveBindingCompartment.reconfigure([]) });
+      return;
+    }
+
+    await this.startSync(file);
+    const session = this.sessions.get(file.path);
+    if (!session) {
+      view.dispatch({ effects: this.liveBindingCompartment.reconfigure([]) });
+      return;
+    }
+
+    session.hasLiveEditorBinding = true;
+    this.liveBoundPath = file.path;
+    view.dispatch({
+      effects: this.liveBindingCompartment.reconfigure(
+        yCollab(session.client.doc.getText("content"), session.client.awareness),
+      ),
+    });
+  }
+
+  /**
+   * Obsidians `Editor`-Wrapper legt die zugrundeliegende CodeMirror-6-`EditorView` nicht in der
+   * offiziellen API offen - `editor.cm` ist der in der Community etablierte, aber inoffizielle
+   * Zugriffspfad (ueblich bei Plugins, die CM6-Extensions anbinden).
+   */
+  private activeEditorView(): EditorView | undefined {
+    const editor = this.app.workspace.activeEditor?.editor as unknown as { cm?: EditorView } | undefined;
+    return editor?.cm;
+  }
+
+  private stopSync(path: string): void {
+    const session = this.sessions.get(path);
+    if (session) {
+      session.unbindDocObserver();
+      session.client.disconnect();
+      this.sessions.delete(path);
     }
   }
 
@@ -143,7 +250,16 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   /** Fehlerklasse 1: unterscheidet die eigene, gerade zurueckgeschriebene Aenderung von echten Nutzeredits. */
   private async handleLocalModify(file: TFile): Promise<void> {
-    if (!this.activeSync || this.activeSync.path !== file.path) {
+    const session = this.sessions.get(file.path);
+    if (!session) {
+      // Neue oder bisher ungetrackte Datei (z. B. Plugin-Start nach der ersten Aenderung) -
+      // startSync liest den aktuellen Inhalt bereits ein, kein separater Merge noetig.
+      void this.startSync(file);
+      return;
+    }
+    if (session.hasLiveEditorBinding) {
+      // yCollab schreibt Tastatureingaben bereits direkt ins Y.Text - dieses modify-Event ist
+      // nur Obsidians eigenes Autosave, das denselben bereits synchronisierten Inhalt persistiert.
       return;
     }
 
@@ -153,14 +269,52 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
 
-    const text = this.activeSync.client.doc.getText("content");
+    const text = session.client.doc.getText("content");
     if (text.toString() === content) {
       return;
     }
-    this.activeSync.client.doc.transact(() => {
+    session.client.doc.transact(() => {
       text.delete(0, text.length);
       text.insert(0, content);
     });
+  }
+
+  private async handleLocalDelete(file: TFile): Promise<void> {
+    const noteId = this.settings.noteIds[file.path];
+    this.stopSync(file.path);
+    if (!noteId || !this.settings.vaultId) {
+      return;
+    }
+
+    const operationId = crypto.randomUUID();
+    await this.noteApiClient.deleteNote(this.settings.vaultId, noteId, operationId);
+    delete this.settings.noteIds[file.path];
+    await this.saveSettings();
+  }
+
+  private async handleLocalRename(file: TFile, oldPath: string): Promise<void> {
+    const noteId = this.settings.noteIds[oldPath];
+    if (!noteId || !this.settings.vaultId) {
+      // Datei war noch nicht getrackt (z. B. Umbenennung direkt nach App-Start, bevor der
+      // initiale Vault-Sync durchlief) - unter dem neuen Pfad frisch aufnehmen.
+      void this.startSync(file);
+      return;
+    }
+
+    const session = this.sessions.get(oldPath);
+    this.sessions.delete(oldPath);
+    delete this.settings.noteIds[oldPath];
+    this.settings.noteIds[file.path] = noteId;
+    await this.saveSettings();
+
+    if (session) {
+      // Dieselbe WebSocket-Verbindung/NoteId bleibt bestehen, nur der lokale Pfad-Schluessel
+      // aendert sich - kein Re-Connect noetig, die NoteId ist stabil (Fehlerklasse 5).
+      session.path = file.path;
+      this.sessions.set(file.path, session);
+    }
+
+    await this.noteApiClient.renameNote(this.settings.vaultId, noteId, file.path);
   }
 
   async loadSettings(): Promise<void> {
@@ -169,5 +323,59 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+    // ensures NoteApiClient und ggf. spaetere Reconnects den aktuellen Actor/BaseUrl nutzen.
+    this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl, this.settings.actor);
+  }
+}
+
+class StoneIntelligenceSettingTab extends PluginSettingTab {
+  constructor(
+    app: App,
+    private readonly plugin: StoneIntelligencePlugin,
+  ) {
+    super(app, plugin);
+  }
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl("h2", { text: "StoneIntelligence" });
+
+    new Setting(containerEl)
+      .setName("Platform API URL")
+      .setDesc("z. B. https://sync.example.com")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.platformApiUrl).onChange(async (value) => {
+          this.plugin.settings.platformApiUrl = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Platform WebSocket URL")
+      .setDesc("z. B. wss://sync.example.com")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.platformWsUrl).onChange(async (value) => {
+          this.plugin.settings.platformWsUrl = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl).setName("Vault-ID").addText((text) =>
+      text.setValue(this.plugin.settings.vaultId).onChange(async (value) => {
+        this.plugin.settings.vaultId = value;
+        await this.plugin.saveSettings();
+      }),
+    );
+
+    new Setting(containerEl)
+      .setName("Actor")
+      .setDesc("Provisorisch bis OIDC (Phase 3) - dein Anzeigename gegenueber dem Server.")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.actor).onChange(async (value) => {
+          this.plugin.settings.actor = value;
+          await this.plugin.saveSettings();
+        }),
+      );
   }
 }
