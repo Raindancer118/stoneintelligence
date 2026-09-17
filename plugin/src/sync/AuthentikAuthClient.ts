@@ -35,7 +35,11 @@ export const OIDC_REDIRECT_URI = `http://127.0.0.1:${OIDC_REDIRECT_PORT}/callbac
 export class AuthentikAuthClient {
   constructor(
     private readonly settings: OidcSettings,
-    private readonly fetchImpl: typeof fetch = fetch,
+    // Bewusst ein Wrapper, NICHT `= fetch`: als Klassenfeld gespeichert und ueber `this.fetchImpl(...)`
+    // aufgerufen, verliert das native fetch seinen erforderlichen `window`-Receiver
+    // ("Failed to execute 'fetch' on 'Window': Illegal invocation" - live im Plugin aufgetreten,
+    // kein Mock-Test faengt das, da Tests immer einen expliziten fetchImpl uebergeben).
+    private readonly fetchImpl: typeof fetch = (...args) => fetch(...args),
   ) {}
 
   static base64UrlEncode(bytes: Uint8Array): string {

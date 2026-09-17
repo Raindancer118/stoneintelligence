@@ -14,7 +14,7 @@ export class TicketClient {
   constructor(
     private readonly baseUrl: string,
     private readonly getAccessToken: AccessTokenProvider,
-    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly fetchImpl: typeof fetch = (...args) => fetch(...args),
   ) {}
 
   async issueTicket(vaultId: string, noteId: string): Promise<SyncTicket> {

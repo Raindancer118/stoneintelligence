@@ -11,7 +11,7 @@ export class NoteApiClient {
   constructor(
     private readonly baseUrl: string,
     private readonly getAccessToken: AccessTokenProvider,
-    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly fetchImpl: typeof fetch = (...args) => fetch(...args),
   ) {}
 
   /** Legt einen neuen Vault an; der anlegende Actor bekommt serverseitig automatisch volle Rechte darin. */
