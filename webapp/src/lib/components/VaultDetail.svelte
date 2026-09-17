@@ -237,8 +237,9 @@
 <style>
   header {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.75rem;
+    gap: 0.5rem 0.75rem;
     margin-bottom: 2rem;
   }
 
@@ -248,6 +249,7 @@
 
   .id {
     color: var(--ink-dim);
+    word-break: break-all;
   }
 
   .error {
@@ -344,7 +346,8 @@
 
   fieldset {
     display: flex;
-    gap: 1rem;
+    flex-wrap: wrap;
+    gap: 0.6rem 1rem;
     border: none;
     padding: 0;
     margin: 0;

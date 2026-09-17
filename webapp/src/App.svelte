@@ -157,15 +157,50 @@
     flex: 1;
     display: grid;
     grid-template-columns: 15rem 1fr;
+    min-width: 0;
   }
 
   aside {
     border-right: 1px solid var(--line);
     background: var(--surface);
+    min-width: 0;
   }
 
   main {
     padding: 2rem 2.5rem 4rem;
     max-width: 56rem;
+    min-width: 0;
+  }
+
+  /* Unter ~640px reicht kein Platz mehr fuer zwei nebeneinanderliegende Spalten - die feste
+     15rem-Sidebar allein fuellte auf einem Handy-Viewport fast den Bildschirm und quetschte den
+     Inhalt auf ein paar Zeichen Breite pro Zeile. Sidebar wird zur horizontal scrollbaren Leiste
+     ueber dem Inhalt statt ihn zu verdraengen. */
+  @media (max-width: 640px) {
+    header {
+      flex-wrap: wrap;
+      row-gap: 0.5rem;
+    }
+
+    .greeting {
+      flex-basis: 100%;
+      order: 3;
+    }
+
+    .body {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr;
+    }
+
+    aside {
+      border-right: none;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+    }
+
+    main {
+      padding: 1.25rem 1.25rem 3rem;
+      max-width: none;
+    }
   }
 </style>

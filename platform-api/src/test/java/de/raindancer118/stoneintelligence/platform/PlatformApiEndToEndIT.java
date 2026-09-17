@@ -171,6 +171,27 @@ class PlatformApiEndToEndIT {
         assertThat(response.statusCode()).isEqualTo(401);
     }
 
+    /**
+     * Ohne CORS-Konfiguration blockt der Browser jeden Cross-Origin-fetch() des Webapp-Dashboards
+     * (kb.tstieh.de -> stoneintelligence.tstieh.de) schon am Preflight, bevor Spring Security
+     * ueberhaupt den Bearer-Token sieht - das JS bekommt dafuer nur ein generisches "Failed to
+     * fetch" ohne HTTP-Statuscode, live auf kb.tstieh.de beobachtet.
+     */
+    @Test
+    void should_allowCrossOriginPreflight_fromWebappOrigin() throws Exception {
+        var response = http.send(
+            HttpRequest.newBuilder(URI.create(baseUrl() + "/api/v1/vaults"))
+                .header("Origin", "https://kb.tstieh.de")
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Headers", "authorization")
+                .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.headers().firstValue("Access-Control-Allow-Origin")).contains("https://kb.tstieh.de");
+    }
+
     @Test
     void should_syncCreateEditRenameDelete_endToEnd_acrossTwoRealWebSocketClients() throws Exception {
         var actorHeader = bearerAuth("tom");

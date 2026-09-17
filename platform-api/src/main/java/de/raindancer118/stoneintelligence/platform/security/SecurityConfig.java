@@ -1,14 +1,19 @@
 package de.raindancer118.stoneintelligence.platform.security;
 
+import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.core.convert.converter.Converter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 /**
  * OIDC-Durchsetzung (Plan.md Abschnitt 6, Phase 3; ADR 0006 Punkt 6): loest die vorherige
@@ -30,10 +35,19 @@ import org.springframework.core.convert.converter.Converter;
 @Configuration
 public class SecurityConfig {
 
+    /**
+     * Ohne CORS-Konfiguration blockt der Browser jeden Cross-Origin-Request des
+     * Webapp-Dashboards (kb.tstieh.de) schon vor Spring Security - das JS sieht dafuer nur ein
+     * generisches "Failed to fetch" ohne jeden HTTP-Statuscode (live beobachtet, bevor diese
+     * Konfiguration existierte). `localhost:5173` fuer `npm run dev` gegen die deployte API.
+     */
+    private static final List<String> ALLOWED_ORIGINS = List.of("https://kb.tstieh.de", "http://localhost:5173");
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
+            .cors(Customizer.withDefaults())
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/ws/sync").permitAll()
@@ -41,6 +55,19 @@ public class SecurityConfig {
             .oauth2ResourceServer(oauth2 -> oauth2
                 .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
         return http.build();
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        var configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(ALLOWED_ORIGINS);
+        configuration.setAllowedMethods(List.of("GET", "POST", "PATCH", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Operation-Id"));
+        configuration.setMaxAge(3600L);
+
+        var source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
     }
 
     private Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter() {
