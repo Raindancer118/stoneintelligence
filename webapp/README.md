@@ -24,9 +24,9 @@ npm run check
 
 ## Deployment
 
-Docker-Multi-Stage-Build (Node-Build → nginx). `.env.production` wird zur Build-Zeit von Vite
-eingebettet (enthält bewusst keine Secrets - Client-ID eines PKCE-Public-Clients ist per Design
-öffentlich).
+Docker-Multi-Stage-Build (Node-Build → nginx). `.env` ist bewusst committet (kein `.gitignore`-
+Eintrag) und wird zur Build-Zeit von Vite eingebettet - enthält keine Secrets, die Client-ID
+eines PKCE-Public-Clients ist per Design öffentlich.
 
 ```bash
 docker build -t stoneintelligence-webapp .

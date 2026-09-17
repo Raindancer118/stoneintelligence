@@ -3,7 +3,7 @@
   import { api, type Group, type PathRule, type Role, type Vault } from "../api";
   import { connectionConfigJson } from "../connectionConfig";
 
-  let { vault, onBack }: { vault: Vault; onBack: () => void } = $props();
+  let { vault }: { vault: Vault } = $props();
 
   const ALL_PERMISSIONS = ["READ", "WRITE", "DELETE", "CREATE"];
 
@@ -117,200 +117,221 @@
   }
 </script>
 
-<button class="back" onclick={onBack}>← Zurück</button>
-<h2>{vault.name} <span class="mono dim">{vault.id}</span></h2>
+<header>
+  <h1>{vault.name}</h1>
+  <span class="mono id">{vault.id}</span>
+</header>
 
 {#if error}
   <p class="error">{error}</p>
 {/if}
 
-<section class="panel">
+<section>
   <h3>Plugin-Verbindung</h3>
-  <p class="dim">Konfiguration fürs Obsidian-Plugin - dort unter „Verbindungsdaten einfügen" einfügen.</p>
-  <button class="ghost" onclick={copyConfig}>{configCopied ? "Kopiert ✓" : "Konfiguration kopieren"}</button>
+  <p class="hint">Konfiguration fürs Obsidian-Plugin - dort unter „Verbindungsdaten einfügen".</p>
+  <button class="secondary" onclick={copyConfig}>{configCopied ? "Kopiert" : "Konfiguration kopieren"}</button>
 </section>
 
-<section class="panel">
+<section>
   <h3>Rollen</h3>
-  <ul class="entity-list">
-    {#each roles as role (role.id)}
-      <li>
-        <span class="entity-name">{role.name}</span>
-        <span class="tags">
-          {#each role.permissions as permission}
-            <span class="tag">{permission}</span>
-          {/each}
-        </span>
-      </li>
-    {/each}
-  </ul>
-  <form class="inline-form" onsubmit={(e) => { e.preventDefault(); createRole(); }}>
+  {#if roles.length === 0}
+    <p class="hint">Noch keine Rollen.</p>
+  {:else}
+    <table>
+      <tbody>
+        {#each roles as role (role.id)}
+          <tr>
+            <td class="label">{role.name}</td>
+            <td class="permissions">{role.permissions.join(", ")}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {/if}
+  <form onsubmit={(e) => { e.preventDefault(); createRole(); }}>
     <input type="text" placeholder="Rollenname" bind:value={newRoleName} />
-    <span class="checkboxes">
+    <fieldset>
       {#each ALL_PERMISSIONS as permission}
         <label>
-          <input
-            type="checkbox"
-            checked={newRolePermissions.has(permission)}
-            onchange={() => togglePermission(permission)}
-          />
+          <input type="checkbox" checked={newRolePermissions.has(permission)} onchange={() => togglePermission(permission)} />
           {permission}
         </label>
       {/each}
-    </span>
-    <button class="primary" type="submit">Anlegen</button>
+    </fieldset>
+    <button type="submit">Rolle anlegen</button>
   </form>
 </section>
 
-<section class="panel">
+<section>
   <h3>Gruppen</h3>
   {#each groups as group (group.id)}
-    <div class="group-block">
+    <div class="group">
       <h4>{group.name}</h4>
-      <div class="members">
+
+      <ul class="members">
         {#each group.memberSubjects as subject}
-          <span class="tag member">
+          <li>
             {subject}
-            <button class="tag-remove" onclick={() => removeMember(group.id, subject)}>×</button>
-          </span>
+            <button class="link" onclick={() => removeMember(group.id, subject)}>entfernen</button>
+          </li>
         {/each}
-      </div>
-      <form class="inline-form" onsubmit={(e) => { e.preventDefault(); addMember(group.id); }}>
+        {#if group.memberSubjects.length === 0}
+          <li class="hint">Keine Mitglieder.</li>
+        {/if}
+      </ul>
+      <form class="row-form" onsubmit={(e) => { e.preventDefault(); addMember(group.id); }}>
         <input
           type="text"
           placeholder="Actor (z. B. tom)"
           value={newMemberByGroup[group.id] ?? ""}
           oninput={(e) => (newMemberByGroup = { ...newMemberByGroup, [group.id]: e.currentTarget.value })}
         />
-        <button class="ghost" type="submit">Mitglied hinzufügen</button>
+        <button class="secondary" type="submit">Hinzufügen</button>
       </form>
-      <div class="role-toggles">
+
+      <fieldset class="roles-for-group">
         {#each roles as role (role.id)}
           {@const assigned = group.roleIds.includes(role.id)}
-          <label class="role-toggle" class:assigned>
-            <input
-              type="checkbox"
-              checked={assigned}
-              onchange={() => toggleRoleAssignment(group.id, role.id, assigned)}
-            />
+          <label>
+            <input type="checkbox" checked={assigned} onchange={() => toggleRoleAssignment(group.id, role.id, assigned)} />
             {role.name}
           </label>
         {/each}
-      </div>
+      </fieldset>
     </div>
   {/each}
-  <form class="inline-form" onsubmit={(e) => { e.preventDefault(); createGroup(); }}>
+  <form onsubmit={(e) => { e.preventDefault(); createGroup(); }}>
     <input type="text" placeholder="Gruppenname" bind:value={newGroupName} />
-    <button class="primary" type="submit">Anlegen</button>
+    <button type="submit">Gruppe anlegen</button>
   </form>
 </section>
 
-<section class="panel">
+<section>
   <h3>Ordner-ACLs</h3>
-  <ul class="entity-list">
-    {#each pathRules as rule}
-      <li>
-        <span class="mono entity-name">{rule.pathPrefix}</span>
-        <span class="tags">
-          <span class="tag">{rule.scopeSubject ?? "jeder"}</span>
-          <span class="tag" class:deny={rule.effect === "DENY"}>{rule.effect}</span>
-        </span>
-      </li>
-    {/each}
-  </ul>
-  <form class="inline-form" onsubmit={(e) => { e.preventDefault(); createPathRule(); }}>
-    <input type="text" placeholder="Pfad-Präfix (z. B. privat)" bind:value={newPathRule.pathPrefix} />
+  {#if pathRules.length === 0}
+    <p class="hint">Keine Regeln - ohne Regel ist ein Pfad standardmäßig erlaubt.</p>
+  {:else}
+    <table>
+      <tbody>
+        {#each pathRules as rule}
+          <tr>
+            <td class="mono">{rule.pathPrefix}</td>
+            <td>{rule.scopeSubject ?? "jeder"}</td>
+            <td class="effect" class:deny={rule.effect === "DENY"}>{rule.effect}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {/if}
+  <form class="row-form" onsubmit={(e) => { e.preventDefault(); createPathRule(); }}>
+    <input type="text" placeholder="Pfad-Präfix" bind:value={newPathRule.pathPrefix} />
     <input type="text" placeholder="Actor (leer = jeder)" bind:value={newPathRule.scopeSubject} />
     <select bind:value={newPathRule.effect}>
       <option value="DENY">DENY</option>
       <option value="ALLOW">ALLOW</option>
     </select>
-    <button class="primary" type="submit">Regel anlegen</button>
+    <button class="secondary" type="submit">Regel anlegen</button>
   </form>
 </section>
 
 <style>
-  .back {
-    background: none;
-    border: none;
-    color: var(--paper-dim);
-    padding: 0;
-    margin-bottom: 1rem;
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-bottom: 2rem;
   }
 
-  .back:hover {
-    color: var(--paper);
+  header h1 {
+    font-size: 1.6rem;
   }
 
-  .panel {
-    background: var(--ink-raised);
-    border: 1px solid var(--ink-line);
-    border-radius: var(--radius);
-    padding: 1.5rem 1.75rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .dim {
-    color: var(--paper-dim);
+  .id {
+    color: var(--ink-dim);
   }
 
   .error {
     color: var(--rust);
   }
 
-  .entity-list {
-    list-style: none;
-    margin: 0 0 1rem;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-
-  .entity-list li {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: var(--ink);
-    border: 1px solid var(--ink-line);
+  section {
+    background: var(--surface);
     border-radius: var(--radius);
-    padding: 0.5rem 0.8rem;
+    box-shadow: 0 1px 2px rgba(33, 31, 26, 0.06), 0 1px 0 var(--line);
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 1.5rem;
   }
 
-  .entity-name {
+  h3 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+  }
+
+  h4 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .hint {
+    color: var(--ink-dim);
+    font-size: 0.9rem;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+  }
+
+  td {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .label {
     font-weight: 600;
   }
 
-  .tags {
-    display: flex;
-    gap: 0.4rem;
+  .permissions {
+    color: var(--ink-dim);
+    text-align: right;
   }
 
-  .tag {
-    font-size: 0.75rem;
-    background: var(--ink-line);
-    color: var(--paper-dim);
-    padding: 0.15rem 0.5rem;
-    border-radius: 999px;
+  .effect {
+    text-align: right;
+    font-weight: 600;
+    color: var(--forest);
   }
 
-  .tag.deny {
-    background: color-mix(in srgb, var(--rust) 30%, var(--ink-line));
-    color: var(--paper);
+  .effect.deny {
+    color: var(--rust);
   }
 
-  .inline-form {
+  form {
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
     align-items: center;
-    margin-top: 0.75rem;
+  }
+
+  .row-form {
+    margin-top: 0.6rem;
   }
 
   input[type="text"] {
-    background: var(--ink);
-    border: 1px solid var(--ink-line);
-    color: var(--paper);
+    background: var(--surface-raised);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    padding: 0.5rem 0.7rem;
+    border-radius: var(--radius);
+  }
+
+  select {
+    background: var(--surface-raised);
+    border: 1px solid var(--line);
+    color: var(--ink);
     padding: 0.5rem 0.7rem;
     border-radius: var(--radius);
   }
@@ -318,113 +339,87 @@
   input:focus,
   select:focus {
     outline: none;
-    border-color: var(--ember-dim);
+    border-color: var(--forest);
   }
 
-  select {
-    background: var(--ink);
-    border: 1px solid var(--ink-line);
-    color: var(--paper);
-    padding: 0.5rem 0.7rem;
-    border-radius: var(--radius);
-  }
-
-  .checkboxes {
+  fieldset {
     display: flex;
-    gap: 0.8rem;
-    font-size: 0.85rem;
-    color: var(--paper-dim);
+    gap: 1rem;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: var(--ink-dim);
+    font-size: 0.88rem;
   }
 
-  .checkboxes label {
+  fieldset label {
     display: flex;
     align-items: center;
-    gap: 0.3rem;
+    gap: 0.35rem;
   }
 
-  button.primary {
-    background: var(--ember);
-    color: var(--ink);
+  button {
+    background: var(--forest);
+    color: var(--surface);
     border: none;
-    padding: 0.5rem 1.1rem;
+    padding: 0.55rem 1.1rem;
     border-radius: var(--radius);
     font-weight: 600;
   }
 
-  button.primary:hover {
-    background: #e88a4f;
+  button:hover {
+    background: var(--forest-hover);
   }
 
-  button.ghost {
-    background: transparent;
-    color: var(--paper);
-    border: 1px solid var(--ink-line);
-    padding: 0.5rem 1rem;
-    border-radius: var(--radius);
+  button.secondary {
+    background: none;
+    color: var(--ink);
+    border: 1px solid var(--line);
   }
 
-  button.ghost:hover {
-    border-color: var(--ember-dim);
+  button.secondary:hover {
+    border-color: var(--forest);
+    color: var(--forest);
   }
 
-  .group-block {
-    border-top: 1px solid var(--ink-line);
-    padding-top: 1rem;
-    margin-top: 1rem;
+  button.link {
+    background: none;
+    border: none;
+    color: var(--ink-dim);
+    padding: 0;
+    font-size: 0.8rem;
+    text-decoration: underline;
+    min-height: 0;
   }
 
-  .group-block:first-child {
+  .group {
+    border-top: 1px solid var(--line);
+    padding-top: 1.1rem;
+    margin-top: 1.1rem;
+  }
+
+  .group:first-child {
     border-top: none;
     padding-top: 0;
     margin-top: 0;
   }
 
-  .group-block h4 {
-    margin: 0 0 0.5rem;
-  }
-
   .members {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .tag.member {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-  }
-
-  .tag-remove {
-    background: none;
-    border: none;
-    color: inherit;
+    list-style: none;
     padding: 0;
-    line-height: 1;
-    font-size: 0.9rem;
-  }
-
-  .role-toggles {
+    margin: 0 0 0.6rem;
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 0.6rem;
-  }
-
-  .role-toggle {
-    display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 0.3rem;
-    font-size: 0.8rem;
-    color: var(--paper-dim);
-    border: 1px solid var(--ink-line);
-    border-radius: 999px;
-    padding: 0.2rem 0.7rem;
   }
 
-  .role-toggle.assigned {
-    color: var(--moss);
-    border-color: var(--moss);
+  .members li {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.92rem;
+  }
+
+  .roles-for-group {
+    margin-top: 0.8rem;
   }
 </style>

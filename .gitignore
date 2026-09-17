@@ -11,6 +11,7 @@ plugin/main.js
 .env
 .env.*
 !.env.example
+!webapp/.env
 Project.md
 .claude/
 .serena/
