@@ -11,7 +11,12 @@ const TYPE_LEAVE = 3;
 const TYPE_NOTE_DELETED = 4;
 const CLOSE_CODE_NOTE_DELETED = 4404;
 
-/** Minimaler In-Memory-WebSocket-Fake, den der Transport wie ein echtes WebSocket behandelt. */
+/**
+ * Minimaler In-Memory-WebSocket-Fake, den der Transport wie ein echtes WebSocket behandelt.
+ * `isOpen` bildet nach, dass ein ECHTES WebSocket synchron `InvalidStateError` wirft, wenn
+ * `send()` waehrend readyState CONNECTING aufgerufen wird - genau das hat live einen Absturz
+ * ausgeloest (Awareness-Update genau in diesem Fenster).
+ */
 class FakeRealSocket implements WebSocketLike {
   binaryType = "";
   onopen: ((ev: Event) => void) | null = null;
@@ -19,16 +24,22 @@ class FakeRealSocket implements WebSocketLike {
   onclose: ((ev: CloseEvent) => void) | null = null;
   onerror: ((ev: Event) => void) | null = null;
   readonly sent: Uint8Array[] = [];
+  isOpen = false;
 
   send(data: ArrayBuffer): void {
+    if (!this.isOpen) {
+      throw new DOMException("Still in CONNECTING state.", "InvalidStateError");
+    }
     this.sent.push(new Uint8Array(data));
   }
 
   close(): void {
+    this.isOpen = false;
     this.onclose?.({ code: 1000, reason: "closed" } as CloseEvent);
   }
 
   open(): void {
+    this.isOpen = true;
     this.onopen?.(new Event("open"));
   }
 
@@ -327,5 +338,21 @@ describe("MultiplexedTransport", () => {
     await waitUntilConnecting(realSocket);
 
     expect(getUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it("should_silentlyDropTheSend_instead_ofThrowing_when_socketIsStillConnecting", async () => {
+    // Regression: ein Awareness-Update (z. B. Mausbewegung) das genau waehrend eines (Re-)
+    // Connects feuert, liess `sendFramed` bisher `InvalidStateError` synchron werfen (echte
+    // WebSockets werfen das, wenn `send()` waehrend readyState CONNECTING aufgerufen wird) - das
+    // schlug live als unbehandelte Exception mitten im Yjs-Awareness-Event-Dispatch durch.
+    const realSocket = new FakeRealSocket();
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep: vi.fn() });
+    transport.createVirtualSocket(NOTE_ID_A);
+    await waitUntilConnecting(realSocket);
+    // realSocket.open() bewusst NICHT aufgerufen - Socket bleibt im Fake auf isOpen=false,
+    // simuliert readyState CONNECTING.
+
+    expect(() => transport.sendFramed(TYPE_DOC_UPDATE, NOTE_ID_A, new Uint8Array([1]))).not.toThrow();
+    expect(realSocket.sent).toHaveLength(0);
   });
 });

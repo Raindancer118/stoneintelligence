@@ -239,7 +239,13 @@ export class MultiplexedTransport {
   }
 
   sendFramed(type: number, noteId: string, payload: Uint8Array): void {
-    if (!this.realSocket) {
+    // Nicht nur auf `realSocket` pruefen, sondern auch, ob es TATSAECHLICH offen ist: waehrend
+    // eines (Re-)Connects existiert das Socket-Objekt bereits (readyState CONNECTING), ein
+    // `send()`-Aufruf darauf wirft aber synchron `InvalidStateError` - z. B. wenn ein
+    // Awareness-Update (Mausbewegung/Cursor) genau in diesem Fenster feuert. Best-effort wie der
+    // Rest dieses "dummen" Relays: die Nachricht wird dann verworfen statt eine Exception zu
+    // werfen, die im Yjs-Event-Dispatch nach oben durchschlagen wuerde.
+    if (!this.realSocket || !this.isOpen) {
       return;
     }
     const noteIdBytes = textEncoder.encode(noteId);
