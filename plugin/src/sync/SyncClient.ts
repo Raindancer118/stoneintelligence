@@ -25,6 +25,8 @@ export type WebSocketFactory = (url: string) => WebSocketLike;
  */
 const MESSAGE_TYPE_DOC_UPDATE = 0;
 const MESSAGE_TYPE_AWARENESS = 1;
+/** Muss zu {@code SyncFrame.TYPE_CATCHUP_COMPLETE} auf dem Server passen. */
+const MESSAGE_TYPE_CATCHUP_COMPLETE = 5;
 
 /** Muss zu {@code SyncRelayService.CLOSE_CODE_NOTE_DELETED} auf dem Server passen. */
 export const CLOSE_CODE_NOTE_DELETED = 4404;
@@ -44,6 +46,14 @@ export class SyncClient {
 
   /** Wird aufgerufen, wenn der Server die Verbindung mit {@link CLOSE_CODE_NOTE_DELETED} trennt. */
   onNoteDeleted: (() => void) | null = null;
+
+  /**
+   * Wird EINMAL aufgerufen, sobald der Server die komplette Late-Joiner-Update-Historie fuer
+   * diese Notiz gesendet hat. Ersetzt eine frueher hier genutzte fixe Gnadenfrist im Aufrufer
+   * (main.ts `mergeInitialContent`), die unter Last zu kurz sein konnte und dadurch lokalen
+   * Inhalt zusaetzlich zum (verspaetet doch noch eintreffenden) Server-Inhalt einspielte.
+   */
+  onCatchupComplete: (() => void) | null = null;
 
   /** Fuer Sichtbarkeit (Status-Leiste/-Ansicht) - kein Teil des Sync-Protokolls selbst. */
   status: SyncStatus = "connecting";
@@ -93,6 +103,8 @@ export class SyncClient {
       const payload = raw.subarray(1);
       if (messageType === MESSAGE_TYPE_AWARENESS) {
         applyAwarenessUpdate(this.awareness, payload, this);
+      } else if (messageType === MESSAGE_TYPE_CATCHUP_COMPLETE) {
+        this.onCatchupComplete?.();
       } else {
         Y.applyUpdate(this.doc, payload, this);
       }

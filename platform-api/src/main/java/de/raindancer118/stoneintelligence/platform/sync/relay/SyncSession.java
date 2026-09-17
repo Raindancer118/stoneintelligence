@@ -35,5 +35,13 @@ public interface SyncSession {
      */
     void notifyNoteDeleted(NoteId noteId);
 
+    /**
+     * Die komplette gespeicherte Update-Historie fuer diese Notiz wurde an diese Session
+     * gesendet (Late-Joiner-Catchup abgeschlossen) - erst DANACH darf der Client sicher davon
+     * ausgehen, dass ein weiterhin leeres Y.Text tatsaechlich bedeutet "keine Server-Historie",
+     * statt "Historie ist einfach noch unterwegs".
+     */
+    void sendCatchupComplete(NoteId noteId);
+
     void close(int code, String reason);
 }

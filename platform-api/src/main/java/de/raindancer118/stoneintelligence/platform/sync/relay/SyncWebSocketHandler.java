@@ -181,6 +181,11 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             send(SyncFrame.TYPE_NOTE_DELETED, noteId, new byte[0]);
         }
 
+        @Override
+        public void sendCatchupComplete(NoteId noteId) {
+            send(SyncFrame.TYPE_CATCHUP_COMPLETE, noteId, new byte[0]);
+        }
+
         private void send(byte messageType, NoteId noteId, byte[] payload) {
             var frame = new SyncFrame(messageType, noteId, payload);
             try {

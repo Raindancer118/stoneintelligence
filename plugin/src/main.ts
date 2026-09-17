@@ -477,6 +477,28 @@ export default class StoneIntelligencePlugin extends Plugin {
     });
   }
 
+  /**
+   * Wartet auf das explizite Catchup-Abschlusssignal des Servers (s. `SyncFrame.TYPE_CATCHUP_
+   * COMPLETE`) statt auf eine fixe Gnadenfrist zu raten. `timeoutMs` bleibt als reines
+   * Sicherheitsnetz (z. B. gegen einen sehr alten Server ohne dieses Signal oder ein verlorenes
+   * Frame) - im Normalfall loest das Signal selbst lange vorher auf.
+   */
+  private awaitCatchupComplete(client: SyncClient, timeoutMs = 30_000): Promise<void> {
+    return new Promise((resolve) => {
+      const previous = client.onCatchupComplete;
+      const timeout = window.setTimeout(() => {
+        client.onCatchupComplete = previous;
+        resolve();
+      }, timeoutMs);
+      client.onCatchupComplete = () => {
+        previous?.();
+        window.clearTimeout(timeout);
+        client.onCatchupComplete = previous;
+        resolve();
+      };
+    });
+  }
+
   private async startSync(file: TFile, priority = false): Promise<void> {
     if (this.sessions.has(file.path) || this.startingPaths.has(file.path) || !this.settings.vaultId) {
       return;
@@ -553,15 +575,13 @@ export default class StoneIntelligencePlugin extends Plugin {
   private async mergeInitialContent(file: TFile, client: SyncClient, doc: Y.Doc, text: Y.Text): Promise<void> {
     await this.awaitConnected(client);
 
-    // Kurze Gnadenfrist, damit ein eventueller Late-Joiner-Catchup (die Notiz hat bereits
-    // Server-Historie von einem anderen Client) eintreffen kann, BEVOR wir den lokalen
-    // Dateiinhalt einspielen - sonst wuerden zwei unabhaengige volle Texte additiv im selben
-    // Y.Text landen (CRDT-Merge, kein "letzter gewinnt"). Eine echte "Catchup abgeschlossen"-
-    // Markierung gibt es im WS-Protokoll noch nicht (dokumentierte Grenze). Beginnt bewusst erst
-    // NACH `awaitConnected` (nicht direkt nach `connect()`) - sonst waere die Gnadenfrist bei
-    // einer gequeuten (nicht sofort gejointen) Notiz laengst abgelaufen, bevor ihr Join-Frame
-    // ueberhaupt rausging.
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Wartet auf das explizite Server-Signal "Catchup abgeschlossen" (s. SyncFrame.
+    // TYPE_CATCHUP_COMPLETE), statt wie frueher eine fixe Gnadenfrist zu raten - die war unter
+    // Last (viele/grosse Notizen, gestaffelte Joins auf derselben geteilten Verbindung)
+    // nachweislich zu kurz: der lokale Dateiinhalt wurde dann zusaetzlich zum inzwischen doch
+    // noch eingetroffenen Server-Inhalt eingespielt (additiv im CRDT, kein "letzter gewinnt") -
+    // live beobachtet als verdreifachter Notizinhalt nach mehreren Reconnect-Zyklen.
+    await this.awaitCatchupComplete(client);
 
     const initialContent = await this.app.vault.read(file);
     if (text.length === 0 && initialContent.length > 0) {

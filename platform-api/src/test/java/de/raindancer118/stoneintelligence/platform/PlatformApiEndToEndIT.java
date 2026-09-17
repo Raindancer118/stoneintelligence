@@ -65,6 +65,14 @@ class PlatformApiEndToEndIT {
     private static final byte MESSAGE_TYPE_AWARENESS = 1;
     private static final byte MESSAGE_TYPE_JOIN = 2;
     private static final byte MESSAGE_TYPE_NOTE_DELETED = 4;
+    /**
+     * Server->Client: komplette Late-Joiner-Historie fuer diese Notiz wurde gesendet (s.
+     * {@code SyncFrame.TYPE_CATCHUP_COMPLETE}). Reine Protokoll-Buchhaltung, kein fachlicher
+     * Payload - wird in {@code CapturingHandler} bewusst gar nicht erst eingesammelt, sonst
+     * wuerden bestehende "keine weitere Nachricht"-Assertions (z. B. kein Echo an den Sender)
+     * faelschlich auf dieses Marker-Frame anschlagen.
+     */
+    private static final byte MESSAGE_TYPE_CATCHUP_COMPLETE = 5;
     private static final int NOTE_ID_LENGTH = 36;
 
     @Container
@@ -150,6 +158,9 @@ class PlatformApiEndToEndIT {
         protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
             var raw = new byte[message.getPayloadLength()];
             message.getPayload().get(raw);
+            if (raw[0] == MESSAGE_TYPE_CATCHUP_COMPLETE) {
+                return;
+            }
             // NoteId-Praefix (36 Byte) wird fuer die Testassertions ignoriert - dieser Test
             // joint pro Client nur EINEN Raum, die NoteId ist also immer dieselbe.
             received.add(new ReceivedFrame(raw[0], Arrays.copyOfRange(raw, 1 + NOTE_ID_LENGTH, raw.length)));

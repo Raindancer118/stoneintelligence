@@ -60,6 +60,14 @@ class VaultSyncSimulationIT {
     private static final byte MESSAGE_TYPE_JOIN = 2;
     private static final byte MESSAGE_TYPE_LEAVE = 3;
     private static final byte MESSAGE_TYPE_NOTE_DELETED = 4;
+    /**
+     * Server->Client: komplette Late-Joiner-Historie fuer diese Notiz wurde gesendet (s.
+     * {@code SyncFrame.TYPE_CATCHUP_COMPLETE}). Reine Protokoll-Buchhaltung, kein fachlicher
+     * Payload - {@code awaitFrame} ueberliest sie transparent, damit bestehende Assertions auf
+     * "die naechste inhaltliche Nachricht" nicht ploetzlich dieses Marker-Frame statt der
+     * erwarteten Nutzdaten sehen.
+     */
+    private static final byte MESSAGE_TYPE_CATCHUP_COMPLETE = 5;
     private static final int NOTE_ID_LENGTH = 36;
 
     @DynamicPropertySource
@@ -182,9 +190,15 @@ class VaultSyncSimulationIT {
 
         ReceivedFrame awaitFrame(String noteId, long timeoutSeconds) throws InterruptedException {
             var queue = byNote.computeIfAbsent(noteId, id -> new LinkedBlockingQueue<>());
-            var frame = queue.poll(timeoutSeconds, TimeUnit.SECONDS);
-            assertThat(frame).as("expected a frame for note %s within %ds", noteId, timeoutSeconds).isNotNull();
-            return frame;
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+            while (true) {
+                var remainingNanos = deadline - System.nanoTime();
+                var frame = queue.poll(Math.max(0, remainingNanos), TimeUnit.NANOSECONDS);
+                assertThat(frame).as("expected a frame for note %s within %ds", noteId, timeoutSeconds).isNotNull();
+                if (frame.type() != MESSAGE_TYPE_CATCHUP_COMPLETE) {
+                    return frame;
+                }
+            }
         }
     }
 
