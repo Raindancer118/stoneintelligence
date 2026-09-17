@@ -105,6 +105,16 @@ main.js
 
 Danach in Obsidian: Einstellungen → Community-Plugins → „StoneIntelligence“ aktivieren.
 
+### Alternativ: Installation über BRAT
+
+Ab dem ersten Versions-Tag (`X.Y.Z`) baut eine GitHub Action automatisch ein Release mit
+`manifest.json` + `main.js` als Assets (`.github/workflows/plugin-release.yml`). Damit lässt sich
+das Plugin auch über [BRAT](https://github.com/TfTHacker/obsidian42-brat) installieren:
+
+1. BRAT-Plugin in Obsidian installieren und aktivieren.
+2. In BRAT: „Add Beta plugin“ → `Raindancer118/stoneintelligence` eintragen.
+3. BRAT lädt `manifest.json`/`main.js` vom neuesten Release und hält sie automatisch aktuell.
+
 ### Plugin konfigurieren
 
 In den Plugin-Einstellungen (Einstellungen → StoneIntelligence) folgende Felder setzen:
