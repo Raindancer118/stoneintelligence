@@ -1,9 +1,9 @@
 {
   "id": "stoneintelligence",
   "name": "StoneIntelligence",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.5.0",
   "description": "Live-Sync, Note-Level-Policies und KI-gestuetzte Wissens-Ingestion fuer Obsidian.",
   "author": "Raindancer118",
-  "isDesktopOnly": false
+  "isDesktopOnly": true
 }

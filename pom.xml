@@ -6,7 +6,7 @@
 
   <groupId>de.raindancer118</groupId>
   <artifactId>stoneintelligence</artifactId>
-  <version>0.2.0-SNAPSHOT</version>
+  <version>0.3.0-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <name>StoneIntelligence</name>
@@ -111,6 +111,38 @@
                 <goal>integration-test</goal>
                 <goal>verify</goal>
               </goals>
+            </execution>
+          </executions>
+        </plugin>
+        <!--
+          Ohne spring-boot-starter-parent als Eltern-POM (dieses Projekt importiert
+          spring-boot-dependencies nur als BOM) bindet Boot die repackage-Goal NICHT automatisch
+          an die package-Phase - ohne diese Executions erzeugt "mvn package" ein Jar ohne
+          Main-Class-Manifest ("no main manifest attribute"), das sich nicht per `java -jar`
+          starten laesst. Betrifft alle drei Spring-Boot-Module (platform-api,
+          intelligence-worker, mcp-adapter) gleichermassen, deshalb hier zentral in der
+          Root-pluginManagement statt dreifach dupliziert.
+
+          Bewusst mit `classifier=exec`: ohne Classifier ERSETZT repackage das duenne Haupt-
+          Artefakt durch das fette Boot-Jar (BOOT-INF/classes/... statt flacher Paketstruktur) -
+          platform-api hat IT-Tests im selben Modul (maven-failsafe-plugin, Phase
+          integration-test, laeuft NACH package), deren Classpath-Aufloesung dann u.U. auf dieses
+          fette Jar statt auf target/classes greift und Klassen wie AuthorizationRepository nicht
+          mehr findet (NoClassDefFoundError). Mit Classifier bleibt das duenne Jar das
+          Haupt-Artefakt, das fette, ausfuehrbare Jar entsteht zusaetzlich als
+          `<artifact>-exec.jar` (s. Dockerfiles).
+        -->
+        <plugin>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-maven-plugin</artifactId>
+          <executions>
+            <execution>
+              <goals>
+                <goal>repackage</goal>
+              </goals>
+              <configuration>
+                <classifier>exec</classifier>
+              </configuration>
             </execution>
           </executions>
         </plugin>
