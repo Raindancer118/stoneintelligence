@@ -19,6 +19,15 @@ describe("AuthentikAuthClient", () => {
     });
   });
 
+  describe("escapeHtml", () => {
+    it("should_escapeAllHtmlSpecialCharacters_toPreventReflectedXss", () => {
+      const escaped = AuthentikAuthClient.escapeHtml('<script>alert("xss")</script>&\'');
+
+      expect(escaped).toBe("&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;&amp;&#39;");
+      expect(escaped).not.toContain("<script>");
+    });
+  });
+
   describe("generateRandomToken", () => {
     it("should_produceDifferentTokens_onEachCall", () => {
       const first = AuthentikAuthClient.generateRandomToken();

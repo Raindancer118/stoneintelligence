@@ -46,6 +46,16 @@ export class AuthentikAuthClient {
     return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
 
+  /** Verhindert reflected XSS in der lokalen Callback-Antwortseite (der `error`-Query-Parameter ist von aussen kontrollierbar). */
+  static escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   static generateRandomToken(): string {
     const bytes = new Uint8Array(32);
     crypto.getRandomValues(bytes);
@@ -167,7 +177,7 @@ export class AuthentikAuthClient {
 
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(error
-          ? `<html><body>Login fehlgeschlagen: ${error}. Dieses Fenster kann geschlossen werden.</body></html>`
+          ? `<html><body>Login fehlgeschlagen: ${AuthentikAuthClient.escapeHtml(error)}. Dieses Fenster kann geschlossen werden.</body></html>`
           : "<html><body>Login erfolgreich - dieses Fenster kann geschlossen werden.</body></html>");
         server.close();
 
