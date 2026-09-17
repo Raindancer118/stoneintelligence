@@ -45,6 +45,7 @@
   <p class="status">Laden…</p>
 {:else if !user}
   <section class="gate">
+    <img class="gate-logo" src="/logo.png" alt="" width="72" height="72" />
     <h1>StoneIntelligence</h1>
     <p>Anmeldung über Authentik, um deine Vaults zu verwalten.</p>
     {#if error}
@@ -55,6 +56,7 @@
 {:else}
   <div class="shell">
     <header>
+      <img class="brand-logo" src="/logo.png" alt="" width="24" height="24" />
       <span class="brand">StoneIntelligence</span>
       <span class="greeting">Willkommen, {preferredUsername(user)}.</span>
       <button class="logout" onclick={() => startLogout()}>Abmelden</button>
@@ -95,6 +97,10 @@
     text-align: center;
   }
 
+  .gate-logo {
+    margin-bottom: 1rem;
+  }
+
   .gate h1 {
     font-size: 2rem;
   }
@@ -130,6 +136,10 @@
     padding: 0.85rem 1.5rem;
     border-bottom: 1px solid var(--line);
     background: var(--surface);
+  }
+
+  .brand-logo {
+    display: block;
   }
 
   .brand {
