@@ -271,7 +271,14 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     for (const file of this.app.vault.getMarkdownFiles()) {
-      await this.startSync(file);
+      try {
+        await this.startSync(file);
+      } catch (error) {
+        // Ein einzelner fehlgeschlagener Start (z. B. Rate-Limit trotz Retry ausgeschoepft) darf
+        // den restlichen Vault-Sync nicht abbrechen - sonst wuerden alle folgenden Notizen
+        // ebenfalls nie synchronisiert, nur weil eine einzelne frueh im Durchlauf hakt.
+        console.error(`StoneIntelligence: Sync fuer "${file.path}" fehlgeschlagen`, error);
+      }
     }
   }
 

@@ -1,4 +1,5 @@
 import { obsidianFetch } from "./obsidianFetch";
+import { withRateLimitRetry } from "./retryFetch";
 
 export type AccessTokenProvider = () => Promise<string>;
 
@@ -13,7 +14,7 @@ export class NoteApiClient {
   constructor(
     private readonly baseUrl: string,
     private readonly getAccessToken: AccessTokenProvider,
-    private readonly fetchImpl: typeof fetch = obsidianFetch,
+    private readonly fetchImpl: typeof fetch = withRateLimitRetry(obsidianFetch),
   ) {}
 
   /** Legt einen neuen Vault an; der anlegende Actor bekommt serverseitig automatisch volle Rechte darin. */
