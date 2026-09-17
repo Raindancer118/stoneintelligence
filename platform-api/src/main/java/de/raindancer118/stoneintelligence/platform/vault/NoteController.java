@@ -5,6 +5,7 @@ import java.util.List;
 import de.raindancer118.stoneintelligence.domain.id.NoteId;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
 import de.raindancer118.stoneintelligence.domain.notelevel.NoteLevel;
+import de.raindancer118.stoneintelligence.platform.audit.AuditService;
 import de.raindancer118.stoneintelligence.platform.sync.relay.SyncRelayService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -27,10 +28,12 @@ public class NoteController {
 
     private final NoteRepository notes;
     private final SyncRelayService relay;
+    private final AuditService audit;
 
-    public NoteController(NoteRepository notes, SyncRelayService relay) {
+    public NoteController(NoteRepository notes, SyncRelayService relay, AuditService audit) {
         this.notes = notes;
         this.relay = relay;
+        this.audit = audit;
     }
 
     @PostMapping("/api/v1/vaults/{vaultId}/notes")
@@ -39,8 +42,17 @@ public class NoteController {
         @RequestBody CreateNoteRequest request,
         @RequestHeader("X-Actor") String actor
     ) {
-        var note = notes.create(VaultId.of(vaultId), request.path(), NoteLevel.of(request.noteLevel()), actor);
+        var vId = VaultId.of(vaultId);
+        var note = notes.create(vId, request.path(), NoteLevel.of(request.noteLevel()), actor);
+        audit.record(vId, note.id(), actor, "note.created", java.util.Map.of("path", note.path()));
         return NoteResponse.from(note);
+    }
+
+    @GetMapping("/api/v1/vaults/{vaultId}/notes/{noteId}/audit")
+    public List<AuditEventResponse> auditTrail(@PathVariable String vaultId, @PathVariable String noteId) {
+        return audit.listForNote(VaultId.of(vaultId), NoteId.of(noteId)).stream()
+            .map(AuditEventResponse::from)
+            .toList();
     }
 
     @GetMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
@@ -72,9 +84,14 @@ public class NoteController {
     public NoteResponse rename(
         @PathVariable String vaultId,
         @PathVariable String noteId,
-        @RequestBody RenameNoteRequest request
+        @RequestBody RenameNoteRequest request,
+        @RequestHeader("X-Actor") String actor
     ) {
-        var note = notes.rename(VaultId.of(vaultId), NoteId.of(noteId), request.path());
+        var vId = VaultId.of(vaultId);
+        var nId = NoteId.of(noteId);
+        var before = notes.findById(nId).map(Note::path).orElse(null);
+        var note = notes.rename(vId, nId, request.path());
+        audit.record(vId, nId, actor, "note.renamed", java.util.Map.of("from", String.valueOf(before), "to", note.path()));
         return NoteResponse.from(note);
     }
 
@@ -89,6 +106,7 @@ public class NoteController {
         var nId = NoteId.of(noteId);
         var tombstone = notes.delete(vId, nId, operationId, actor);
         relay.onNoteDeleted(nId);
+        audit.record(vId, nId, actor, "note.deleted", java.util.Map.of("operationId", operationId));
         return TombstoneResponse.from(tombstone);
     }
 
@@ -115,5 +133,11 @@ public class NoteController {
     }
 
     public record ReconciliationResponse(java.util.UUID epochId, boolean complete, String nextCursor, List<NoteResponse> notes) {
+    }
+
+    public record AuditEventResponse(String actor, String action, java.util.Map<String, Object> payload, Instant occurredAt) {
+        static AuditEventResponse from(de.raindancer118.stoneintelligence.platform.audit.AuditEvent event) {
+            return new AuditEventResponse(event.actor(), event.action(), event.payload(), event.occurredAt());
+        }
     }
 }
