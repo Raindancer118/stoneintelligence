@@ -1,3 +1,5 @@
+import { obsidianFetch } from "./obsidianFetch";
+
 export type AccessTokenProvider = () => Promise<string>;
 
 /**
@@ -11,7 +13,7 @@ export class NoteApiClient {
   constructor(
     private readonly baseUrl: string,
     private readonly getAccessToken: AccessTokenProvider,
-    private readonly fetchImpl: typeof fetch = (...args) => fetch(...args),
+    private readonly fetchImpl: typeof fetch = obsidianFetch,
   ) {}
 
   /** Legt einen neuen Vault an; der anlegende Actor bekommt serverseitig automatisch volle Rechte darin. */

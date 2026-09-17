@@ -1,3 +1,5 @@
+import { obsidianFetch } from "./obsidianFetch";
+
 export interface OidcSettings {
   issuerUrl: string;
   clientId: string;
@@ -35,11 +37,11 @@ export const OIDC_REDIRECT_URI = `http://127.0.0.1:${OIDC_REDIRECT_PORT}/callbac
 export class AuthentikAuthClient {
   constructor(
     private readonly settings: OidcSettings,
-    // Bewusst ein Wrapper, NICHT `= fetch`: als Klassenfeld gespeichert und ueber `this.fetchImpl(...)`
-    // aufgerufen, verliert das native fetch seinen erforderlichen `window`-Receiver
-    // ("Failed to execute 'fetch' on 'Window': Illegal invocation" - live im Plugin aufgetreten,
-    // kein Mock-Test faengt das, da Tests immer einen expliziten fetchImpl uebergeben).
-    private readonly fetchImpl: typeof fetch = (...args) => fetch(...args),
+    // obsidianFetch statt globalem fetch: natives fetch() im Electron-Renderer unterliegt
+    // weiterhin normaler Browser-CORS-Durchsetzung, und Obsidians eigener Origin laesst sich bei
+    // Authentik nicht als erlaubte CORS-Origin registrieren (live beobachtet: discover() schlug
+    // mit "Failed to fetch" fehl). S. obsidianFetch.ts fuer Details.
+    private readonly fetchImpl: typeof fetch = obsidianFetch,
   ) {}
 
   static base64UrlEncode(bytes: Uint8Array): string {
