@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
-import { SyncClient, type WebSocketLike } from "../src/sync/SyncClient";
+import { CLOSE_CODE_NOTE_DELETED, SyncClient, type WebSocketLike } from "../src/sync/SyncClient";
 
 const MESSAGE_TYPE_DOC_UPDATE = 0;
 const MESSAGE_TYPE_AWARENESS = 1;
@@ -33,6 +33,11 @@ class FakeWebSocket implements WebSocketLike {
 
   close(): void {
     this.onclose?.({ code: 1000, reason: "closed" } as CloseEvent);
+  }
+
+  /** Simuliert einen SERVER-seitig ausgeloesten Verbindungsabbruch (z. B. Note geloescht). */
+  remoteClose(code: number, reason: string): void {
+    this.onclose?.({ code, reason } as CloseEvent);
   }
 
   static pair(): [FakeWebSocket, FakeWebSocket] {
@@ -135,6 +140,32 @@ describe("SyncClient", () => {
       clientA.awareness.setLocalStateField("cursor", { pos: 3 });
 
       expect(clientB.doc.getText("content").toString()).toBe("hello");
+    });
+  });
+
+  describe("remote note deletion", () => {
+    it("should_invokeOnNoteDeleted_when_socketClosesWithNoteDeletedCode", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      const onNoteDeleted = vi.fn();
+      client.onNoteDeleted = onNoteDeleted;
+      client.connect();
+
+      socket.remoteClose(CLOSE_CODE_NOTE_DELETED, "note deleted");
+
+      expect(onNoteDeleted).toHaveBeenCalledTimes(1);
+    });
+
+    it("should_notInvokeOnNoteDeleted_when_socketClosesWithAnOrdinaryCode", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      const onNoteDeleted = vi.fn();
+      client.onNoteDeleted = onNoteDeleted;
+      client.connect();
+
+      socket.remoteClose(1000, "normal closure");
+
+      expect(onNoteDeleted).not.toHaveBeenCalled();
     });
   });
 });

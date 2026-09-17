@@ -41,6 +41,12 @@ public final class PathRules {
         };
     }
 
+    /**
+     * Deterministisch bis zum Schluss: bei gleicher Praefix-Laenge UND gleicher Scope-
+     * Spezifitaet (z. B. zwei "Jeder"-Regeln auf demselben Pfad mit widerspruechlichem Effekt)
+     * gewinnt DENY - sicherer Default statt von der (nicht garantierten) DB-Rueckgabereihenfolge
+     * abzuhaengen.
+     */
     private static boolean isMoreSpecific(PathRule candidate, PathRule current) {
         var candidateLength = segments(candidate.pathPrefix()).size();
         var currentLength = segments(current.pathPrefix()).size();
@@ -49,7 +55,10 @@ public final class PathRules {
         }
         var candidateIsUserRule = candidate.scope() instanceof RuleScope.User;
         var currentIsUserRule = current.scope() instanceof RuleScope.User;
-        return candidateIsUserRule && !currentIsUserRule;
+        if (candidateIsUserRule != currentIsUserRule) {
+            return candidateIsUserRule;
+        }
+        return candidate.effect() == RuleEffect.DENY && current.effect() != RuleEffect.DENY;
     }
 
     private static boolean matchesPath(List<String> prefixSegments, List<String> pathSegments) {

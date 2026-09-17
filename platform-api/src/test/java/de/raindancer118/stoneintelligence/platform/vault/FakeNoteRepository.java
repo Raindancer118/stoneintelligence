@@ -1,9 +1,8 @@
 package de.raindancer118.stoneintelligence.platform.vault;
 
 import java.time.Instant;
-import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -16,13 +15,18 @@ import de.raindancer118.stoneintelligence.domain.notelevel.NoteLevel;
 public final class FakeNoteRepository implements NoteRepository {
 
     private final Map<NoteId, Note> notes = new LinkedHashMap<>();
+    // Monoton wachsende Sequenznummer je Note (spiegelt die bigserial-Spalte der Jdbc-Variante) -
+    // NICHT die NoteId selbst, die hat keine Beziehung zur Einfuegereihenfolge (s. ReconciliationCursor).
+    private final Map<NoteId, Long> noteSequences = new LinkedHashMap<>();
+    private final AtomicLong noteSequenceCounter = new AtomicLong(0);
     private final Map<String, Tombstone> tombstonesByOperationKey = new LinkedHashMap<>();
-    private final AtomicLong sequence = new AtomicLong(0);
+    private final AtomicLong tombstoneSequenceCounter = new AtomicLong(0);
 
     @Override
     public synchronized Note create(VaultId vaultId, String path, NoteLevel level, String createdBy) {
         var note = new Note(NoteId.newId(), vaultId, path, level, createdBy, Instant.now());
         notes.put(note.id(), note);
+        noteSequences.put(note.id(), noteSequenceCounter.incrementAndGet());
         return note;
     }
 
@@ -44,44 +48,26 @@ public final class FakeNoteRepository implements NoteRepository {
     public synchronized ReconciliationPage list(VaultId vaultId, String cursorToken, int pageSize) {
         var cursor = ReconciliationCursor.decode(cursorToken);
         var epochId = cursor.map(ReconciliationCursor::epochId).orElseGet(UUID::randomUUID);
-        var lastSeenId = cursor.flatMap(ReconciliationCursor::lastSeenId);
+        var lastSeenSequence = cursor.flatMap(ReconciliationCursor::lastSeenSequence).orElse(0L);
 
         var candidates = notes.values().stream()
             .filter(note -> note.vaultId().equals(vaultId))
-            .sorted((a, b) -> a.id().value().compareTo(b.id().value()))
+            .filter(note -> noteSequences.get(note.id()) > lastSeenSequence)
+            .sorted(Comparator.comparingLong(note -> noteSequences.get(note.id())))
             .toList();
 
-        var startIndex = lastSeenId
-            .map(id -> indexAfter(candidates, id))
-            .orElse(0);
-
-        var page = new ArrayList<Note>();
-        var index = startIndex;
-        while (index < candidates.size() && page.size() < pageSize) {
-            page.add(candidates.get(index));
-            index++;
-        }
-
-        var complete = index >= candidates.size();
+        var complete = candidates.size() <= pageSize;
+        var page = complete ? candidates : candidates.subList(0, pageSize);
         var nextCursor = complete
             ? Optional.<String>empty()
-            : Optional.of(ReconciliationCursor.of(epochId, page.getLast().id()).encode());
+            : Optional.of(ReconciliationCursor.of(epochId, noteSequences.get(page.getLast().id())).encode());
 
         return new ReconciliationPage(epochId, complete, nextCursor, page);
     }
 
-    private int indexAfter(List<Note> candidates, NoteId lastSeenId) {
-        for (int i = 0; i < candidates.size(); i++) {
-            if (candidates.get(i).id().equals(lastSeenId)) {
-                return i + 1;
-            }
-        }
-        return candidates.size();
-    }
-
     @Override
     public synchronized Tombstone delete(VaultId vaultId, NoteId noteId, String operationId, String deletedBy) {
-        var key = vaultId.value() + "|" + operationId;
+        var key = vaultId.value() + "|" + noteId.value() + "|" + operationId;
         var existing = tombstonesByOperationKey.get(key);
         if (existing != null) {
             return existing;
@@ -89,8 +75,9 @@ public final class FakeNoteRepository implements NoteRepository {
 
         findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId));
         notes.remove(noteId);
+        noteSequences.remove(noteId);
         var tombstone = new Tombstone(
-            UUID.randomUUID(), vaultId, noteId, operationId, sequence.incrementAndGet(), deletedBy, Instant.now());
+            UUID.randomUUID(), vaultId, noteId, operationId, tombstoneSequenceCounter.incrementAndGet(), deletedBy, Instant.now());
         tombstonesByOperationKey.put(key, tombstone);
         return tombstone;
     }

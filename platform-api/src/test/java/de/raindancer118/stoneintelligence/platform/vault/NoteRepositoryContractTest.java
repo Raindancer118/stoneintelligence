@@ -103,6 +103,32 @@ public abstract class NoteRepositoryContractTest {
 
             assertThat(page.notes()).extracting(Note::path).containsExactly("mine.md");
         }
+
+        @Test
+        void should_notSkipANoteCreatedDuringPagination_regardlessOfItsRandomId() {
+            // Ordnung nach UUID statt nach einer monoton wachsenden Sequenznummer wuerde eine
+            // waehrend der Pagination neu eingefuegte Note mit "kleinerer" UUID dauerhaft
+            // uebergehen, obwohl die letzte Seite faelschlich complete=true meldet
+            // (Fehlerklasse 2 - genau das soll die Epoch/Cursor-Konstruktion verhindern).
+            var repository = repository();
+            var vaultId = VaultId.newId();
+            var first = repository.create(vaultId, "a.md", NoteLevel.of(1), "tom");
+            var second = repository.create(vaultId, "b.md", NoteLevel.of(1), "tom");
+
+            var firstPage = repository.list(vaultId, null, 1);
+            assertThat(firstPage.complete()).isFalse();
+            assertThat(firstPage.notes()).extracting(Note::id).containsExactly(first.id());
+
+            // Wird "waehrend der Pagination" eingefuegt - egal, ob seine zufaellige UUID
+            // lexikographisch kleiner oder groesser als die bereits gesehenen ist.
+            var insertedDuringPagination = repository.create(vaultId, "c.md", NoteLevel.of(1), "tom");
+
+            var secondPage = repository.list(vaultId, firstPage.nextCursor().get(), 10);
+
+            assertThat(secondPage.complete()).isTrue();
+            assertThat(secondPage.notes()).extracting(Note::id)
+                .containsExactlyInAnyOrder(second.id(), insertedDuringPagination.id());
+        }
     }
 
     @Nested
@@ -153,6 +179,23 @@ public abstract class NoteRepositoryContractTest {
             var secondTombstone = repository.delete(vaultId, second.id(), "op-b", "tom");
 
             assertThat(secondTombstone.serverSequence()).isGreaterThan(firstTombstone.serverSequence());
+        }
+
+        @Test
+        void should_notReturnAnotherNotesTombstone_when_operationIdIsReusedForADifferentNote() {
+            // Idempotenz ist an (vaultId, noteId, operationId) gebunden, nicht nur an
+            // (vaultId, operationId) - sonst koennte ein wiederverwendeter operationId-Wert die
+            // Sync-Session/den Audit-Eintrag einer VOELLIG ANDEREN Note treffen.
+            var repository = repository();
+            var vaultId = VaultId.newId();
+            var noteA = repository.create(vaultId, "a.md", NoteLevel.of(1), "tom");
+            var noteB = repository.create(vaultId, "b.md", NoteLevel.of(1), "tom");
+
+            var tombstoneForA = repository.delete(vaultId, noteA.id(), "shared-op-id", "tom");
+            var tombstoneForB = repository.delete(vaultId, noteB.id(), "shared-op-id", "tom");
+
+            assertThat(tombstoneForB.noteId()).isEqualTo(noteB.id());
+            assertThat(tombstoneForB).isNotEqualTo(tombstoneForA);
         }
 
         @Test

@@ -8,6 +8,7 @@ import de.raindancer118.stoneintelligence.domain.notelevel.NoteLevel;
 import de.raindancer118.stoneintelligence.platform.audit.AuditService;
 import de.raindancer118.stoneintelligence.platform.sync.relay.SyncRelayService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -37,6 +38,7 @@ public class NoteController {
     }
 
     @PostMapping("/api/v1/vaults/{vaultId}/notes")
+    @Transactional
     public NoteResponse create(
         @PathVariable String vaultId,
         @RequestBody CreateNoteRequest request,
@@ -81,6 +83,7 @@ public class NoteController {
     }
 
     @PatchMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
+    @Transactional
     public NoteResponse rename(
         @PathVariable String vaultId,
         @PathVariable String noteId,
@@ -96,6 +99,7 @@ public class NoteController {
     }
 
     @DeleteMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
+    @Transactional
     public TombstoneResponse delete(
         @PathVariable String vaultId,
         @PathVariable String noteId,
@@ -105,8 +109,11 @@ public class NoteController {
         var vId = VaultId.of(vaultId);
         var nId = NoteId.of(noteId);
         var tombstone = notes.delete(vId, nId, operationId, actor);
-        relay.onNoteDeleted(nId);
         audit.record(vId, nId, actor, "note.deleted", java.util.Map.of("operationId", operationId));
+        // Erst NACH den DB-Schreibvorgaengen ankuendigen, dass die Note weg ist - sonst wuerde
+        // ein Client benachrichtigt, bevor der Audit-Eintrag (oder gar die Loeschung selbst bei
+        // einem spaeteren Rollback) tatsaechlich feststeht.
+        relay.onNoteDeleted(nId);
         return TombstoneResponse.from(tombstone);
     }
 

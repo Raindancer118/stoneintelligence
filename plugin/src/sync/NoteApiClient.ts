@@ -22,7 +22,7 @@ export class NoteApiClient {
   async renameNote(vaultId: string, noteId: string, newPath: string): Promise<void> {
     const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/notes/${noteId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Actor": this.actor },
       body: JSON.stringify({ path: newPath }),
     });
     if (!response.ok) {

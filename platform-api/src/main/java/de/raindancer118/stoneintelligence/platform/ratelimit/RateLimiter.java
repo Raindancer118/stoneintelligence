@@ -17,28 +17,69 @@ import java.util.concurrent.ConcurrentMap;
  */
 public final class RateLimiter {
 
+    private static final int DEFAULT_MAX_TRACKED_KEYS = 10_000;
+
     private final Clock clock;
     private final int capacity;
     private final double refillTokensPerSecond;
+    private final int maxTrackedKeys;
     private final ConcurrentMap<String, TokenBucket> buckets = new ConcurrentHashMap<>();
 
     public RateLimiter(Clock clock, int capacity, double refillTokensPerSecond) {
+        this(clock, capacity, refillTokensPerSecond, DEFAULT_MAX_TRACKED_KEYS);
+    }
+
+    /**
+     * @param maxTrackedKeys ab dieser Anzahl beobachteter Schluessel raeumt {@link #tryConsume}
+     *                       beilaeufig "idle" Buckets auf (voll aufgefuellt = unbenutzt) - sonst
+     *                       waechst die Map unbegrenzt, wenn ein Client (z. B. ueber rotierende
+     *                       X-Actor-Werte) beliebig viele Schluessel erzeugt (Speicher-DoS).
+     */
+    public RateLimiter(Clock clock, int capacity, double refillTokensPerSecond, int maxTrackedKeys) {
         this.clock = clock;
         this.capacity = capacity;
         this.refillTokensPerSecond = refillTokensPerSecond;
+        this.maxTrackedKeys = maxTrackedKeys;
     }
 
     public RateLimitResult tryConsume(String key) {
         var bucket = buckets.computeIfAbsent(key, k -> new TokenBucket(capacity, clock.instant()));
+        RateLimitResult result;
         synchronized (bucket) {
             refill(bucket);
             if (bucket.tokens >= 1.0) {
                 bucket.tokens -= 1.0;
-                return RateLimitResult.permit();
+                result = RateLimitResult.permit();
+            } else {
+                var secondsToWait = (1.0 - bucket.tokens) / refillTokensPerSecond;
+                var millisToWait = (long) Math.ceil(secondsToWait * 1000.0);
+                result = RateLimitResult.reject(Duration.ofMillis(millisToWait));
             }
-            var secondsToWait = (1.0 - bucket.tokens) / refillTokensPerSecond;
-            var millisToWait = (long) Math.ceil(secondsToWait * 1000.0);
-            return RateLimitResult.reject(Duration.ofMillis(millisToWait));
+        }
+        if (buckets.size() > maxTrackedKeys) {
+            evictIdleBuckets();
+        }
+        return result;
+    }
+
+    /** Nur fuer Tests: Anzahl aktuell verfolgter Schluessel. */
+    int trackedKeyCount() {
+        return buckets.size();
+    }
+
+    private void evictIdleBuckets() {
+        for (var entry : buckets.entrySet()) {
+            var bucket = entry.getValue();
+            synchronized (bucket) {
+                // Erst auffuellen (der Schluessel wurde evtl. lange nicht mehr angefragt, sein
+                // Tokenstand ist sonst veraltet), dann pruefen: ein Bucket auf voller Kapazitaet
+                // verhaelt sich identisch, ob er hier bleibt oder beim naechsten tryConsume()
+                // neu angelegt wird - gefahrlos entfernbar.
+                refill(bucket);
+                if (bucket.tokens >= capacity) {
+                    buckets.remove(entry.getKey(), bucket);
+                }
+            }
         }
     }
 

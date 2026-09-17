@@ -39,7 +39,7 @@ describe("NoteApiClient", () => {
         "https://platform.example/api/v1/vaults/vault-1/notes/note-1",
         expect.objectContaining({
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "X-Actor": "tom" },
           body: JSON.stringify({ path: "new-path.md" }),
         }),
       );

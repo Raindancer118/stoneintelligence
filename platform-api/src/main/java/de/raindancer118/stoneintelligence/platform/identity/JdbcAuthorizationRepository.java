@@ -70,7 +70,27 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
     }
 
     @Override
+    @Transactional
     public void assignRole(UUID groupId, UUID roleId) {
+        var groupVaultId = jdbcClient.sql("SELECT vault_id FROM platform.groups WHERE id = :groupId")
+            .param("groupId", groupId)
+            .query(UUID.class)
+            .optional()
+            .orElseThrow(() -> new IllegalArgumentException("no such group: " + groupId));
+        var roleVaultId = jdbcClient.sql("SELECT vault_id FROM platform.roles WHERE id = :roleId")
+            .param("roleId", roleId)
+            .query(UUID.class)
+            .optional()
+            .orElseThrow(() -> new IllegalArgumentException("no such role: " + roleId));
+        // Ohne diese Pruefung koennte eine Rolle aus einem ANDEREN Vault einer Gruppe zugewiesen
+        // werden - effectivePermissions() wuerde deren Berechtigungen dann faelschlich gewaehren,
+        // sobald ACL-Durchsetzung verdrahtet ist (Cross-Vault-Rechte-Import).
+        if (!groupVaultId.equals(roleVaultId)) {
+            throw new IllegalArgumentException(
+                "group " + groupId + " (vault " + groupVaultId + ") and role " + roleId
+                    + " (vault " + roleVaultId + ") belong to different vaults");
+        }
+
         jdbcClient.sql("""
                 INSERT INTO platform.group_roles (group_id, role_id) VALUES (:groupId, :roleId)
                 ON CONFLICT DO NOTHING
@@ -95,6 +115,7 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
                 FROM platform.group_members gm
                 JOIN platform.groups g ON g.id = gm.group_id AND g.vault_id = :vaultId
                 JOIN platform.group_roles gr ON gr.group_id = g.id
+                JOIN platform.roles r ON r.id = gr.role_id AND r.vault_id = :vaultId
                 JOIN platform.role_permissions rp ON rp.role_id = gr.role_id
                 WHERE gm.subject = :subject
                 """)
@@ -143,7 +164,7 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
 
     @Override
     public List<PathRule> listPathRules(VaultId vaultId) {
-        return jdbcClient.sql("SELECT * FROM platform.path_rules WHERE vault_id = :vaultId")
+        return jdbcClient.sql("SELECT * FROM platform.path_rules WHERE vault_id = :vaultId ORDER BY id")
             .param("vaultId", vaultId.value())
             .query(PATH_RULE_MAPPER)
             .list();
@@ -166,7 +187,7 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
 
     @Override
     public List<TopicRule> listTopicRules(VaultId vaultId) {
-        return jdbcClient.sql("SELECT * FROM platform.topic_rules WHERE vault_id = :vaultId")
+        return jdbcClient.sql("SELECT * FROM platform.topic_rules WHERE vault_id = :vaultId ORDER BY id")
             .param("vaultId", vaultId.value())
             .query(TOPIC_RULE_MAPPER)
             .list();

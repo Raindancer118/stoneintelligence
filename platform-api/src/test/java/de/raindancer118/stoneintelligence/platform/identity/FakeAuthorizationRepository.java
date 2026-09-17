@@ -56,6 +56,19 @@ public final class FakeAuthorizationRepository implements AuthorizationRepositor
 
     @Override
     public synchronized void assignRole(UUID groupId, UUID roleId) {
+        var group = groups.get(groupId);
+        if (group == null) {
+            throw new IllegalArgumentException("no such group: " + groupId);
+        }
+        var role = roles.get(roleId);
+        if (role == null) {
+            throw new IllegalArgumentException("no such role: " + roleId);
+        }
+        if (!group.vaultId().equals(role.vaultId())) {
+            throw new IllegalArgumentException(
+                "group " + groupId + " (vault " + group.vaultId() + ") and role " + roleId
+                    + " (vault " + role.vaultId() + ") belong to different vaults");
+        }
         groupRoles.computeIfAbsent(groupId, id -> new HashSet<>()).add(roleId);
     }
 
@@ -75,6 +88,7 @@ public final class FakeAuthorizationRepository implements AuthorizationRepositor
             .flatMap(group -> groupRoles.getOrDefault(group.id(), Set.of()).stream())
             .map(roles::get)
             .filter(java.util.Objects::nonNull)
+            .filter(role -> role.vaultId().equals(vaultId))
             .flatMap(role -> role.permissions().stream())
             .collect(Collectors.toUnmodifiableSet());
     }

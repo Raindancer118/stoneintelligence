@@ -10,6 +10,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class JdbcNoteRepository implements NoteRepository {
@@ -21,6 +22,13 @@ public class JdbcNoteRepository implements NoteRepository {
         NoteLevel.of(rs.getInt("note_level")),
         rs.getString("created_by"),
         rs.getTimestamp("created_at").toInstant()
+    );
+
+    private record NoteWithSequence(Note note, long sequence) {
+    }
+
+    private static final RowMapper<NoteWithSequence> NOTE_WITH_SEQUENCE_MAPPER = (rs, rowNum) -> new NoteWithSequence(
+        NOTE_MAPPER.mapRow(rs, rowNum), rs.getLong("sequence")
     );
 
     private static final RowMapper<Tombstone> TOMBSTONE_MAPPER = (rs, rowNum) -> new Tombstone(
@@ -65,6 +73,7 @@ public class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
+    @Transactional
     public Note rename(VaultId vaultId, NoteId noteId, String newPath) {
         findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId));
         jdbcClient.sql("UPDATE platform.notes SET path = :path WHERE id = :id AND vault_id = :vaultId")
@@ -79,43 +88,37 @@ public class JdbcNoteRepository implements NoteRepository {
     public ReconciliationPage list(VaultId vaultId, String cursorToken, int pageSize) {
         var cursor = ReconciliationCursor.decode(cursorToken);
         var epochId = cursor.map(ReconciliationCursor::epochId).orElseGet(UUID::randomUUID);
-        var lastSeenId = cursor.flatMap(ReconciliationCursor::lastSeenId);
+        var lastSeenSequence = cursor.flatMap(ReconciliationCursor::lastSeenSequence).orElse(0L);
 
-        List<Note> rows = lastSeenId
-            .map(id -> jdbcClient.sql("""
-                    SELECT * FROM platform.notes
-                    WHERE vault_id = :vaultId AND id > :lastSeenId
-                    ORDER BY id
-                    LIMIT :limit
-                    """)
-                .param("vaultId", vaultId.value())
-                .param("lastSeenId", id.value())
-                .param("limit", pageSize + 1)
-                .query(NOTE_MAPPER)
-                .list())
-            .orElseGet(() -> jdbcClient.sql("""
-                    SELECT * FROM platform.notes
-                    WHERE vault_id = :vaultId
-                    ORDER BY id
-                    LIMIT :limit
-                    """)
-                .param("vaultId", vaultId.value())
-                .param("limit", pageSize + 1)
-                .query(NOTE_MAPPER)
-                .list());
+        // ORDER BY sequence (bigserial), NICHT id: eine UUID hat keine Beziehung zur
+        // Einfuegereihenfolge - eine waehrend der Pagination neu eingefuegte Zeile mit
+        // "kleinerer" UUID wuerde bei "id > cursor" dauerhaft uebergangen, obwohl die letzte
+        // Seite faelschlich complete=true meldet.
+        List<NoteWithSequence> rows = jdbcClient.sql("""
+                SELECT * FROM platform.notes
+                WHERE vault_id = :vaultId AND sequence > :lastSeenSequence
+                ORDER BY sequence
+                LIMIT :limit
+                """)
+            .param("vaultId", vaultId.value())
+            .param("lastSeenSequence", lastSeenSequence)
+            .param("limit", pageSize + 1)
+            .query(NOTE_WITH_SEQUENCE_MAPPER)
+            .list();
 
         var complete = rows.size() <= pageSize;
         var page = complete ? rows : rows.subList(0, pageSize);
         var nextCursor = complete
             ? Optional.<String>empty()
-            : Optional.of(ReconciliationCursor.of(epochId, page.get(page.size() - 1).id()).encode());
+            : Optional.of(ReconciliationCursor.of(epochId, page.get(page.size() - 1).sequence()).encode());
 
-        return new ReconciliationPage(epochId, complete, nextCursor, page);
+        return new ReconciliationPage(epochId, complete, nextCursor, page.stream().map(NoteWithSequence::note).toList());
     }
 
     @Override
+    @Transactional
     public Tombstone delete(VaultId vaultId, NoteId noteId, String operationId, String deletedBy) {
-        var existing = findTombstoneByOperation(vaultId, operationId);
+        var existing = findTombstoneByOperation(vaultId, noteId, operationId);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -140,7 +143,7 @@ public class JdbcNoteRepository implements NoteRepository {
                 .param("deletedBy", deletedBy)
                 .update();
         } catch (DuplicateKeyException raceLostToConcurrentDelete) {
-            return findTombstoneByOperation(vaultId, operationId)
+            return findTombstoneByOperation(vaultId, noteId, operationId)
                 .orElseThrow(() -> raceLostToConcurrentDelete);
         }
 
@@ -150,11 +153,18 @@ public class JdbcNoteRepository implements NoteRepository {
             .single();
     }
 
-    private Optional<Tombstone> findTombstoneByOperation(VaultId vaultId, String operationId) {
+    /**
+     * Idempotenz-Lookup bewusst nach (vaultId, noteId, operationId) - nicht nur (vaultId,
+     * operationId), sonst koennte ein wiederverwendeter operationId-Wert fuer eine ANDERE Note
+     * denselben Tombstone zurueckliefern (Fehlerklasse: Operation-ID-Replay).
+     */
+    private Optional<Tombstone> findTombstoneByOperation(VaultId vaultId, NoteId noteId, String operationId) {
         return jdbcClient.sql("""
-                SELECT * FROM platform.note_tombstones WHERE vault_id = :vaultId AND operation_id = :operationId
+                SELECT * FROM platform.note_tombstones
+                WHERE vault_id = :vaultId AND note_id = :noteId AND operation_id = :operationId
                 """)
             .param("vaultId", vaultId.value())
+            .param("noteId", noteId.value())
             .param("operationId", operationId)
             .query(TOMBSTONE_MAPPER)
             .optional();

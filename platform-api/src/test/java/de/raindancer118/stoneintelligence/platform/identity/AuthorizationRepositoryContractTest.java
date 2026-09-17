@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Vertrag, den {@code FakeAuthorizationRepository} und {@code JdbcAuthorizationRepository} beide erfuellen. */
 public abstract class AuthorizationRepositoryContractTest {
@@ -64,6 +65,18 @@ public abstract class AuthorizationRepositoryContractTest {
             repository.removeMember(group.id(), "tom");
 
             assertThat(repository.effectivePermissions(vaultId, "tom")).isEmpty();
+        }
+
+        @Test
+        void should_rejectAssignRole_when_groupAndRoleBelongToDifferentVaults() {
+            var repository = repository();
+            var vaultId = VaultId.newId();
+            var otherVaultId = VaultId.newId();
+            var role = repository.createRole(otherVaultId, "editor", Set.of(Permission.WRITE));
+            var group = repository.createGroup(vaultId, "editors");
+
+            assertThatThrownBy(() -> repository.assignRole(group.id(), role.id()))
+                .isInstanceOf(IllegalArgumentException.class);
         }
 
         @Test

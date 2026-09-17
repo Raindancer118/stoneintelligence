@@ -1,6 +1,6 @@
 import { Compartment } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import { App, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
+import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
 import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
 import { NoteApiClient } from "./sync/NoteApiClient";
@@ -153,12 +153,30 @@ export default class StoneIntelligencePlugin extends Plugin {
 
     const doc = new Y.Doc();
     const text = doc.getText("content");
-    const initialContent = await this.app.vault.read(file);
-    text.insert(0, initialContent);
 
+    // WICHTIG: Client zuerst verbinden, DANACH erst lokalen Inhalt einspielen. SyncClients
+    // Update-Listener wird im Konstruktor registriert - wuerde man den Inhalt vorher einfuegen,
+    // wuerde das erzeugte Yjs-Update verpuffen (kein Listener vorhanden), und die Notiz wuerde
+    // nie zum Server uebertragen werden.
     const wsUrl = `${this.settings.platformWsUrl}/ws/sync?ticket=${encodeURIComponent(ticket.token)}`;
     const client = new SyncClient(wsUrl, (url) => new WebSocket(url), doc);
+    client.onNoteDeleted = () => this.handleRemoteNoteDeleted(file.path);
     client.connect();
+
+    // Kurze Gnadenfrist, damit ein eventueller Late-Joiner-Catchup (die Notiz hat bereits
+    // Server-Historie von einem anderen Client) eintreffen kann, BEVOR wir den lokalen
+    // Dateiinhalt einspielen - sonst wuerden zwei unabhaengige volle Texte additiv im selben
+    // Y.Text landen (CRDT-Merge, kein "letzter gewinnt"). Eine echte "Catchup abgeschlossen"-
+    // Markierung gibt es im WS-Protokoll noch nicht (dokumentierte Grenze).
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const initialContent = await this.app.vault.read(file);
+    if (text.toString() !== initialContent) {
+      doc.transact(() => {
+        text.delete(0, text.length);
+        text.insert(0, initialContent);
+      });
+    }
 
     const session: NoteSyncSession = {
       path: file.path,
@@ -238,6 +256,21 @@ export default class StoneIntelligencePlugin extends Plugin {
       session.client.disconnect();
       this.sessions.delete(path);
     }
+  }
+
+  /**
+   * Der Server hat die Verbindung mit Close-Code 4404 getrennt (ein ANDERER Client hat die
+   * Note geloescht). Die lokale Datei wird bewusst NICHT automatisch geloescht - ein Server-
+   * Signal ohne Korrelation zu einer eigenen Operation ist keine ausreichende Grundlage fuer
+   * eine irreversible lokale Aktion. Stattdessen: Sync stoppen, NoteId-Zuordnung verwerfen
+   * (ein weiterer Edit wuerde sonst versuchen, eine bereits geloeschte Note anzusprechen), und
+   * den Nutzer informieren.
+   */
+  private async handleRemoteNoteDeleted(path: string): Promise<void> {
+    this.stopSync(path);
+    delete this.settings.noteIds[path];
+    await this.saveSettings();
+    new Notice(`StoneIntelligence: "${path}" wurde auf einem anderen Geraet geloescht und nicht mehr synchronisiert.`);
   }
 
   /** Ein remote empfangenes Yjs-Update wurde bereits in den Y.Text gemerged - jetzt auf die Datei anwenden. */

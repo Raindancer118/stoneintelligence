@@ -24,6 +24,12 @@ CREATE TABLE platform.notes (
     vault_id        uuid NOT NULL REFERENCES platform.vaults(id) ON DELETE CASCADE,
     path            text NOT NULL,
     note_level      integer NOT NULL CHECK (note_level BETWEEN 1 AND 101),
+    -- Monoton wachsende, serverseitig vergebene Sequenznummer je Zeile (bigserial, NICHT die
+    -- UUID) - Grundlage fuer die Keyset-Pagination der Reconciliation (Fehlerklasse 2). Eine
+    -- UUID hat KEINE Beziehung zur Einfuegereihenfolge; ein "id > letzte-gesehene-id"-Cursor
+    -- kann eine waehrend der Pagination neu eingefuegte Zeile mit "kleinerer" UUID dauerhaft
+    -- uebergehen, obwohl die letzte Seite faelschlich complete=true meldet.
+    sequence        bigserial NOT NULL,
 
     created_by      text NOT NULL,
     created_at      timestamptz NOT NULL DEFAULT now(),
@@ -36,6 +42,7 @@ CREATE TABLE platform.notes (
 );
 
 CREATE INDEX idx_notes_vault_id ON platform.notes (vault_id);
+CREATE INDEX idx_notes_vault_sequence ON platform.notes (vault_id, sequence);
 CREATE INDEX idx_notes_path_trgm ON platform.notes USING gin (path gin_trgm_ops);
 
 -- Snapshots des Yjs-CRDT-Zustands (der laut Plan.md Abschnitt 8.4 die Source of Truth ist).
@@ -69,7 +76,11 @@ CREATE TABLE platform.note_tombstones (
     deleted_at      timestamptz NOT NULL DEFAULT now(),
     garbage_collected_at timestamptz,
 
-    UNIQUE (vault_id, operation_id)
+    -- Idempotenz ist bewusst an (vault_id, note_id, operation_id) gebunden, nicht nur
+    -- (vault_id, operation_id): sonst koennte ein wiederverwendeter/erratener operation_id-Wert
+    -- fuer eine ANDERE Note im selben Vault denselben Tombstone zurueckliefern und dadurch deren
+    -- Sync-Session schliessen sowie einen falschen Audit-Eintrag fuer sie erzeugen.
+    UNIQUE (vault_id, note_id, operation_id)
 );
 
 CREATE INDEX idx_note_tombstones_vault_sequence ON platform.note_tombstones (vault_id, server_sequence);

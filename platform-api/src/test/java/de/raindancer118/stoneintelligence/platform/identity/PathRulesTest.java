@@ -114,4 +114,23 @@ class PathRulesTest {
             assertThat(PathRules.resolve(rules, "private/note.md", "alice")).isEqualTo(RuleEffect.DENY);
         }
     }
+
+    @Nested
+    class DenyWinsTiesAtEqualSpecificity {
+
+        @Test
+        void should_preferDeny_overAllowAtSamePrefixAndScope_regardlessOfListOrder() {
+            var denyFirst = List.of(
+                new PathRule("shared", RuleScope.everyone(), RuleEffect.DENY),
+                new PathRule("shared", RuleScope.everyone(), RuleEffect.ALLOW)
+            );
+            var allowFirst = List.of(
+                new PathRule("shared", RuleScope.everyone(), RuleEffect.ALLOW),
+                new PathRule("shared", RuleScope.everyone(), RuleEffect.DENY)
+            );
+
+            assertThat(PathRules.resolve(denyFirst, "shared/note.md", "tom")).isEqualTo(RuleEffect.DENY);
+            assertThat(PathRules.resolve(allowFirst, "shared/note.md", "tom")).isEqualTo(RuleEffect.DENY);
+        }
+    }
 }

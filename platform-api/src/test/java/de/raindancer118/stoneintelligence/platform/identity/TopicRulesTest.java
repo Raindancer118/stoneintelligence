@@ -93,4 +93,23 @@ class TopicRulesTest {
                 .isEqualTo(RuleEffect.ALLOW);
         }
     }
+
+    @Nested
+    class DenyWinsTiesAtEqualSpecificity {
+
+        @Test
+        void should_preferDeny_overAllowForSameTopicAndScope_regardlessOfListOrder() {
+            var denyFirst = List.of(
+                new TopicRule("finance", RuleScope.everyone(), RuleEffect.DENY),
+                new TopicRule("finance", RuleScope.everyone(), RuleEffect.ALLOW)
+            );
+            var allowFirst = List.of(
+                new TopicRule("finance", RuleScope.everyone(), RuleEffect.ALLOW),
+                new TopicRule("finance", RuleScope.everyone(), RuleEffect.DENY)
+            );
+
+            assertThat(TopicRules.resolve(denyFirst, Set.of("finance"), "tom")).isEqualTo(RuleEffect.DENY);
+            assertThat(TopicRules.resolve(allowFirst, Set.of("finance"), "tom")).isEqualTo(RuleEffect.DENY);
+        }
+    }
 }

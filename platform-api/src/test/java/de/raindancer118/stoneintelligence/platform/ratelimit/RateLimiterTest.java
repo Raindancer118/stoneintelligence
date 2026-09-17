@@ -86,6 +86,44 @@ class RateLimiterTest {
     }
 
     @Nested
+    class BoundedGrowth {
+
+        @Test
+        void should_evictIdleBuckets_when_trackedKeyCountExceedsThreshold() {
+            // Ohne Eviction waechst die Map unbegrenzt, wenn ein Client beliebig viele
+            // Schluessel erzeugt (z. B. rotierende X-Actor-Werte) - Speicher-DoS.
+            var clock = new MutableClock(now, ZoneOffset.UTC);
+            var limiter = new RateLimiter(clock, 1, 1.0, 3);
+
+            limiter.tryConsume("key-1");
+            limiter.tryConsume("key-2");
+            limiter.tryConsume("key-3");
+            assertThat(limiter.trackedKeyCount()).isEqualTo(3);
+
+            // Genug Zeit vergeht, dass key-1..3 wieder auf volle Kapazitaet aufgefuellt waeren
+            // (also "idle") - erst DANACH wird ein vierter Schluessel angefragt und die
+            // beilaeufige Eviction ausgeloest.
+            clock.advanceBy(Duration.ofSeconds(10));
+            limiter.tryConsume("key-4");
+
+            assertThat(limiter.trackedKeyCount()).isLessThan(4);
+        }
+
+        @Test
+        void should_notEvictARecentlyConsumedBucket_evenWhenOverThreshold() {
+            // Ohne Zeitablauf bleibt "busy-key" unterhalb voller Kapazitaet (ein Token
+            // verbraucht) und gilt daher nicht als idle, selbst wenn eine Eviction-Runde laeuft.
+            var limiter = new RateLimiter(new MutableClock(now, ZoneOffset.UTC), 5, 1.0, 1);
+
+            limiter.tryConsume("busy-key");
+            limiter.tryConsume("other-key-1");
+            limiter.tryConsume("other-key-2");
+
+            assertThat(limiter.tryConsume("busy-key").allowed()).isTrue();
+        }
+    }
+
+    @Nested
     class PerKeyIsolation {
 
         @Test

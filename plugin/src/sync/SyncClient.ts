@@ -26,6 +26,9 @@ export type WebSocketFactory = (url: string) => WebSocketLike;
 const MESSAGE_TYPE_DOC_UPDATE = 0;
 const MESSAGE_TYPE_AWARENESS = 1;
 
+/** Muss zu {@code SyncRelayService.CLOSE_CODE_NOTE_DELETED} auf dem Server passen. */
+export const CLOSE_CODE_NOTE_DELETED = 4404;
+
 /**
  * Client-Seite des "dummen" Yjs-Relays (Plan.md Abschnitt 2/8.4): der Server interpretiert die
  * Bytes nicht, er verteilt sie nur. {@link doc} ist die Source of Truth (ADR 0002) - die
@@ -36,6 +39,9 @@ export class SyncClient {
   readonly doc: Y.Doc;
   readonly awareness: Awareness;
   private socket: WebSocketLike | null = null;
+
+  /** Wird aufgerufen, wenn der Server die Verbindung mit {@link CLOSE_CODE_NOTE_DELETED} trennt. */
+  onNoteDeleted: (() => void) | null = null;
 
   constructor(
     private readonly wsUrl: string,
@@ -80,6 +86,11 @@ export class SyncClient {
         applyAwarenessUpdate(this.awareness, payload, this);
       } else {
         Y.applyUpdate(this.doc, payload, this);
+      }
+    };
+    this.socket.onclose = (event) => {
+      if (event.code === CLOSE_CODE_NOTE_DELETED) {
+        this.onNoteDeleted?.();
       }
     };
   }

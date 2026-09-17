@@ -13,3 +13,4 @@ plugin/main.js
 !.env.example
 Project.md
 .claude/
+.serena/

@@ -48,9 +48,17 @@ public final class TopicRules {
         };
     }
 
+    /**
+     * Deterministisch bis zum Schluss: bei gleicher Scope-Spezifitaet fuer dasselbe Thema (z. B.
+     * zwei "Jeder"-Regeln mit widerspruechlichem Effekt) gewinnt DENY - sicherer Default statt
+     * von der (nicht garantierten) DB-Rueckgabereihenfolge abzuhaengen.
+     */
     private static boolean isMoreSpecific(TopicRule candidate, TopicRule current) {
         var candidateIsUserRule = candidate.scope() instanceof RuleScope.User;
         var currentIsUserRule = current.scope() instanceof RuleScope.User;
-        return candidateIsUserRule && !currentIsUserRule;
+        if (candidateIsUserRule != currentIsUserRule) {
+            return candidateIsUserRule;
+        }
+        return candidate.effect() == RuleEffect.DENY && current.effect() != RuleEffect.DENY;
     }
 }
