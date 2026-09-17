@@ -23,13 +23,20 @@ public abstract class NoteRepositoryContractTest {
 
     protected abstract NoteRepository repository();
 
+    /**
+     * Erzeugt einen Vault, der bei einer echten DB tatsaechlich existiert - `platform.notes`
+     * hat eine Fremdschluessel-Constraint auf `platform.vaults` (s. V1__initial_schema.sql).
+     * Der Fake braucht das nicht, muss die Methode aber trotzdem anbieten (einfach eine neue ID).
+     */
+    protected abstract VaultId newVault();
+
     @Nested
     class CreateAndFind {
 
         @Test
         void should_beFindableById_when_justCreated() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
 
             var created = repository.create(vaultId, "foo/bar.md", NoteLevel.of(1), "tom");
 
@@ -38,14 +45,14 @@ public abstract class NoteRepositoryContractTest {
 
         @Test
         void should_beEmpty_when_idIsUnknown() {
-            assertThat(repository().findById(VaultId.newId(), NoteId.newId())).isEmpty();
+            assertThat(repository().findById(newVault(), NoteId.newId())).isEmpty();
         }
 
         @Test
         void should_beEmpty_when_noteExistsButBelongsToADifferentVault() {
             var repository = repository();
-            var vaultId = VaultId.newId();
-            var otherVaultId = VaultId.newId();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
             var note = repository.create(vaultId, "mine.md", NoteLevel.of(1), "tom");
 
             assertThat(repository.findById(otherVaultId, note.id())).isEmpty();
@@ -58,7 +65,7 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_returnAllNotesAcrossPages_when_pageSizeSmallerThanNoteCount() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             for (int i = 0; i < 5; i++) {
                 repository.create(vaultId, "note-" + i + ".md", NoteLevel.of(1), "tom");
             }
@@ -82,7 +89,7 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_markSinglePageComplete_when_allNotesFitInOnePage() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             repository.create(vaultId, "only.md", NoteLevel.of(1), "tom");
 
             var page = repository.list(vaultId, null, 10);
@@ -94,8 +101,8 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_notLeakNotesFromOtherVaults_when_listing() {
             var repository = repository();
-            var vaultId = VaultId.newId();
-            var otherVaultId = VaultId.newId();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
             repository.create(vaultId, "mine.md", NoteLevel.of(1), "tom");
             repository.create(otherVaultId, "not-mine.md", NoteLevel.of(1), "someone-else");
 
@@ -111,7 +118,7 @@ public abstract class NoteRepositoryContractTest {
             // uebergehen, obwohl die letzte Seite faelschlich complete=true meldet
             // (Fehlerklasse 2 - genau das soll die Epoch/Cursor-Konstruktion verhindern).
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var first = repository.create(vaultId, "a.md", NoteLevel.of(1), "tom");
             var second = repository.create(vaultId, "b.md", NoteLevel.of(1), "tom");
 
@@ -137,7 +144,7 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_removeNoteFromFindById_when_deleted() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var note = repository.create(vaultId, "gone.md", NoteLevel.of(1), "tom");
 
             repository.delete(vaultId, note.id(), "op-1", "tom");
@@ -148,7 +155,7 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_removeNoteFromReconciliationListing_when_deleted() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var note = repository.create(vaultId, "gone.md", NoteLevel.of(1), "tom");
 
             repository.delete(vaultId, note.id(), "op-1", "tom");
@@ -159,7 +166,7 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_returnSameTombstone_when_deleteCalledTwiceWithSameOperationId() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var note = repository.create(vaultId, "gone.md", NoteLevel.of(1), "tom");
 
             var first = repository.delete(vaultId, note.id(), "op-1", "tom");
@@ -171,7 +178,7 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_assignIncreasingServerSequence_when_deletingMultipleNotes() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var first = repository.create(vaultId, "a.md", NoteLevel.of(1), "tom");
             var second = repository.create(vaultId, "b.md", NoteLevel.of(1), "tom");
 
@@ -187,7 +194,7 @@ public abstract class NoteRepositoryContractTest {
             // (vaultId, operationId) - sonst koennte ein wiederverwendeter operationId-Wert die
             // Sync-Session/den Audit-Eintrag einer VOELLIG ANDEREN Note treffen.
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var noteA = repository.create(vaultId, "a.md", NoteLevel.of(1), "tom");
             var noteB = repository.create(vaultId, "b.md", NoteLevel.of(1), "tom");
 
@@ -201,8 +208,8 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_rejectDelete_when_noteBelongsToADifferentVault() {
             var repository = repository();
-            var vaultId = VaultId.newId();
-            var otherVaultId = VaultId.newId();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
             var note = repository.create(vaultId, "not-yours.md", NoteLevel.of(1), "tom");
 
             assertThatThrownBy(() -> repository.delete(otherVaultId, note.id(), "op-1", "attacker"))
@@ -218,7 +225,7 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_updatePath_when_renamed() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var note = repository.create(vaultId, "old.md", NoteLevel.of(1), "tom");
 
             var renamed = repository.rename(vaultId, note.id(), "new.md");
@@ -230,7 +237,7 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_beReflectedInReconciliationListing_when_renamed() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var note = repository.create(vaultId, "old.md", NoteLevel.of(1), "tom");
 
             repository.rename(vaultId, note.id(), "new.md");
@@ -241,7 +248,7 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_preserveNoteId_when_renamed() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var note = repository.create(vaultId, "old.md", NoteLevel.of(1), "tom");
 
             var renamed = repository.rename(vaultId, note.id(), "new.md");
@@ -252,8 +259,8 @@ public abstract class NoteRepositoryContractTest {
         @Test
         void should_rejectRename_when_noteBelongsToADifferentVault() {
             var repository = repository();
-            var vaultId = VaultId.newId();
-            var otherVaultId = VaultId.newId();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
             var note = repository.create(vaultId, "not-yours.md", NoteLevel.of(1), "tom");
 
             assertThatThrownBy(() -> repository.rename(otherVaultId, note.id(), "hijacked.md"))

@@ -1,6 +1,7 @@
 package de.raindancer118.stoneintelligence.platform.sync.ticket;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import javax.sql.DataSource;
 import de.raindancer118.stoneintelligence.domain.id.NoteId;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
@@ -15,6 +16,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 /**
  * Verifiziert {@link JdbcTicketStore} gegen echtes Postgres - insbesondere, dass
@@ -62,7 +64,17 @@ class JdbcTicketStoreIT {
 
         var taken = store.takeIfValid("token-1", Instant.now());
 
-        assertThat(taken).contains(ticket);
+        // Postgres' timestamptz speichert nur Mikrosekunden-Aufloesung und RUNDET dabei (nicht
+        // nur Abschneiden) - ein exakter Objektvergleich wuerde am unvermeidlichen
+        // Rundungsverlust beim Schreiben/Lesen ueber die DB scheitern, deshalb Toleranz statt
+        // exakter Gleichheit fuer die Zeitstempel.
+        assertThat(taken).isPresent();
+        assertThat(taken.get().token()).isEqualTo(ticket.token());
+        assertThat(taken.get().vaultId()).isEqualTo(ticket.vaultId());
+        assertThat(taken.get().noteId()).isEqualTo(ticket.noteId());
+        assertThat(taken.get().actor()).isEqualTo(ticket.actor());
+        assertThat(taken.get().issuedAt()).isCloseTo(ticket.issuedAt(), within(1, ChronoUnit.MICROS));
+        assertThat(taken.get().expiresAt()).isCloseTo(ticket.expiresAt(), within(1, ChronoUnit.MICROS));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package de.raindancer118.stoneintelligence.platform.sync.ticket;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Optional;
 import de.raindancer118.stoneintelligence.domain.id.NoteId;
@@ -36,14 +37,16 @@ public class JdbcTicketStore implements TicketStore {
             .param("vaultId", ticket.vaultId().value())
             .param("noteId", ticket.noteId().value())
             .param("actor", ticket.actor())
-            .param("issuedAt", ticket.issuedAt())
-            .param("expiresAt", ticket.expiresAt())
+            // Postgres' JDBC-Treiber kann den SQL-Typ fuer ein rohes java.time.Instant nicht
+            // ableiten (setObject() schlaegt fehl) - explizit auf java.sql.Timestamp abbilden.
+            .param("issuedAt", Timestamp.from(ticket.issuedAt()))
+            .param("expiresAt", Timestamp.from(ticket.expiresAt()))
             .update();
 
         // Guenstige, beilaeufige Bereinigung abgelaufener, nie eingeloester Tickets statt eines
         // eigenen Scheduled-Jobs - Tickets leben Sekunden, die Tabelle bleibt so von selbst klein.
         jdbcClient.sql("DELETE FROM platform.sync_tickets WHERE expires_at < :now")
-            .param("now", Instant.now())
+            .param("now", Timestamp.from(Instant.now()))
             .update();
     }
 
@@ -55,7 +58,7 @@ public class JdbcTicketStore implements TicketStore {
                 RETURNING token, vault_id, note_id, actor, issued_at, expires_at
                 """)
             .param("token", token)
-            .param("now", now)
+            .param("now", Timestamp.from(now))
             .query(TICKET_MAPPER)
             .optional();
 

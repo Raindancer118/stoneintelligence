@@ -13,13 +13,19 @@ public abstract class AuthorizationRepositoryContractTest {
 
     protected abstract AuthorizationRepository repository();
 
+    /**
+     * Erzeugt einen Vault, der bei einer echten DB tatsaechlich existiert - `roles`/`groups`/
+     * `path_rules`/`topic_rules` haben Fremdschluessel-Constraints auf `platform.vaults`.
+     */
+    protected abstract VaultId newVault();
+
     @Nested
     class EffectivePermissions {
 
         @Test
         void should_beEmpty_when_subjectBelongsToNoGroup() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
 
             assertThat(repository.effectivePermissions(vaultId, "tom")).isEmpty();
         }
@@ -27,7 +33,7 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_containRolePermissions_when_subjectIsMemberOfGroupWithThatRole() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var role = repository.createRole(vaultId, "editor", Set.of(Permission.READ, Permission.WRITE));
             var group = repository.createGroup(vaultId, "editors");
             repository.assignRole(group.id(), role.id());
@@ -40,7 +46,7 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_unionPermissions_when_subjectIsMemberOfMultipleGroupsWithDifferentRoles() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var readerRole = repository.createRole(vaultId, "reader", Set.of(Permission.READ));
             var deleterRole = repository.createRole(vaultId, "deleter", Set.of(Permission.DELETE));
             var readers = repository.createGroup(vaultId, "readers");
@@ -57,7 +63,7 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_notGrantPermissions_when_memberWasRemovedFromGroup() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var role = repository.createRole(vaultId, "editor", Set.of(Permission.WRITE));
             var group = repository.createGroup(vaultId, "editors");
             repository.assignRole(group.id(), role.id());
@@ -70,8 +76,8 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_rejectAssignRole_when_groupAndRoleBelongToDifferentVaults() {
             var repository = repository();
-            var vaultId = VaultId.newId();
-            var otherVaultId = VaultId.newId();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
             var role = repository.createRole(otherVaultId, "editor", Set.of(Permission.WRITE));
             var group = repository.createGroup(vaultId, "editors");
 
@@ -82,7 +88,7 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_notGrantPermissions_when_roleWasUnassignedFromGroup() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
             var role = repository.createRole(vaultId, "editor", Set.of(Permission.WRITE));
             var group = repository.createGroup(vaultId, "editors");
             repository.assignRole(group.id(), role.id());
@@ -95,8 +101,8 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_notLeakPermissions_when_subjectHasSameNameInDifferentVault() {
             var repository = repository();
-            var vaultId = VaultId.newId();
-            var otherVaultId = VaultId.newId();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
             var role = repository.createRole(otherVaultId, "editor", Set.of(Permission.WRITE));
             var group = repository.createGroup(otherVaultId, "editors");
             repository.assignRole(group.id(), role.id());
@@ -112,7 +118,7 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_listCreatedRule_when_queriedForItsVault() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
 
             repository.createPathRule(vaultId, "private", RuleScope.everyone(), RuleEffect.DENY);
 
@@ -123,8 +129,8 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_notLeakRulesFromOtherVaults_when_listing() {
             var repository = repository();
-            var vaultId = VaultId.newId();
-            var otherVaultId = VaultId.newId();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
             repository.createPathRule(otherVaultId, "private", RuleScope.everyone(), RuleEffect.DENY);
 
             assertThat(repository.listPathRules(vaultId)).isEmpty();
@@ -133,7 +139,7 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_preserveUserScopedRule_when_storedAndListed() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
 
             repository.createPathRule(vaultId, "private", RuleScope.user("tom"), RuleEffect.ALLOW);
 
@@ -148,7 +154,7 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_listCreatedRule_when_queriedForItsVault() {
             var repository = repository();
-            var vaultId = VaultId.newId();
+            var vaultId = newVault();
 
             repository.createTopicRule(vaultId, "finance", RuleScope.everyone(), RuleEffect.DENY);
 
@@ -159,8 +165,8 @@ public abstract class AuthorizationRepositoryContractTest {
         @Test
         void should_notLeakRulesFromOtherVaults_when_listing() {
             var repository = repository();
-            var vaultId = VaultId.newId();
-            var otherVaultId = VaultId.newId();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
             repository.createTopicRule(otherVaultId, "finance", RuleScope.everyone(), RuleEffect.DENY);
 
             assertThat(repository.listTopicRules(vaultId)).isEmpty();
