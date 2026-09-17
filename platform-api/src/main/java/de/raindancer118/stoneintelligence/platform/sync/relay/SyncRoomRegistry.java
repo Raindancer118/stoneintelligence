@@ -36,13 +36,19 @@ public class SyncRoomRegistry {
         }
     }
 
-    public void closeAll(NoteId noteId, int code, String reason) {
+    /**
+     * Die Notiz wurde geloescht: entfernt den Raum und benachrichtigt jede beteiligte Session -
+     * schliesst dabei bewusst NICHT die Verbindung selbst (s. {@link SyncSession#notifyNoteDeleted}),
+     * seit der Multiplexing-Umstellung koennte dieselbe Verbindung noch weitere, nicht geloeschte
+     * Notizen bedienen.
+     */
+    public void notifyDeletedAndLeaveAll(NoteId noteId) {
         var sessions = rooms.remove(noteId);
         if (sessions == null) {
             return;
         }
         for (var session : sessions) {
-            session.close(code, reason);
+            session.notifyNoteDeleted(noteId);
         }
     }
 

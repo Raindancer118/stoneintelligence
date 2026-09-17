@@ -151,7 +151,7 @@ class SyncRelayServiceTest {
     class NoteDeleted {
 
         @Test
-        void should_closeAllConnectedSessionsWithNoteDeletedCode_when_noteWasDeleted() {
+        void should_notifyAllConnectedSessions_when_noteWasDeleted() {
             var sessionA = new RecordingSyncSession("a");
             var sessionB = new RecordingSyncSession("b");
             relay.onJoin(noteId, sessionA);
@@ -159,8 +159,37 @@ class SyncRelayServiceTest {
 
             relay.onNoteDeleted(noteId);
 
-            assertThat(sessionA.closedWithCode).isEqualTo(SyncRelayService.CLOSE_CODE_NOTE_DELETED);
-            assertThat(sessionB.closedWithCode).isEqualTo(SyncRelayService.CLOSE_CODE_NOTE_DELETED);
+            assertThat(sessionA.notifiedDeletedNoteIds).containsExactly(noteId);
+            assertThat(sessionB.notifiedDeletedNoteIds).containsExactly(noteId);
+        }
+
+        @Test
+        void should_notCloseTheConnection_when_noteWasDeleted() {
+            // Regression: seit der Multiplexing-Umstellung kann eine Verbindung mehrere Notizen
+            // gleichzeitig gejoint haben - die Loeschung EINER Notiz darf die Verbindung fuer die
+            // anderen NICHT mitreissen.
+            var session = new RecordingSyncSession("a");
+            relay.onJoin(noteId, session);
+
+            relay.onNoteDeleted(noteId);
+
+            assertThat(session.closedWithCode).isNull();
+        }
+
+        @Test
+        void should_stopReceivingUpdates_forTheDeletedNote_afterNotification() {
+            var otherNoteId = NoteId.newId();
+            var session = new RecordingSyncSession("a");
+            relay.onJoin(noteId, session);
+            relay.onJoin(otherNoteId, session);
+
+            relay.onNoteDeleted(noteId);
+
+            var sender = new RecordingSyncSession("sender");
+            relay.onJoin(noteId, sender);
+            relay.onUpdate(noteId, sender, bytes("update-after-deletion"), false);
+
+            assertThat(session.receivedDocUpdates).isEmpty();
         }
     }
 }

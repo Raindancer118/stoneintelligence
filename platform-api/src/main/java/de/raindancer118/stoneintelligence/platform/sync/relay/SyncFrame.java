@@ -21,6 +21,11 @@ public record SyncFrame(byte messageType, NoteId noteId, byte[] payload) {
     public static final byte TYPE_AWARENESS = 1;
     public static final byte TYPE_JOIN = 2;
     public static final byte TYPE_LEAVE = 3;
+    /**
+     * Server->Client: genau diese Notiz wurde geloescht. Betrifft NUR diesen einen Notiz-Raum,
+     * nicht die gesamte (ggf. mit anderen Notizen geteilte) Verbindung - s. {@link SyncSession#notifyNoteDeleted}.
+     */
+    public static final byte TYPE_NOTE_DELETED = 4;
 
     public static final int NOTE_ID_LENGTH = 36;
     private static final int HEADER_LENGTH = 1 + NOTE_ID_LENGTH;

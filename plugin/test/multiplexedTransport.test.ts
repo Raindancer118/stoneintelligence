@@ -8,6 +8,8 @@ const NOTE_ID_B = "11111111-1111-1111-1111-111111111111";
 const TYPE_DOC_UPDATE = 0;
 const TYPE_JOIN = 2;
 const TYPE_LEAVE = 3;
+const TYPE_NOTE_DELETED = 4;
+const CLOSE_CODE_NOTE_DELETED = 4404;
 
 /** Minimaler In-Memory-WebSocket-Fake, den der Transport wie ein echtes WebSocket behandelt. */
 class FakeRealSocket implements WebSocketLike {
@@ -275,5 +277,33 @@ describe("MultiplexedTransport", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(createRealSocket).toHaveBeenCalledTimes(1);
+  });
+
+  it("should_dispatchOnlyThatVirtualSocketsClose_when_noteDeletedFrameArrives", async () => {
+    // Regression: die geloeschte Notiz darf NUR ihr eigenes virtuelles Socket schliessen, NICHT
+    // die geteilte Verbindung - sonst wuerde das Loeschen einer Notiz den Sync aller anderen,
+    // ueber dieselbe Verbindung laufenden Notizen mitreissen.
+    const realSocket = new FakeRealSocket();
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep: vi.fn() });
+    const vsA = transport.createVirtualSocket(NOTE_ID_A);
+    const vsB = transport.createVirtualSocket(NOTE_ID_B);
+    const closeA = vi.fn();
+    const closeB = vi.fn();
+    const messagesB = vi.fn();
+    vsA.onclose = closeA;
+    vsB.onclose = closeB;
+    vsB.onmessage = messagesB;
+    await waitUntilConnecting(realSocket);
+    realSocket.open();
+    await vi.waitFor(() => expect(realSocket.sent).toHaveLength(2));
+
+    realSocket.deliver(frame(TYPE_NOTE_DELETED, NOTE_ID_A));
+
+    expect(closeA).toHaveBeenCalledWith(expect.objectContaining({ code: CLOSE_CODE_NOTE_DELETED }));
+    expect(closeB).not.toHaveBeenCalled();
+
+    // Notiz B funktioniert auf derselben Verbindung weiterhin ganz normal.
+    realSocket.deliver(frame(TYPE_DOC_UPDATE, NOTE_ID_B, [1, 2, 3]));
+    expect(messagesB).toHaveBeenCalledTimes(1);
   });
 });
