@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { withRateLimitRetry } from "../src/sync/retryFetch";
 
-function response(status: number): Response {
-  return { ok: status >= 200 && status < 300, status } as Response;
+function response(status: number, headers: Record<string, string> = {}): Response {
+  const lowercased = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (name: string) => lowercased.get(name.toLowerCase()) ?? null },
+  } as Response;
 }
 
 describe("withRateLimitRetry", () => {
@@ -54,6 +59,30 @@ describe("withRateLimitRetry", () => {
     expect(result.status).toBe(429);
     expect(fetchImpl).toHaveBeenCalledTimes(4);
     expect(sleep).toHaveBeenCalledTimes(3);
+  });
+
+  it("should_honorRetryAfterHeader_instead_ofExponentialBackoff", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(response(429, { "Retry-After": "3" }))
+      .mockResolvedValueOnce(response(200));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const wrapped = withRateLimitRetry(fetchImpl, { sleep, initialDelayMs: 100 });
+
+    await wrapped("https://example.invalid");
+
+    expect(sleep).toHaveBeenCalledWith(3000);
+  });
+
+  it("should_fallBackToExponentialBackoff_when_retryAfterHeaderMissing", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(response(429))
+      .mockResolvedValueOnce(response(200));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const wrapped = withRateLimitRetry(fetchImpl, { sleep, initialDelayMs: 100 });
+
+    await wrapped("https://example.invalid");
+
+    expect(sleep).toHaveBeenCalledWith(100);
   });
 
   it("should_passThroughInputAndInit_toWrappedFetch", async () => {

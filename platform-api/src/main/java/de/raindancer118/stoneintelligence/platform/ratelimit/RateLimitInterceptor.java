@@ -7,10 +7,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
- * Rate-Limit pro Nutzer (authentifizierter OIDC-Principal seit Phase 3, s.
- * {@code SecurityConfig}) - faellt auf die Remote-Adresse zurueck, wenn (noch) keine
- * Authentifizierung vorliegt (z. B. ein Request, der ohnehin gleich mit 401 abgewiesen wird),
- * statt komplett ungebremst durchzulassen.
+ * Rate-Limit NUR fuer unauthentifizierte Anfragen (nach Remote-Adresse) - der Zweck ist,
+ * anonymen Missbrauch (z. B. Scanning gegen Endpunkte, die ohnehin gleich mit 401 abgewiesen
+ * wuerden) zu bremsen, nicht legitime Nutzung durch bereits ueber OIDC identifizierte, auditierbare
+ * Nutzer zu drosseln. Ein Vault-weiter Sync (Hunderte Notizen, je zwei Requests) ist normale
+ * Plugin-Nutzung, kein Angriff - authentifizierte Requests werden deshalb ungebremst durchgelassen
+ * (live beobachtet: der pauschale Bucket blockierte den initialen Sync grosser Vaults dauerhaft).
  */
 @Component
 public class RateLimitInterceptor implements HandlerInterceptor {
@@ -24,10 +26,11 @@ public class RateLimitInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         var authentication = SecurityContextHolder.getContext().getAuthentication();
-        var actor = (authentication != null && authentication.isAuthenticated()) ? authentication.getName() : null;
-        var key = (actor != null && !actor.isBlank()) ? actor : request.getRemoteAddr();
+        if (authentication != null && authentication.isAuthenticated()) {
+            return true;
+        }
 
-        var result = limiter.tryConsume(key);
+        var result = limiter.tryConsume(request.getRemoteAddr());
         if (!result.allowed()) {
             response.setStatus(429);
             response.setHeader("Retry-After", String.valueOf(Math.max(1, result.retryAfter().toSeconds())));

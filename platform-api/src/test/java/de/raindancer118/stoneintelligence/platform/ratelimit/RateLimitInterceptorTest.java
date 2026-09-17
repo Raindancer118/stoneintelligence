@@ -24,23 +24,27 @@ class RateLimitInterceptorTest {
     }
 
     @Test
-    void should_letRequestThrough_when_underLimit() {
-        var interceptor = new RateLimitInterceptor(new RateLimiter(Clock.systemUTC(), 5, 1.0));
+    void should_letAuthenticatedRequestsThrough_regardlessOfLimit() {
+        // Ein Vault-weiter Sync (viele Notizen, je zwei Requests) ist normale legitime Nutzung,
+        // kein Missbrauch - der Token-Bucket-Limiter existiert primaer gegen unauthentifizierte
+        // Anfragen (Plan.md/RateLimitInterceptor-Doku), authentifizierte Nutzer sind bereits
+        // ueber OIDC identifiziert und auditierbar.
+        var interceptor = new RateLimitInterceptor(new RateLimiter(Clock.systemUTC(), 1, 0.0));
         authenticateAs("tom");
-        var request = new MockHttpServletRequest();
-        var response = new MockHttpServletResponse();
 
-        var passed = interceptor.preHandle(request, response, new Object());
-
-        assertThat(passed).isTrue();
-        assertThat(response.getStatus()).isEqualTo(200);
+        for (var i = 0; i < 10; i++) {
+            var response = new MockHttpServletResponse();
+            var passed = interceptor.preHandle(new MockHttpServletRequest(), response, new Object());
+            assertThat(passed).isTrue();
+            assertThat(response.getStatus()).isEqualTo(200);
+        }
     }
 
     @Test
-    void should_reject_withRetryAfterHeader_when_limitExceeded() {
+    void should_reject_withRetryAfterHeader_when_unauthenticatedLimitExceeded() {
         var interceptor = new RateLimitInterceptor(new RateLimiter(Clock.systemUTC(), 1, 1.0));
-        authenticateAs("tom");
         var request = new MockHttpServletRequest();
+        request.setRemoteAddr("127.0.0.1");
 
         interceptor.preHandle(request, new MockHttpServletResponse(), new Object());
         var response = new MockHttpServletResponse();
@@ -52,13 +56,15 @@ class RateLimitInterceptorTest {
     }
 
     @Test
-    void should_isolateLimits_perActor() {
+    void should_isolateLimits_perRemoteAddress() {
         var interceptor = new RateLimitInterceptor(new RateLimiter(Clock.systemUTC(), 1, 1.0));
-        authenticateAs("tom");
-        interceptor.preHandle(new MockHttpServletRequest(), new MockHttpServletResponse(), new Object());
+        var first = new MockHttpServletRequest();
+        first.setRemoteAddr("127.0.0.1");
+        interceptor.preHandle(first, new MockHttpServletResponse(), new Object());
 
-        authenticateAs("alice");
-        var passed = interceptor.preHandle(new MockHttpServletRequest(), new MockHttpServletResponse(), new Object());
+        var second = new MockHttpServletRequest();
+        second.setRemoteAddr("127.0.0.2");
+        var passed = interceptor.preHandle(second, new MockHttpServletResponse(), new Object());
 
         assertThat(passed).isTrue();
     }

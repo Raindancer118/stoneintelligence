@@ -11,8 +11,15 @@ import { requestUrl } from "obsidian";
  * dokumentierte Weg fuer Plugins, die beliebige externe APIs ansprechen muessen.
  *
  * <p>Deckt bewusst nur die Response-Oberflaeche ab, die dieses Plugin tatsaechlich nutzt
- * (`.ok`, `.status`, `.json()`) - kein vollstaendiges `fetch()`-Polyfill.
+ * (`.ok`, `.status`, `.headers.get()`, `.json()`) - kein vollstaendiges `fetch()`-Polyfill.
+ * `.headers` wird gebraucht, damit z. B. der `Retry-After`-Header des Rate-Limiters (s.
+ * retryFetch.ts) den Client erreicht - ohne den musste der Client die Wartezeit blind raten.
  */
+function headersFrom(raw: Record<string, string>): Pick<Headers, "get"> {
+  const lowercased = new Map(Object.entries(raw).map(([key, value]) => [key.toLowerCase(), value]));
+  return { get: (name: string) => lowercased.get(name.toLowerCase()) ?? null };
+}
+
 export const obsidianFetch: typeof fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input.toString();
   const method = (init?.method ?? "GET").toUpperCase();
@@ -24,6 +31,7 @@ export const obsidianFetch: typeof fetch = async (input, init) => {
   return {
     ok: response.status >= 200 && response.status < 300,
     status: response.status,
+    headers: headersFrom(response.headers ?? {}),
     json: async () => response.json,
     text: async () => response.text,
   } as Response;
