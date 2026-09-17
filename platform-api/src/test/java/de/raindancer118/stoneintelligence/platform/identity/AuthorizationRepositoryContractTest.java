@@ -113,6 +113,64 @@ public abstract class AuthorizationRepositoryContractTest {
     }
 
     @Nested
+    class RoleAndGroupListing {
+
+        @Test
+        void should_listCreatedRoles_when_queriedForVault() {
+            var repository = repository();
+            var vaultId = newVault();
+            var role = repository.createRole(vaultId, "editor", Set.of(Permission.READ, Permission.WRITE));
+
+            assertThat(repository.listRoles(vaultId)).containsExactly(role);
+        }
+
+        @Test
+        void should_notLeakRoles_fromOtherVaults() {
+            var repository = repository();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
+            repository.createRole(otherVaultId, "editor", Set.of(Permission.READ));
+
+            assertThat(repository.listRoles(vaultId)).isEmpty();
+        }
+
+        @Test
+        void should_listCreatedGroupsWithMembers_when_queriedForVault() {
+            var repository = repository();
+            var vaultId = newVault();
+            var group = repository.createGroup(vaultId, "editors");
+            repository.addMember(group.id(), "tom");
+
+            assertThat(repository.listGroups(vaultId))
+                .extracting(Group::id, Group::name, Group::memberSubjects)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(group.id(), "editors", Set.of("tom")));
+        }
+
+        @Test
+        void should_listAssignedRoleIds_forGroup() {
+            var repository = repository();
+            var vaultId = newVault();
+            var role = repository.createRole(vaultId, "editor", Set.of(Permission.WRITE));
+            var group = repository.createGroup(vaultId, "editors");
+            repository.assignRole(group.id(), role.id());
+
+            assertThat(repository.listRoleIdsForGroup(group.id())).containsExactly(role.id());
+        }
+
+        @Test
+        void should_listAccessibleVaultIds_forSubjectAcrossVaults() {
+            var repository = repository();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
+            var group = repository.createGroup(vaultId, "editors");
+            repository.addMember(group.id(), "tom");
+
+            assertThat(repository.listAccessibleVaultIds("tom")).containsExactly(vaultId);
+            assertThat(repository.listAccessibleVaultIds("tom")).doesNotContain(otherVaultId);
+        }
+    }
+
+    @Nested
     class PathRuleStorage {
 
         @Test

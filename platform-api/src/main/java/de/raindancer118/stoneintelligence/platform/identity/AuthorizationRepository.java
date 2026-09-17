@@ -13,7 +13,14 @@ public interface AuthorizationRepository {
 
     Role createRole(VaultId vaultId, String name, Set<Permission> permissions);
 
+    List<Role> listRoles(VaultId vaultId);
+
     Group createGroup(VaultId vaultId, String name);
+
+    List<Group> listGroups(VaultId vaultId);
+
+    /** Rollen-IDs, die dieser Gruppe zugewiesen sind (s. {@link #assignRole}). */
+    Set<UUID> listRoleIdsForGroup(UUID groupId);
 
     void addMember(UUID groupId, String subject);
 
@@ -22,6 +29,9 @@ public interface AuthorizationRepository {
     void assignRole(UUID groupId, UUID roleId);
 
     void unassignRole(UUID groupId, UUID roleId);
+
+    /** Alle Vaults, in denen {@code subject} ueber irgendeine Gruppenmitgliedschaft Mitglied ist. */
+    Set<VaultId> listAccessibleVaultIds(String subject);
 
     /**
      * Vereinigung aller Permissions aus allen Rollen aller Gruppen, denen {@code subject} in

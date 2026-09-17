@@ -2,9 +2,11 @@ package de.raindancer118.stoneintelligence.platform.vault;
 
 import java.time.Instant;
 import java.util.EnumSet;
+import java.util.List;
 import de.raindancer118.stoneintelligence.platform.identity.AuthorizationRepository;
 import de.raindancer118.stoneintelligence.platform.identity.Permission;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,6 +38,17 @@ public class VaultController {
         authorization.assignRole(ownerGroup.id(), ownerRole.id());
         authorization.addMember(ownerGroup.id(), actor);
         return VaultResponse.from(vault);
+    }
+
+    /** Alle Vaults, in denen der authentifizierte Actor ueber irgendeine Gruppe Mitglied ist. */
+    @GetMapping("/api/v1/vaults")
+    public List<VaultResponse> list(Authentication authentication) {
+        var accessibleIds = authorization.listAccessibleVaultIds(authentication.getName());
+        return accessibleIds.stream()
+            .map(vaults::findById)
+            .flatMap(java.util.Optional::stream)
+            .map(VaultResponse::from)
+            .toList();
     }
 
     public record CreateVaultRequest(String name) {

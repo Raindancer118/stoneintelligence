@@ -30,10 +30,33 @@ public final class FakeAuthorizationRepository implements AuthorizationRepositor
     }
 
     @Override
+    public synchronized List<Role> listRoles(VaultId vaultId) {
+        return roles.values().stream().filter(role -> role.vaultId().equals(vaultId)).toList();
+    }
+
+    @Override
     public synchronized Group createGroup(VaultId vaultId, String name) {
         var group = new Group(UUID.randomUUID(), vaultId, name, new LinkedHashSet<>());
         groups.put(group.id(), group);
         return group;
+    }
+
+    @Override
+    public synchronized List<Group> listGroups(VaultId vaultId) {
+        return groups.values().stream().filter(group -> group.vaultId().equals(vaultId)).toList();
+    }
+
+    @Override
+    public synchronized Set<UUID> listRoleIdsForGroup(UUID groupId) {
+        return Set.copyOf(groupRoles.getOrDefault(groupId, Set.of()));
+    }
+
+    @Override
+    public synchronized Set<VaultId> listAccessibleVaultIds(String subject) {
+        return groups.values().stream()
+            .filter(group -> group.memberSubjects().contains(subject))
+            .map(Group::vaultId)
+            .collect(Collectors.toUnmodifiableSet());
     }
 
     @Override

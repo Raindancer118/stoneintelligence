@@ -33,4 +33,16 @@ class VaultControllerTest {
 
         assertThat(authorization.effectivePermissions(vaultId, "mallory")).isEmpty();
     }
+
+    @Test
+    void should_listOnlyVaultsSubjectHasAccessTo() {
+        var tom = new TestingAuthenticationToken("tom", null);
+        var mallory = new TestingAuthenticationToken("mallory", null);
+        var tomsVault = controller.create(new VaultController.CreateVaultRequest("toms-vault"), tom);
+        controller.create(new VaultController.CreateVaultRequest("mallorys-vault"), mallory);
+
+        var tomsVaults = controller.list(tom);
+
+        assertThat(tomsVaults).extracting(VaultController.VaultResponse::id).containsExactly(tomsVault.id());
+    }
 }

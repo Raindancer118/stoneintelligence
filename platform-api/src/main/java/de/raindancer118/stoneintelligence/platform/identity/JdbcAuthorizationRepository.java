@@ -1,7 +1,10 @@
 package de.raindancer118.stoneintelligence.platform.identity;
 
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
@@ -40,6 +43,29 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
     }
 
     @Override
+    public List<Role> listRoles(VaultId vaultId) {
+        var permissionsByRoleId = new HashMap<UUID, Set<Permission>>();
+        jdbcClient.sql("""
+                SELECT rp.role_id, rp.permission FROM platform.role_permissions rp
+                JOIN platform.roles r ON r.id = rp.role_id WHERE r.vault_id = :vaultId
+                """)
+            .param("vaultId", vaultId.value())
+            .query((rs, rowNum) -> Map.entry(
+                (UUID) rs.getObject("role_id"), Permission.valueOf(rs.getString("permission"))))
+            .list()
+            .forEach(entry -> permissionsByRoleId
+                .computeIfAbsent(entry.getKey(), id -> new LinkedHashSet<>()).add(entry.getValue()));
+
+        return jdbcClient.sql("SELECT id, name FROM platform.roles WHERE vault_id = :vaultId ORDER BY name")
+            .param("vaultId", vaultId.value())
+            .query((rs, rowNum) -> {
+                var id = (UUID) rs.getObject("id");
+                return new Role(id, vaultId, rs.getString("name"), permissionsByRoleId.getOrDefault(id, Set.of()));
+            })
+            .list();
+    }
+
+    @Override
     public Group createGroup(VaultId vaultId, String name) {
         var groupId = UUID.randomUUID();
         jdbcClient.sql("INSERT INTO platform.groups (id, vault_id, name) VALUES (:id, :vaultId, :name)")
@@ -48,6 +74,53 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
             .param("name", name)
             .update();
         return new Group(groupId, vaultId, name, Set.of());
+    }
+
+    @Override
+    public List<Group> listGroups(VaultId vaultId) {
+        var membersByGroupId = new HashMap<UUID, Set<String>>();
+        jdbcClient.sql("""
+                SELECT gm.group_id, gm.subject FROM platform.group_members gm
+                JOIN platform.groups g ON g.id = gm.group_id WHERE g.vault_id = :vaultId
+                """)
+            .param("vaultId", vaultId.value())
+            .query((rs, rowNum) -> Map.entry((UUID) rs.getObject("group_id"), rs.getString("subject")))
+            .list()
+            .forEach(entry -> membersByGroupId
+                .computeIfAbsent(entry.getKey(), id -> new LinkedHashSet<>()).add(entry.getValue()));
+
+        return jdbcClient.sql("SELECT id, name FROM platform.groups WHERE vault_id = :vaultId ORDER BY name")
+            .param("vaultId", vaultId.value())
+            .query((rs, rowNum) -> {
+                var id = (UUID) rs.getObject("id");
+                return new Group(id, vaultId, rs.getString("name"), membersByGroupId.getOrDefault(id, Set.of()));
+            })
+            .list();
+    }
+
+    @Override
+    public Set<UUID> listRoleIdsForGroup(UUID groupId) {
+        return Set.copyOf(jdbcClient.sql("SELECT role_id FROM platform.group_roles WHERE group_id = :groupId")
+            .param("groupId", groupId)
+            .query(UUID.class)
+            .list());
+    }
+
+    @Override
+    public Set<VaultId> listAccessibleVaultIds(String subject) {
+        var ids = jdbcClient.sql("""
+                SELECT DISTINCT g.vault_id FROM platform.group_members gm
+                JOIN platform.groups g ON g.id = gm.group_id
+                WHERE gm.subject = :subject
+                """)
+            .param("subject", subject)
+            .query(UUID.class)
+            .list();
+        var result = new HashSet<VaultId>();
+        for (var id : ids) {
+            result.add(VaultId.of(id));
+        }
+        return Set.copyOf(result);
     }
 
     @Override
