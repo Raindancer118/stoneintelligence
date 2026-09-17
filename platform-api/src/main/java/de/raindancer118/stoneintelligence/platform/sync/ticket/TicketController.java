@@ -1,11 +1,8 @@
 package de.raindancer118.stoneintelligence.platform.sync.ticket;
 
 import java.time.Instant;
-import de.raindancer118.stoneintelligence.domain.id.NoteId;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
 import de.raindancer118.stoneintelligence.platform.identity.Permission;
-import de.raindancer118.stoneintelligence.platform.vault.NoteNotFoundException;
-import de.raindancer118.stoneintelligence.platform.vault.NoteRepository;
 import de.raindancer118.stoneintelligence.platform.vault.VaultAccessGuard;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,43 +12,35 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Stellt kurzlebige Single-Use-Tickets fuer den WebSocket-Handshake aus (Plan.md Abschnitt 3).
  *
+ * <p>Vault-skopiert (nicht mehr notenskopiert, s. ADR/Project.md Multiplexing-Umstellung): EINE
+ * Verbindung joint/verlaesst darueber beliebig viele Notiz-Raeume, statt fuer jede Notiz eine
+ * eigene Verbindung samt eigenem Ticket zu brauchen. Die notenspezifische
+ * {@link Permission#READ}-Pruefung passiert deshalb erst bei JOIN (s. SyncWebSocketHandler),
+ * nicht mehr hier - hier wird nur grundsaetzlicher Lesezugriff auf den Vault verlangt.
+ *
  * <p>Der Actor kommt seit Phase 3 aus dem authentifizierten OIDC-Principal, nicht mehr aus einem
- * client-behaupteten Header (s. {@code SecurityConfig}). Eine Ticket-Ausstellung setzt
- * mindestens {@link Permission#READ} auf die Note voraus - eine feinere Aufteilung
- * (Nur-Lese-Ticket vs. Schreib-Ticket) ist NICHT umgesetzt: der Relay unterscheidet einzelne
- * WS-Nachrichten bislang nicht nach Berechtigung, das Ticket gewaehrt effektiv volles
- * Lesen+Schreiben ueber den Kanal (bekannte Grenze, s. Project.md).
+ * client-behaupteten Header (s. {@code SecurityConfig}). Bekannte Grenze (unveraendert): der
+ * Relay unterscheidet einzelne WS-Nachrichten nicht nach Schreib-/Lese-Berechtigung - ein Join
+ * mit READ gewaehrt effektiv volles Lesen+Schreiben ueber den Kanal.
  */
 @RestController
 public class TicketController {
 
     private final TicketService ticketService;
-    private final NoteRepository notes;
     private final VaultAccessGuard access;
 
-    public TicketController(TicketService ticketService, NoteRepository notes, VaultAccessGuard access) {
+    public TicketController(TicketService ticketService, VaultAccessGuard access) {
         this.ticketService = ticketService;
-        this.notes = notes;
         this.access = access;
     }
 
-    @PostMapping("/api/v1/vaults/{vaultId}/notes/{noteId}/sync-tickets")
-    public IssuedTicketResponse issueTicket(
-        @PathVariable String vaultId,
-        @PathVariable String noteId,
-        Authentication authentication
-    ) {
+    @PostMapping("/api/v1/vaults/{vaultId}/sync-tickets")
+    public IssuedTicketResponse issueTicket(@PathVariable String vaultId, Authentication authentication) {
         var actor = authentication.getName();
         var vId = VaultId.of(vaultId);
-        var nId = NoteId.of(noteId);
-        // Ohne diese Pruefung koennte jeder, der eine fremde NoteId kennt/eraet, ueber einen
-        // beliebigen vaultId-Pfad ein gueltiges Sync-Ticket fuer sie bekommen und ihre volle
-        // Yjs-Historie lesen/schreiben - Relay und SnapshotStore adressieren danach nur noch
-        // ueber die NoteId, der Vault-Claim aus dem Ticket ist die einzige Durchsetzungsstelle.
-        var note = notes.findById(vId, nId).orElseThrow(() -> new NoteNotFoundException(vId, nId));
-        access.require(vId, actor, Permission.READ, note.path());
+        access.require(vId, actor, Permission.READ);
 
-        var ticket = ticketService.issue(vId, nId, actor);
+        var ticket = ticketService.issue(vId, actor);
         return new IssuedTicketResponse(ticket.token(), ticket.expiresAt());
     }
 

@@ -11,6 +11,10 @@ export interface SyncTicket {
  * Holt kurzlebige Single-Use-Tickets fuer den WebSocket-Handshake (Plan.md Abschnitt 3). Die
  * Ticket-AUSSTELLUNG verlangt seit Phase 3 ein gueltiges OIDC-Bearer-Token - das ausgestellte
  * Ticket selbst bleibt der alleinige Auth-Nachweis fuer die anschliessende WS-Verbindung.
+ *
+ * <p>Vault-, nicht mehr notenskopiert (s. {@link MultiplexedTransport}): EINE Verbindung joint
+ * darueber beliebig viele Notiz-Raeume per JOIN-Kontrollnachricht, statt fuer jede Notiz ein
+ * eigenes Ticket UND eine eigene Verbindung zu brauchen.
  */
 export class TicketClient {
   constructor(
@@ -19,9 +23,9 @@ export class TicketClient {
     private readonly fetchImpl: typeof fetch = withRateLimitRetry(obsidianFetch),
   ) {}
 
-  async issueTicket(vaultId: string, noteId: string): Promise<SyncTicket> {
+  async issueTicket(vaultId: string): Promise<SyncTicket> {
     const response = await this.fetchImpl(
-      `${this.baseUrl}/api/v1/vaults/${vaultId}/notes/${noteId}/sync-tickets`,
+      `${this.baseUrl}/api/v1/vaults/${vaultId}/sync-tickets`,
       { method: "POST", headers: { Authorization: `Bearer ${await this.getAccessToken()}` } },
     );
     if (!response.ok) {

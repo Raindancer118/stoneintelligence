@@ -3,7 +3,6 @@ package de.raindancer118.stoneintelligence.platform.sync.ticket;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import de.raindancer118.stoneintelligence.domain.id.NoteId;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -14,12 +13,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Kurzlebige Single-Use-Tickets fuer WebSocket-Auth (Plan.md Abschnitt 3, "positiv zu
  * uebernehmendes Muster" aus stonesync) - der Obsidian-WS-Client kann keine Custom-Header
  * senden, das Ticket wird deshalb als Query-Parameter uebergeben und darf nur einmal einlösbar
- * sein.
+ * sein. Seit der Multiplexing-Umstellung sind Tickets VAULT-, nicht mehr notenskopiert - eine
+ * einzelne Verbindung joint/verlaesst beliebig viele Notiz-"Raeume" ueber dieselbe Verbindung
+ * (s. SyncWebSocketHandler), die Notiz-Berechtigung wird deshalb erst bei JOIN geprueft, nicht
+ * mehr bei der Ticket-Ausstellung.
  */
 class TicketServiceTest {
 
     private static final VaultId VAULT_ID = VaultId.newId();
-    private static final NoteId NOTE_ID = NoteId.newId();
     private static final Duration TTL = Duration.ofSeconds(30);
 
     private final Instant now = Instant.parse("2026-09-20T10:00:00Z");
@@ -35,8 +36,8 @@ class TicketServiceTest {
         void should_produceUniqueTokens_when_issuedRepeatedly() {
             var service = serviceAt(now);
 
-            var first = service.issue(VAULT_ID, NOTE_ID, "tom");
-            var second = service.issue(VAULT_ID, NOTE_ID, "tom");
+            var first = service.issue(VAULT_ID, "tom");
+            var second = service.issue(VAULT_ID, "tom");
 
             assertThat(first.token()).isNotEqualTo(second.token());
         }
@@ -48,13 +49,12 @@ class TicketServiceTest {
         @Test
         void should_returnClaims_when_tokenIsFreshAndUnused() {
             var service = serviceAt(now);
-            var ticket = service.issue(VAULT_ID, NOTE_ID, "tom");
+            var ticket = service.issue(VAULT_ID, "tom");
 
             var claims = service.redeem(ticket.token());
 
             assertThat(claims).isPresent();
             assertThat(claims.get().vaultId()).isEqualTo(VAULT_ID);
-            assertThat(claims.get().noteId()).isEqualTo(NOTE_ID);
             assertThat(claims.get().actor()).isEqualTo("tom");
         }
 
@@ -68,7 +68,7 @@ class TicketServiceTest {
         @Test
         void should_returnEmptyOnSecondRedeem_when_tokenAlreadyUsedOnce() {
             var service = serviceAt(now);
-            var ticket = service.issue(VAULT_ID, NOTE_ID, "tom");
+            var ticket = service.issue(VAULT_ID, "tom");
 
             service.redeem(ticket.token());
             var secondAttempt = service.redeem(ticket.token());
@@ -80,7 +80,7 @@ class TicketServiceTest {
         void should_returnEmpty_when_ticketExpired() {
             var clock = new MutableClock(now, ZoneOffset.UTC);
             var service = new TicketService(clock, TTL, new InMemoryTicketStore());
-            var ticket = service.issue(VAULT_ID, NOTE_ID, "tom");
+            var ticket = service.issue(VAULT_ID, "tom");
 
             clock.advanceTo(now.plus(TTL).plusSeconds(1));
 
@@ -88,15 +88,15 @@ class TicketServiceTest {
         }
 
         @Test
-        void should_keepTicketsIsolated_when_issuedForDifferentNotes() {
+        void should_keepTicketsIsolated_when_issuedForDifferentVaults() {
             var service = serviceAt(now);
-            var otherNote = NoteId.newId();
+            var otherVault = VaultId.newId();
 
-            var ticketForNote = service.issue(VAULT_ID, NOTE_ID, "tom");
-            var ticketForOtherNote = service.issue(VAULT_ID, otherNote, "tom");
+            var ticketForVault = service.issue(VAULT_ID, "tom");
+            var ticketForOtherVault = service.issue(otherVault, "tom");
 
-            assertThat(service.redeem(ticketForNote.token()).get().noteId()).isEqualTo(NOTE_ID);
-            assertThat(service.redeem(ticketForOtherNote.token()).get().noteId()).isEqualTo(otherNote);
+            assertThat(service.redeem(ticketForVault.token()).get().vaultId()).isEqualTo(VAULT_ID);
+            assertThat(service.redeem(ticketForOtherVault.token()).get().vaultId()).isEqualTo(otherVault);
         }
     }
 }

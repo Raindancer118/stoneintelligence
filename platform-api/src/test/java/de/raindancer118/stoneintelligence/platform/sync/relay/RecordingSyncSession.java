@@ -2,11 +2,13 @@ package de.raindancer118.stoneintelligence.platform.sync.relay;
 
 import java.util.ArrayList;
 import java.util.List;
+import de.raindancer118.stoneintelligence.domain.id.NoteId;
 
 final class RecordingSyncSession implements SyncSession {
 
     private final String id;
     final List<byte[]> receivedDocUpdates = new ArrayList<>();
+    final List<NoteId> receivedDocUpdateNoteIds = new ArrayList<>();
     final List<byte[]> receivedAwarenessUpdates = new ArrayList<>();
     Integer closedWithCode;
     String closedWithReason;
@@ -21,12 +23,13 @@ final class RecordingSyncSession implements SyncSession {
     }
 
     @Override
-    public void sendDocUpdate(byte[] payload) {
+    public void sendDocUpdate(NoteId noteId, byte[] payload) {
+        receivedDocUpdateNoteIds.add(noteId);
         receivedDocUpdates.add(payload);
     }
 
     @Override
-    public void sendAwarenessUpdate(byte[] payload) {
+    public void sendAwarenessUpdate(NoteId noteId, byte[] payload) {
         receivedAwarenessUpdates.add(payload);
     }
 

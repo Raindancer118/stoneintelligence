@@ -10,6 +10,7 @@ import {
   handleMobileRedirectCallback, MOBILE_REDIRECT_ACTION, MOBILE_REDIRECT_URI,
   openAuthorizationUrlMobile, type PendingAuthCallback,
 } from "./sync/mobileAuthRedirect";
+import { MultiplexedTransport } from "./sync/multiplexedTransport";
 import { NoteApiClient } from "./sync/NoteApiClient";
 import { OperationJournal } from "./sync/OperationJournal";
 import { SyncClient } from "./sync/SyncClient";
@@ -78,6 +79,21 @@ export default class StoneIntelligencePlugin extends Plugin {
   settings: StoneIntelligenceSettings = DEFAULT_SETTINGS;
   private readonly journal = new OperationJournal();
   private readonly sessions = new Map<string, NoteSyncSession>();
+  /**
+   * Pfade, fuer die `startSync` gerade laeuft, aber noch keine Session in `sessions` eingetragen
+   * hat (das passiert erst ganz am Ende). Ohne diesen Guard kann derselbe Pfad zweimal parallel
+   * gestartet werden - z. B. wenn `reconcileMissingNotesFromServer()` eine Platzhalterdatei
+   * anlegt UND der dadurch ausgeloeste `create`-Vault-Event beide `startSync` fuer denselben
+   * Pfad aufrufen, bevor der erste Aufruf ueberhaupt bei `sessions.set(...)` angekommen ist.
+   */
+  private readonly startingPaths = new Set<string>();
+  /**
+   * Pfade, die `reconcileMissingNotesFromServer()` gerade selbst per `vault.create()` anlegt -
+   * der globale `create`-Event-Handler ueberspringt sie (s. `onload`), damit NICHT zusaetzlich
+   * zum expliziten, sequentiellen Aufruf dort ein zweiter, unkontrollierter `startSync`-Versuch
+   * lostritt (das wuerde die absichtliche Serialisierung wieder aufheben, s. Klassendoc dort).
+   */
+  private readonly reconcilingPaths = new Set<string>();
   private noteApiClient!: NoteApiClient;
   private authClient!: AuthentikAuthClient;
   private tokenEndpoint: string | null = null;
@@ -85,6 +101,13 @@ export default class StoneIntelligencePlugin extends Plugin {
   private liveBoundPath: string | null = null;
   private statusBarItem!: HTMLElement;
   private pendingAuthCallback: PendingAuthCallback | null = null;
+  /**
+   * EINE geteilte Sync-Verbindung fuer alle Notizen (Toms ausdruecklicher Wunsch: "maximal drei
+   * Verbindungen... am liebsten eine durch die alles geht", s. `multiplexedTransport.ts`) -
+   * statt frueher einer eigenen WebSocket-Verbindung PRO Notiz.
+   */
+  private transport: MultiplexedTransport | null = null;
+  private transportPromise: Promise<MultiplexedTransport> | null = null;
 
   /**
    * Liefert ein gueltiges Access-Token, refresht bei Bedarf still im Hintergrund (Phase 3: OIDC
@@ -163,8 +186,8 @@ export default class StoneIntelligencePlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof TFile && file.extension === "md") {
-          void this.startSync(file);
+        if (file instanceof TFile && file.extension === "md" && !this.reconcilingPaths.has(file.path)) {
+          void this.startSync(file, true);
         }
       }),
     );
@@ -239,7 +262,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         }
         if (file) {
           this.stopSync(file.path);
-          void this.startSync(file);
+          void this.startSync(file, true);
           new Notice(`StoneIntelligence: "${file.path}" wird neu verbunden.`);
         }
         return true;
@@ -324,9 +347,14 @@ export default class StoneIntelligencePlugin extends Plugin {
    * Laedt Notizen herunter, die auf dem Server existieren, aber lokal (noch) fehlen - der Fall,
    * der bisher komplett unbehandelt war: ein neues/leeres Vault auf einem zweiten Geraet bekam
    * NIE etwas heruntergeladen, weil `syncAllNotes()` nur ueber bereits lokal vorhandene Dateien
-   * iterierte. Legt fuer jede fehlende Notiz eine leere lokale Platzhalterdatei an (der
-   * `create`-Vault-Event startet darueber automatisch `startSync`, das dann per Late-Joiner-
-   * Catchup den echten Inhalt vom Server einspielt, s. `startSync`).
+   * iterierte. Legt fuer jede fehlende Notiz eine leere lokale Platzhalterdatei an und startet
+   * ihren Sync SOFORT UND EINZELN (nicht dem asynchronen `create`-Event ueberlassen) - bei
+   * Vaults mit vielen fehlenden Notizen (live beobachtet: 177) wuerden sonst bis zu 177
+   * WebSocket-Verbindungsversuche quasi gleichzeitig anlaufen; auf Mobile werden die vom
+   * OS/der WebView angedrosselt/gequeued, wodurch das kurzlebige Sync-Ticket (30s TTL) laengst
+   * abgelaufen ist, bevor der Handshake ueberhaupt drankommt - jede so betroffene Notiz landete
+   * dauerhaft auf "Fehler". Sequentiell (eine Notiz nach der anderen fertig verbunden) bleibt
+   * langsamer, aber zuverlaessig.
    */
   private async reconcileMissingNotesFromServer(): Promise<void> {
     const localPaths = new Set(this.app.vault.getMarkdownFiles().map((f) => f.path));
@@ -336,9 +364,10 @@ export default class StoneIntelligencePlugin extends Plugin {
       if (localPaths.has(note.path)) {
         continue;
       }
-      // NoteId VOR dem Anlegen der Datei eintragen: der `create`-Event-Handler ruft `startSync`
-      // auf, dessen `ensureNoteId` sonst eine ZWEITE Note fuer denselben Pfad anlegen wuerde
-      // (Fehlerklasse 5) statt die bereits vorhandene Server-Note zu uebernehmen.
+      // NoteId VOR dem Anlegen der Datei eintragen: der `create`-Event-Handler ruft ebenfalls
+      // `startSync` auf (zusaetzlich zu unserem expliziten Aufruf unten) - dessen `ensureNoteId`
+      // wuerde sonst eine ZWEITE Note fuer denselben Pfad anlegen (Fehlerklasse 5) statt die
+      // bereits vorhandene Server-Note zu uebernehmen.
       this.settings.noteIds[note.path] = note.id;
       await this.saveSettings();
 
@@ -348,7 +377,15 @@ export default class StoneIntelligencePlugin extends Plugin {
           // Race mit einer anderen gerade heruntergeladenen Notiz im selben Ordner - harmlos.
         });
       }
-      await this.app.vault.create(note.path, "");
+      this.reconcilingPaths.add(note.path);
+      try {
+        const created = await this.app.vault.create(note.path, "");
+        await this.startSync(created);
+      } catch (error) {
+        console.error(`StoneIntelligence: Download von "${note.path}" fehlgeschlagen`, error);
+      } finally {
+        this.reconcilingPaths.delete(note.path);
+      }
     }
   }
 
@@ -363,14 +400,72 @@ export default class StoneIntelligencePlugin extends Plugin {
     return noteId;
   }
 
-  private async startSync(file: TFile): Promise<void> {
-    if (this.sessions.has(file.path) || !this.settings.vaultId) {
+  /**
+   * Holt die EINE geteilte Sync-Verbindung fuer diesen Vault (erstellt sie beim ersten Aufruf,
+   * alle weiteren Aufrufe bekommen dieselbe Instanz zurueck) - der Kern der Multiplexing-
+   * Umstellung: vorher hatte jede Notiz ihre eigene WebSocket-Verbindung samt eigenem Ticket.
+   */
+  private ensureTransport(): Promise<MultiplexedTransport> {
+    if (this.transport) {
+      return Promise.resolve(this.transport);
+    }
+    if (!this.transportPromise) {
+      this.transportPromise = this.createTransport();
+    }
+    return this.transportPromise;
+  }
+
+  private async createTransport(): Promise<MultiplexedTransport> {
+    const ticketClient = new TicketClient(this.settings.platformApiUrl, this.getAccessToken);
+    const ticket = await ticketClient.issueTicket(this.settings.vaultId);
+    const wsUrl = `${this.settings.platformWsUrl}/ws/sync?ticket=${encodeURIComponent(ticket.token)}`;
+    const transport = new MultiplexedTransport(wsUrl, (url) => new WebSocket(url));
+    this.transport = transport;
+    return transport;
+  }
+
+  /**
+   * Wartet, bis DIESE Notiz tatsaechlich gejoint ist (nicht nur registriert) - bei einer
+   * geteilten, gequeuten Verbindung kann das je nach Position in der Warteschlange dauern (s.
+   * `multiplexedTransport.ts`). Ohne dieses Warten wuerde die anschliessende Catchup-Gnadenfrist
+   * in `doStartSync` viel zu frueh ablaufen, bevor die Notiz ueberhaupt gejoint wurde.
+   */
+  private awaitConnected(client: SyncClient, timeoutMs = 30_000): Promise<void> {
+    if (client.status === "connected") {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const previous = client.onStatusChange;
+      const timeout = window.setTimeout(() => {
+        client.onStatusChange = previous;
+        resolve();
+      }, timeoutMs);
+      client.onStatusChange = (status) => {
+        previous?.(status);
+        if (status === "connected") {
+          window.clearTimeout(timeout);
+          client.onStatusChange = previous;
+          resolve();
+        }
+      };
+    });
+  }
+
+  private async startSync(file: TFile, priority = false): Promise<void> {
+    if (this.sessions.has(file.path) || this.startingPaths.has(file.path) || !this.settings.vaultId) {
       return;
     }
+    this.startingPaths.add(file.path);
+    try {
+      await this.doStartSync(file, priority);
+    } finally {
+      this.startingPaths.delete(file.path);
+    }
+  }
 
+  private async doStartSync(file: TFile, priority: boolean): Promise<void> {
     const noteId = await this.ensureNoteId(file);
-    const ticketClient = new TicketClient(this.settings.platformApiUrl, this.getAccessToken);
-    const ticket = await ticketClient.issueTicket(this.settings.vaultId, noteId);
+    const transport = await this.ensureTransport();
 
     const doc = new Y.Doc();
     const text = doc.getText("content");
@@ -378,17 +473,22 @@ export default class StoneIntelligencePlugin extends Plugin {
     // WICHTIG: Client zuerst verbinden, DANACH erst lokalen Inhalt einspielen. SyncClients
     // Update-Listener wird im Konstruktor registriert - wuerde man den Inhalt vorher einfuegen,
     // wuerde das erzeugte Yjs-Update verpuffen (kein Listener vorhanden), und die Notiz wuerde
-    // nie zum Server uebertragen werden.
-    const wsUrl = `${this.settings.platformWsUrl}/ws/sync?ticket=${encodeURIComponent(ticket.token)}`;
-    const client = new SyncClient(wsUrl, (url) => new WebSocket(url), doc);
+    // nie zum Server uebertragen werden. Der URL-Parameter ist fuer die geteilte Verbindung
+    // irrelevant (SyncClient reicht ihn nur an die Factory durch) - die Factory ignoriert ihn und
+    // schliesst stattdessen ueber `noteId`/`priority` auf den passenden virtuellen Kanal.
+    const client = new SyncClient("", () => transport.createVirtualSocket(noteId, { priority }), doc);
     client.onNoteDeleted = () => this.handleRemoteNoteDeleted(file.path);
     client.connect();
+    await this.awaitConnected(client);
 
     // Kurze Gnadenfrist, damit ein eventueller Late-Joiner-Catchup (die Notiz hat bereits
     // Server-Historie von einem anderen Client) eintreffen kann, BEVOR wir den lokalen
     // Dateiinhalt einspielen - sonst wuerden zwei unabhaengige volle Texte additiv im selben
     // Y.Text landen (CRDT-Merge, kein "letzter gewinnt"). Eine echte "Catchup abgeschlossen"-
-    // Markierung gibt es im WS-Protokoll noch nicht (dokumentierte Grenze).
+    // Markierung gibt es im WS-Protokoll noch nicht (dokumentierte Grenze). Beginnt bewusst erst
+    // NACH `awaitConnected` (nicht direkt nach `connect()`) - sonst waere die Gnadenfrist bei
+    // einer gequeuten (nicht sofort gejointen) Notiz laengst abgelaufen, bevor ihr Join-Frame
+    // ueberhaupt rausging.
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     const initialContent = await this.app.vault.read(file);
@@ -450,7 +550,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
 
-    await this.startSync(file);
+    await this.startSync(file, true);
     const session = this.sessions.get(file.path);
     if (!session) {
       view.dispatch({ effects: this.liveBindingCompartment.reconfigure([]) });
@@ -513,8 +613,9 @@ export default class StoneIntelligencePlugin extends Plugin {
     const session = this.sessions.get(file.path);
     if (!session) {
       // Neue oder bisher ungetrackte Datei (z. B. Plugin-Start nach der ersten Aenderung) -
-      // startSync liest den aktuellen Inhalt bereits ein, kein separater Merge noetig.
-      void this.startSync(file);
+      // startSync liest den aktuellen Inhalt bereits ein, kein separater Merge noetig. Prioritaet,
+      // da eine gerade lokal bearbeitete Datei per Definition die aktive Notiz ist.
+      void this.startSync(file, true);
       return;
     }
     if (session.hasLiveEditorBinding) {

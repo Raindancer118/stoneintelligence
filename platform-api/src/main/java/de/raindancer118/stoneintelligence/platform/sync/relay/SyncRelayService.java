@@ -26,14 +26,14 @@ public class SyncRelayService {
     public void onJoin(NoteId noteId, SyncSession session) {
         registry.join(noteId, session);
         for (var update : snapshotStore.listSince(noteId, 0)) {
-            session.sendDocUpdate(update.payload());
+            session.sendDocUpdate(noteId, update.payload());
         }
     }
 
     /** Eingehendes Yjs-Dokument-Update: persistieren, dann an alle anderen Sessions im Room verteilen. */
     public void onUpdate(NoteId noteId, SyncSession sender, byte[] payload, boolean ciphertext) {
         snapshotStore.append(noteId, payload, ciphertext);
-        registry.broadcastExcept(noteId, sender, session -> session.sendDocUpdate(payload));
+        registry.broadcastExcept(noteId, sender, session -> session.sendDocUpdate(noteId, payload));
     }
 
     /**
@@ -42,7 +42,7 @@ public class SyncRelayService {
      * - das waere kein Dokument-Zustand, sondern ephemere Praesenz-Information.
      */
     public void onAwarenessUpdate(NoteId noteId, SyncSession sender, byte[] payload) {
-        registry.broadcastExcept(noteId, sender, session -> session.sendAwarenessUpdate(payload));
+        registry.broadcastExcept(noteId, sender, session -> session.sendAwarenessUpdate(noteId, payload));
     }
 
     public void onLeave(NoteId noteId, SyncSession session) {
