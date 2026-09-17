@@ -1,15 +1,23 @@
-/** REST-Client fuer ID-first Note-CRUD gegen platform-api (Plan.md Abschnitt 3, Fehlerklasse 5). */
+export type AccessTokenProvider = () => Promise<string>;
+
+/**
+ * REST-Client fuer ID-first Note-CRUD gegen platform-api (Plan.md Abschnitt 3, Fehlerklasse 5).
+ *
+ * <p>Seit Phase 3 (OIDC) schickt der Client ein {@code Authorization: Bearer}-Token statt des
+ * frueheren, vom Client selbst behaupteten {@code X-Actor}-Headers - der Actor wird jetzt
+ * serverseitig aus dem validierten Token abgeleitet ({@code preferred_username}-Claim).
+ */
 export class NoteApiClient {
   constructor(
     private readonly baseUrl: string,
-    private readonly actor: string,
+    private readonly getAccessToken: AccessTokenProvider,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
   async createNote(vaultId: string, path: string, noteLevel: number): Promise<string> {
     const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/notes`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Actor": this.actor },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${await this.getAccessToken()}` },
       body: JSON.stringify({ path, noteLevel }),
     });
     if (!response.ok) {
@@ -22,7 +30,7 @@ export class NoteApiClient {
   async renameNote(vaultId: string, noteId: string, newPath: string): Promise<void> {
     const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/notes/${noteId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", "X-Actor": this.actor },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${await this.getAccessToken()}` },
       body: JSON.stringify({ path: newPath }),
     });
     if (!response.ok) {
@@ -33,7 +41,7 @@ export class NoteApiClient {
   async deleteNote(vaultId: string, noteId: string, operationId: string): Promise<void> {
     const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/notes/${noteId}`, {
       method: "DELETE",
-      headers: { "X-Operation-Id": operationId, "X-Actor": this.actor },
+      headers: { "X-Operation-Id": operationId, Authorization: `Bearer ${await this.getAccessToken()}` },
     });
     if (!response.ok) {
       throw new Error(`failed to delete note: HTTP ${response.status}`);

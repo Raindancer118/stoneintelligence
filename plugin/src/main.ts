@@ -3,6 +3,7 @@ import type { EditorView } from "@codemirror/view";
 import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
 import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
+import { AuthentikAuthClient, type StoredTokens } from "./sync/AuthentikAuthClient";
 import { NoteApiClient } from "./sync/NoteApiClient";
 import { OperationJournal } from "./sync/OperationJournal";
 import { SyncClient } from "./sync/SyncClient";
@@ -12,15 +13,24 @@ interface StoneIntelligenceSettings {
   platformApiUrl: string;
   platformWsUrl: string;
   vaultId: string;
-  actor: string;
+  oidcIssuerUrl: string;
+  oidcClientId: string;
+  tokens: StoredTokens | null;
   noteIds: Record<string, string>;
 }
+
+/** Felder, die eine "Verbindungskonfiguration" ausmachen - alles ausser Tokens/NoteId-Cache. */
+type ConnectionConfig = Pick<
+  StoneIntelligenceSettings, "platformApiUrl" | "platformWsUrl" | "vaultId" | "oidcIssuerUrl" | "oidcClientId"
+>;
 
 const DEFAULT_SETTINGS: StoneIntelligenceSettings = {
   platformApiUrl: "http://localhost:8080",
   platformWsUrl: "ws://localhost:8080",
   vaultId: "",
-  actor: "",
+  oidcIssuerUrl: "",
+  oidcClientId: "",
+  tokens: null,
   noteIds: {},
 };
 
@@ -63,12 +73,52 @@ export default class StoneIntelligencePlugin extends Plugin {
   private readonly journal = new OperationJournal();
   private readonly sessions = new Map<string, NoteSyncSession>();
   private noteApiClient!: NoteApiClient;
+  private authClient!: AuthentikAuthClient;
+  private tokenEndpoint: string | null = null;
   private readonly liveBindingCompartment = new Compartment();
   private liveBoundPath: string | null = null;
 
+  /**
+   * Liefert ein gueltiges Access-Token, refresht bei Bedarf still im Hintergrund (Phase 3: OIDC
+   * ist seit dem Server-seitigen Rollout der einzige Auth-Pfad, s. platform-api SecurityConfig).
+   * Als Arrow-Function-Feld deklariert, damit `this` beim Durchreichen an NoteApiClient/
+   * TicketClient als Callback erhalten bleibt.
+   */
+  private getAccessToken = async (): Promise<string> => {
+    const tokens = this.settings.tokens;
+    if (!tokens) {
+      throw new Error("Nicht angemeldet - bitte in den StoneIntelligence-Einstellungen einloggen.");
+    }
+    if (Date.now() < tokens.expiresAt) {
+      return tokens.accessToken;
+    }
+    if (!this.tokenEndpoint) {
+      this.tokenEndpoint = (await this.authClient.discover()).token_endpoint;
+    }
+    const refreshed = await this.authClient.refreshAccessToken(this.tokenEndpoint, tokens.refreshToken);
+    this.settings.tokens = refreshed;
+    await this.saveData(this.settings);
+    return refreshed.accessToken;
+  };
+
+  async login(): Promise<void> {
+    const tokens = await this.authClient.login();
+    this.settings.tokens = tokens;
+    await this.saveData(this.settings);
+    new Notice("StoneIntelligence: Login erfolgreich.");
+  }
+
+  async logout(): Promise<void> {
+    this.settings.tokens = null;
+    await this.saveData(this.settings);
+  }
+
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl, this.settings.actor);
+    this.authClient = new AuthentikAuthClient({
+      issuerUrl: this.settings.oidcIssuerUrl, clientId: this.settings.oidcClientId,
+    });
+    this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl, this.getAccessToken);
     this.addSettingTab(new StoneIntelligenceSettingTab(this.app, this));
 
     this.registerEditorExtension([this.liveBindingCompartment.of([])]);
@@ -148,7 +198,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     }
 
     const noteId = await this.ensureNoteId(file);
-    const ticketClient = new TicketClient(this.settings.platformApiUrl, this.settings.actor);
+    const ticketClient = new TicketClient(this.settings.platformApiUrl, this.getAccessToken);
     const ticket = await ticketClient.issueTicket(this.settings.vaultId, noteId);
 
     const doc = new Y.Doc();
@@ -356,8 +406,36 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
-    // ensures NoteApiClient und ggf. spaetere Reconnects den aktuellen Actor/BaseUrl nutzen.
-    this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl, this.settings.actor);
+    // ensures NoteApiClient/AuthClient nachfolgende Reconnects die aktuelle BaseUrl/OIDC-Config
+    // nutzen; der Token-Endpoint-Cache wird invalidiert, falls sich die Issuer-URL geaendert hat.
+    this.authClient = new AuthentikAuthClient({
+      issuerUrl: this.settings.oidcIssuerUrl, clientId: this.settings.oidcClientId,
+    });
+    this.tokenEndpoint = null;
+    this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl, this.getAccessToken);
+  }
+
+  /** Serialisiert die reine Verbindungskonfiguration (KEINE Tokens/NoteId-Cache) als JSON. */
+  connectionConfigJson(): string {
+    const config: ConnectionConfig = {
+      platformApiUrl: this.settings.platformApiUrl,
+      platformWsUrl: this.settings.platformWsUrl,
+      vaultId: this.settings.vaultId,
+      oidcIssuerUrl: this.settings.oidcIssuerUrl,
+      oidcClientId: this.settings.oidcClientId,
+    };
+    return JSON.stringify(config, null, 2);
+  }
+
+  /** Uebernimmt eine per {@link connectionConfigJson} exportierte Konfiguration - ein Klick statt fuenf Felder. */
+  async applyConnectionConfig(json: string): Promise<void> {
+    const parsed = JSON.parse(json) as Partial<ConnectionConfig>;
+    if (typeof parsed.platformApiUrl === "string") this.settings.platformApiUrl = parsed.platformApiUrl;
+    if (typeof parsed.platformWsUrl === "string") this.settings.platformWsUrl = parsed.platformWsUrl;
+    if (typeof parsed.vaultId === "string") this.settings.vaultId = parsed.vaultId;
+    if (typeof parsed.oidcIssuerUrl === "string") this.settings.oidcIssuerUrl = parsed.oidcIssuerUrl;
+    if (typeof parsed.oidcClientId === "string") this.settings.oidcClientId = parsed.oidcClientId;
+    await this.saveSettings();
   }
 }
 
@@ -402,12 +480,72 @@ class StoneIntelligenceSettingTab extends PluginSettingTab {
     );
 
     new Setting(containerEl)
-      .setName("Actor")
-      .setDesc("Provisorisch bis OIDC (Phase 3) - dein Anzeigename gegenueber dem Server.")
+      .setName("OIDC Issuer URL")
+      .setDesc("z. B. https://portal.tstieh.de/application/o/stoneintelligence/")
       .addText((text) =>
-        text.setValue(this.plugin.settings.actor).onChange(async (value) => {
-          this.plugin.settings.actor = value;
+        text.setValue(this.plugin.settings.oidcIssuerUrl).onChange(async (value) => {
+          this.plugin.settings.oidcIssuerUrl = value;
           await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("OIDC Client-ID")
+      .setDesc("Public Client (PKCE), kein Client-Secret noetig.")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.oidcClientId).onChange(async (value) => {
+          this.plugin.settings.oidcClientId = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Anmeldung")
+      .setDesc(this.plugin.settings.tokens ? "Angemeldet." : "Nicht angemeldet.")
+      .addButton((button) =>
+        button.setButtonText("Login").onClick(async () => {
+          try {
+            await this.plugin.login();
+            this.display();
+          } catch (error) {
+            new Notice(`StoneIntelligence: Login fehlgeschlagen - ${(error as Error).message}`);
+          }
+        }),
+      )
+      .addButton((button) =>
+        button.setButtonText("Logout").onClick(async () => {
+          await this.plugin.logout();
+          this.display();
+        }),
+      );
+
+    containerEl.createEl("h3", { text: "Verbindungskonfiguration teilen" });
+    containerEl.createEl("p", {
+      text: "Server-URL, Vault-ID und OIDC-Angaben auf einen Schlag zwischen Geraeten uebertragen, "
+        + "statt jedes Feld einzeln abzutippen (enthaelt KEINE Login-Tokens).",
+    });
+
+    new Setting(containerEl)
+      .setName("Verbindungsdaten kopieren")
+      .addButton((button) =>
+        button.setButtonText("In Zwischenablage kopieren").onClick(async () => {
+          await navigator.clipboard.writeText(this.plugin.connectionConfigJson());
+          new Notice("StoneIntelligence: Verbindungsdaten kopiert.");
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Verbindungsdaten einfuegen")
+      .addButton((button) =>
+        button.setButtonText("Aus Zwischenablage uebernehmen").onClick(async () => {
+          try {
+            const json = await navigator.clipboard.readText();
+            await this.plugin.applyConnectionConfig(json);
+            new Notice("StoneIntelligence: Verbindungsdaten uebernommen.");
+            this.display();
+          } catch (error) {
+            new Notice(`StoneIntelligence: Verbindungsdaten konnten nicht uebernommen werden - ${(error as Error).message}`);
+          }
         }),
       );
   }
