@@ -107,7 +107,6 @@ export default class StoneIntelligencePlugin extends Plugin {
    * statt frueher einer eigenen WebSocket-Verbindung PRO Notiz.
    */
   private transport: MultiplexedTransport | null = null;
-  private transportPromise: Promise<MultiplexedTransport> | null = null;
 
   /**
    * Liefert ein gueltiges Access-Token, refresht bei Bedarf still im Hintergrund (Phase 3: OIDC
@@ -404,24 +403,21 @@ export default class StoneIntelligencePlugin extends Plugin {
    * Holt die EINE geteilte Sync-Verbindung fuer diesen Vault (erstellt sie beim ersten Aufruf,
    * alle weiteren Aufrufe bekommen dieselbe Instanz zurueck) - der Kern der Multiplexing-
    * Umstellung: vorher hatte jede Notiz ihre eigene WebSocket-Verbindung samt eigenem Ticket.
+   * Der Transport selbst holt sich bei JEDEM (Re-)Connect ueber `issueFreshWsUrl` ein frisches
+   * Ticket - Tickets sind Single-Use, ein Reconnect mit der urspruenglichen URL waere ein
+   * bereits verbrauchtes Ticket und scheiterte garantiert mit 403 (live beobachtet).
    */
-  private ensureTransport(): Promise<MultiplexedTransport> {
-    if (this.transport) {
-      return Promise.resolve(this.transport);
+  private ensureTransport(): MultiplexedTransport {
+    if (!this.transport) {
+      this.transport = new MultiplexedTransport(() => this.issueFreshWsUrl(), (url) => new WebSocket(url));
     }
-    if (!this.transportPromise) {
-      this.transportPromise = this.createTransport();
-    }
-    return this.transportPromise;
+    return this.transport;
   }
 
-  private async createTransport(): Promise<MultiplexedTransport> {
+  private async issueFreshWsUrl(): Promise<string> {
     const ticketClient = new TicketClient(this.settings.platformApiUrl, this.getAccessToken);
     const ticket = await ticketClient.issueTicket(this.settings.vaultId);
-    const wsUrl = `${this.settings.platformWsUrl}/ws/sync?ticket=${encodeURIComponent(ticket.token)}`;
-    const transport = new MultiplexedTransport(wsUrl, (url) => new WebSocket(url));
-    this.transport = transport;
-    return transport;
+    return `${this.settings.platformWsUrl}/ws/sync?ticket=${encodeURIComponent(ticket.token)}`;
   }
 
   /**
@@ -465,7 +461,7 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   private async doStartSync(file: TFile, priority: boolean): Promise<void> {
     const noteId = await this.ensureNoteId(file);
-    const transport = await this.ensureTransport();
+    const transport = this.ensureTransport();
 
     const doc = new Y.Doc();
     const text = doc.getText("content");

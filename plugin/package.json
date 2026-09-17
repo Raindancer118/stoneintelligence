@@ -1,6 +1,6 @@
 {
   "name": "stoneintelligence-plugin",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Obsidian-Plugin fuer StoneIntelligence: Live-Sync, Cursor-Presence, Note-Level-UI.",
   "private": true,
   "type": "module",

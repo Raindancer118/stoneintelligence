@@ -65,6 +65,16 @@ export interface MultiplexedTransportOptions {
 }
 
 /**
+ * Liefert eine frische WS-URL samt frischem, noch ungenutztem Sync-Ticket - MUSS bei JEDEM
+ * Verbindungsaufbau neu aufgerufen werden (nicht einmal gecacht). Tickets sind Single-Use: ein
+ * Reconnect mit der urspruenglichen URL wuerde ein laengst eingeloestes (oder bei einem
+ * fehlgeschlagenen ersten Versuch nie erfolgreich eingeloestes, aber trotzdem verbrauchtes)
+ * Ticket erneut verwenden und garantiert mit 403 scheitern - live beobachtet: derselbe
+ * Ticket-Token in Dutzenden Reconnect-Versuchen in Folge, jedes Mal 403.
+ */
+export type WsUrlProvider = () => Promise<string>;
+
+/**
  * EINE geteilte WebSocket-Verbindung fuer beliebig viele Notizen (statt vorher: eine Verbindung
  * PRO Notiz) - Toms ausdruecklicher Wunsch nach "maximal drei Verbindungen, am liebsten eine
  * durch die alles geht". Neue Notizen werden nicht sofort gejoint, sondern in eine Warteschlange
@@ -77,6 +87,7 @@ export class MultiplexedTransport {
   private realSocket: WebSocketLike | null = null;
   private isOpen = false;
   private everConnected = false;
+  private connecting = false;
   private readonly virtualSockets = new Map<string, VirtualSocket>();
   private readonly joinQueue: string[] = [];
   private draining = false;
@@ -86,7 +97,7 @@ export class MultiplexedTransport {
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(
-    private readonly url: string,
+    private readonly getUrl: WsUrlProvider,
     private readonly createRealSocket: WebSocketFactory,
     options: MultiplexedTransportOptions = {},
   ) {
@@ -103,7 +114,7 @@ export class MultiplexedTransport {
   createVirtualSocket = (noteId: string, options: { priority?: boolean } = {}): WebSocketLike => {
     const vs = new VirtualSocket(noteId, this);
     this.virtualSockets.set(noteId, vs);
-    this.ensureRealSocketConnecting();
+    void this.ensureRealSocketConnecting();
     if (options.priority) {
       this.joinQueue.unshift(noteId);
     } else {
@@ -113,47 +124,58 @@ export class MultiplexedTransport {
     return vs;
   };
 
-  private ensureRealSocketConnecting(): void {
-    if (this.realSocket) {
+  /**
+   * Holt bei JEDEM Aufruf eine FRISCHE URL/Ticket (s. {@link WsUrlProvider}) - ein Reconnect darf
+   * niemals die alte URL wiederverwenden, das eingebettete Ticket ist nach dem ersten
+   * (erfolgreichen ODER fehlgeschlagenen) Redemption-Versuch bereits verbraucht.
+   */
+  private async ensureRealSocketConnecting(): Promise<void> {
+    if (this.realSocket || this.connecting) {
       return;
     }
-    const socket = this.createRealSocket(this.url);
-    socket.binaryType = "arraybuffer";
-    socket.onopen = () => {
-      this.isOpen = true;
-      if (this.everConnected) {
-        // RECONNECT (nicht der allererste Connect): der Server kennt keine alten Joins einer
-        // vorherigen, jetzt toten Verbindung mehr - ALLE aktuell registrierten Notizen muessen
-        // neu gejoint werden. Beim allerersten Connect NICHT ueberschreiben - die Queue enthaelt
-        // dort bereits die korrekte, priorisierte Reihenfolge aus `createVirtualSocket`.
-        this.joinQueue.length = 0;
-        this.joinQueue.push(...this.virtualSockets.keys());
-      }
-      this.everConnected = true;
-      void this.drainJoinQueue();
-    };
-    socket.onmessage = (ev) => this.handleIncoming(new Uint8Array(ev.data as ArrayBuffer));
-    socket.onclose = (ev) => {
-      this.isOpen = false;
-      // OHNE dieses Zuruecksetzen bliebe `realSocket` fuer immer auf die tote Verbindung
-      // zeigen - jede danach registrierte oder bereits wartende Notiz haette nie wieder eine
-      // Chance auf `onopen`/`onerror` und wuerde fuer immer auf "connecting" stehen bleiben
-      // (live beobachtet: Mobile-Status haengt dauerhaft bei "verbindet").
-      this.realSocket = null;
-      for (const vs of this.virtualSockets.values()) {
-        vs.dispatchClose(ev.code, ev.reason);
-      }
-      this.scheduleReconnectIfNeeded();
-    };
-    socket.onerror = () => {
-      this.isOpen = false;
-      this.realSocket = null;
-      for (const vs of this.virtualSockets.values()) {
-        vs.dispatchError();
-      }
-      this.scheduleReconnectIfNeeded();
-    };
-    this.realSocket = socket;
+    this.connecting = true;
+    try {
+      const url = await this.getUrl();
+      const socket = this.createRealSocket(url);
+      socket.binaryType = "arraybuffer";
+      socket.onopen = () => {
+        this.isOpen = true;
+        if (this.everConnected) {
+          // RECONNECT (nicht der allererste Connect): der Server kennt keine alten Joins einer
+          // vorherigen, jetzt toten Verbindung mehr - ALLE aktuell registrierten Notizen muessen
+          // neu gejoint werden. Beim allerersten Connect NICHT ueberschreiben - die Queue
+          // enthaelt dort bereits die korrekte, priorisierte Reihenfolge aus `createVirtualSocket`.
+          this.joinQueue.length = 0;
+          this.joinQueue.push(...this.virtualSockets.keys());
+        }
+        this.everConnected = true;
+        void this.drainJoinQueue();
+      };
+      socket.onmessage = (ev) => this.handleIncoming(new Uint8Array(ev.data as ArrayBuffer));
+      socket.onclose = (ev) => {
+        this.isOpen = false;
+        // OHNE dieses Zuruecksetzen bliebe `realSocket` fuer immer auf die tote Verbindung
+        // zeigen - jede danach registrierte oder bereits wartende Notiz haette nie wieder eine
+        // Chance auf `onopen`/`onerror` und wuerde fuer immer auf "connecting" stehen bleiben
+        // (live beobachtet: Mobile-Status haengt dauerhaft bei "verbindet").
+        this.realSocket = null;
+        for (const vs of this.virtualSockets.values()) {
+          vs.dispatchClose(ev.code, ev.reason);
+        }
+        this.scheduleReconnectIfNeeded();
+      };
+      socket.onerror = () => {
+        this.isOpen = false;
+        this.realSocket = null;
+        for (const vs of this.virtualSockets.values()) {
+          vs.dispatchError();
+        }
+        this.scheduleReconnectIfNeeded();
+      };
+      this.realSocket = socket;
+    } finally {
+      this.connecting = false;
+    }
   }
 
   /** Automatischer Reconnect, solange noch mindestens eine Notiz verbunden bleiben will. */
@@ -163,7 +185,7 @@ export class MultiplexedTransport {
     }
     void this.sleep(this.reconnectDelayMs).then(() => {
       if (this.virtualSockets.size > 0 && !this.realSocket) {
-        this.ensureRealSocketConnecting();
+        void this.ensureRealSocketConnecting();
       }
     });
   }
