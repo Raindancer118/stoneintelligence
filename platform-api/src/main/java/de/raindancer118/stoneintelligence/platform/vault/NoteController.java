@@ -57,7 +57,7 @@ public class NoteController {
 
     @GetMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
     public ResponseEntity<NoteResponse> get(@PathVariable String vaultId, @PathVariable String noteId) {
-        return notes.findById(NoteId.of(noteId))
+        return notes.findById(VaultId.of(vaultId), NoteId.of(noteId))
             .map(NoteResponse::from)
             .map(ResponseEntity::ok)
             .orElseGet(() -> ResponseEntity.notFound().build());
@@ -89,7 +89,7 @@ public class NoteController {
     ) {
         var vId = VaultId.of(vaultId);
         var nId = NoteId.of(noteId);
-        var before = notes.findById(nId).map(Note::path).orElse(null);
+        var before = notes.findById(vId, nId).map(Note::path).orElse(null);
         var note = notes.rename(vId, nId, request.path());
         audit.record(vId, nId, actor, "note.renamed", java.util.Map.of("from", String.valueOf(before), "to", note.path()));
         return NoteResponse.from(note);

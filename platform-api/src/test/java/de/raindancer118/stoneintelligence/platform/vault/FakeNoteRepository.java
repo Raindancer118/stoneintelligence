@@ -27,16 +27,13 @@ public final class FakeNoteRepository implements NoteRepository {
     }
 
     @Override
-    public synchronized Optional<Note> findById(NoteId id) {
-        return Optional.ofNullable(notes.get(id));
+    public synchronized Optional<Note> findById(VaultId vaultId, NoteId id) {
+        return Optional.ofNullable(notes.get(id)).filter(note -> note.vaultId().equals(vaultId));
     }
 
     @Override
     public synchronized Note rename(VaultId vaultId, NoteId noteId, String newPath) {
-        var existing = notes.get(noteId);
-        if (existing == null) {
-            throw new IllegalArgumentException("no such note: " + noteId);
-        }
+        var existing = findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId));
         var renamed = new Note(existing.id(), existing.vaultId(), newPath, existing.level(),
             existing.createdBy(), existing.createdAt());
         notes.put(noteId, renamed);
@@ -90,6 +87,7 @@ public final class FakeNoteRepository implements NoteRepository {
             return existing;
         }
 
+        findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId));
         notes.remove(noteId);
         var tombstone = new Tombstone(
             UUID.randomUUID(), vaultId, noteId, operationId, sequence.incrementAndGet(), deletedBy, Instant.now());

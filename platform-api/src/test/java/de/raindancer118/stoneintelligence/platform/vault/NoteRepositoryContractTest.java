@@ -7,12 +7,17 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Ein Vertrag, den jede {@link NoteRepository}-Implementierung erfuellen muss - egal ob
  * {@code FakeNoteRepository} (schnell, ohne DB) oder {@code JdbcNoteRepository} (echtes
  * Postgres via Testcontainers). Stil analog stoneai: Fakes ueber Ports statt Mockito fuer
  * Domaenenlogik.
+ *
+ * <p>Mandanten-Isolation ist hier bewusst genauso streng getestet wie die fachliche Logik:
+ * {@code vaultId} ist die Mandantengrenze (Plan.md Abschnitt 8.2) - jede Operation muss sie
+ * durchsetzen, nicht nur die Listing-Abfrage.
  */
 public abstract class NoteRepositoryContractTest {
 
@@ -28,12 +33,22 @@ public abstract class NoteRepositoryContractTest {
 
             var created = repository.create(vaultId, "foo/bar.md", NoteLevel.of(1), "tom");
 
-            assertThat(repository.findById(created.id())).contains(created);
+            assertThat(repository.findById(vaultId, created.id())).contains(created);
         }
 
         @Test
         void should_beEmpty_when_idIsUnknown() {
-            assertThat(repository().findById(NoteId.newId())).isEmpty();
+            assertThat(repository().findById(VaultId.newId(), NoteId.newId())).isEmpty();
+        }
+
+        @Test
+        void should_beEmpty_when_noteExistsButBelongsToADifferentVault() {
+            var repository = repository();
+            var vaultId = VaultId.newId();
+            var otherVaultId = VaultId.newId();
+            var note = repository.create(vaultId, "mine.md", NoteLevel.of(1), "tom");
+
+            assertThat(repository.findById(otherVaultId, note.id())).isEmpty();
         }
     }
 
@@ -101,7 +116,7 @@ public abstract class NoteRepositoryContractTest {
 
             repository.delete(vaultId, note.id(), "op-1", "tom");
 
-            assertThat(repository.findById(note.id())).isEmpty();
+            assertThat(repository.findById(vaultId, note.id())).isEmpty();
         }
 
         @Test
@@ -139,6 +154,19 @@ public abstract class NoteRepositoryContractTest {
 
             assertThat(secondTombstone.serverSequence()).isGreaterThan(firstTombstone.serverSequence());
         }
+
+        @Test
+        void should_rejectDelete_when_noteBelongsToADifferentVault() {
+            var repository = repository();
+            var vaultId = VaultId.newId();
+            var otherVaultId = VaultId.newId();
+            var note = repository.create(vaultId, "not-yours.md", NoteLevel.of(1), "tom");
+
+            assertThatThrownBy(() -> repository.delete(otherVaultId, note.id(), "op-1", "attacker"))
+                .isInstanceOf(NoteNotFoundException.class);
+
+            assertThat(repository.findById(vaultId, note.id())).contains(note);
+        }
     }
 
     @Nested
@@ -153,7 +181,7 @@ public abstract class NoteRepositoryContractTest {
             var renamed = repository.rename(vaultId, note.id(), "new.md");
 
             assertThat(renamed.path()).isEqualTo("new.md");
-            assertThat(repository.findById(note.id())).contains(renamed);
+            assertThat(repository.findById(vaultId, note.id())).contains(renamed);
         }
 
         @Test
@@ -176,6 +204,19 @@ public abstract class NoteRepositoryContractTest {
             var renamed = repository.rename(vaultId, note.id(), "new.md");
 
             assertThat(renamed.id()).isEqualTo(note.id());
+        }
+
+        @Test
+        void should_rejectRename_when_noteBelongsToADifferentVault() {
+            var repository = repository();
+            var vaultId = VaultId.newId();
+            var otherVaultId = VaultId.newId();
+            var note = repository.create(vaultId, "not-yours.md", NoteLevel.of(1), "tom");
+
+            assertThatThrownBy(() -> repository.rename(otherVaultId, note.id(), "hijacked.md"))
+                .isInstanceOf(NoteNotFoundException.class);
+
+            assertThat(repository.findById(vaultId, note.id())).contains(note);
         }
     }
 }

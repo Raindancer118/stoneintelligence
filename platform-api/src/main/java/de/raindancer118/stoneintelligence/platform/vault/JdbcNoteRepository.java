@@ -52,25 +52,27 @@ public class JdbcNoteRepository implements NoteRepository {
             .param("level", level.value())
             .param("createdBy", createdBy)
             .update();
-        return findById(id).orElseThrow(() -> new IllegalStateException("just-inserted note not found: " + id));
+        return findById(vaultId, id).orElseThrow(() -> new IllegalStateException("just-inserted note not found: " + id));
     }
 
     @Override
-    public Optional<Note> findById(NoteId id) {
-        return jdbcClient.sql("SELECT * FROM platform.notes WHERE id = :id")
+    public Optional<Note> findById(VaultId vaultId, NoteId id) {
+        return jdbcClient.sql("SELECT * FROM platform.notes WHERE id = :id AND vault_id = :vaultId")
             .param("id", id.value())
+            .param("vaultId", vaultId.value())
             .query(NOTE_MAPPER)
             .optional();
     }
 
     @Override
     public Note rename(VaultId vaultId, NoteId noteId, String newPath) {
+        findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId));
         jdbcClient.sql("UPDATE platform.notes SET path = :path WHERE id = :id AND vault_id = :vaultId")
             .param("path", newPath)
             .param("id", noteId.value())
             .param("vaultId", vaultId.value())
             .update();
-        return findById(noteId).orElseThrow(() -> new IllegalArgumentException("no such note: " + noteId));
+        return findById(vaultId, noteId).orElseThrow(() -> new IllegalStateException("just-renamed note not found: " + noteId));
     }
 
     @Override
@@ -118,8 +120,11 @@ public class JdbcNoteRepository implements NoteRepository {
             return existing.get();
         }
 
-        jdbcClient.sql("DELETE FROM platform.notes WHERE id = :id")
+        findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId));
+
+        jdbcClient.sql("DELETE FROM platform.notes WHERE id = :id AND vault_id = :vaultId")
             .param("id", noteId.value())
+            .param("vaultId", vaultId.value())
             .update();
 
         var tombstoneId = UUID.randomUUID();
