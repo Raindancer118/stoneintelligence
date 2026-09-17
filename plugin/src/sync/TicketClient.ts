@@ -1,5 +1,6 @@
 import type { AccessTokenProvider } from "./NoteApiClient";
 import { obsidianFetch } from "./obsidianFetch";
+import { withRateLimitRetry } from "./retryFetch";
 
 export interface SyncTicket {
   token: string;
@@ -15,7 +16,7 @@ export class TicketClient {
   constructor(
     private readonly baseUrl: string,
     private readonly getAccessToken: AccessTokenProvider,
-    private readonly fetchImpl: typeof fetch = obsidianFetch,
+    private readonly fetchImpl: typeof fetch = withRateLimitRetry(obsidianFetch),
   ) {}
 
   async issueTicket(vaultId: string, noteId: string): Promise<SyncTicket> {
