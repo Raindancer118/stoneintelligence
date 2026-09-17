@@ -17,7 +17,6 @@ import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.raindancer118.stoneintelligence.platform.security.TestJwtSupport;
-import de.raindancer118.stoneintelligence.platform.sync.relay.SyncRelayService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -65,6 +64,7 @@ class PlatformApiEndToEndIT {
     private static final byte MESSAGE_TYPE_DOC_UPDATE = 0;
     private static final byte MESSAGE_TYPE_AWARENESS = 1;
     private static final byte MESSAGE_TYPE_JOIN = 2;
+    private static final byte MESSAGE_TYPE_NOTE_DELETED = 4;
     private static final int NOTE_ID_LENGTH = 36;
 
     @Container
@@ -285,8 +285,10 @@ class PlatformApiEndToEndIT {
         assertThat(renamed.get("path")).isEqualTo("Q3 Meeting Notes.md");
         assertThat(renamed.get("id")).isEqualTo(noteId);
 
-        // 9) Loeschen ueber REST - der noch verbundene Client B muss mit Close-Code 4404
-        //    getrennt werden (Anforderungen.md: Loeschungen live synchronisieren).
+        // 9) Loeschen ueber REST - der noch verbundene Client B muss eine NOTE_DELETED-Nachricht
+        //    fuer GENAU diese Notiz bekommen (Anforderungen.md: Loeschungen live synchronisieren).
+        //    Die Verbindung selbst bleibt bestehen - seit der Multiplexing-Umstellung koennte
+        //    dieselbe Verbindung noch weitere, nicht geloeschte Notizen bedienen.
         var deleteHeaders = new java.util.HashMap<>(actorHeader);
         deleteHeaders.put("X-Operation-Id", "e2e-delete-op-1");
         var deleteResponse = delete("/api/v1/vaults/" + vaultId + "/notes/" + noteId, deleteHeaders);
@@ -294,8 +296,9 @@ class PlatformApiEndToEndIT {
         var tombstone = json.readValue(deleteResponse.body(), Map.class);
         assertThat(tombstone.get("operationId")).isEqualTo("e2e-delete-op-1");
 
-        assertThat(handlerB.closedLatch.await(5, TimeUnit.SECONDS)).isTrue();
-        assertThat(handlerB.closeStatus.getCode()).isEqualTo(SyncRelayService.CLOSE_CODE_NOTE_DELETED);
+        var deletionNotice = handlerB.awaitNextFrame();
+        assertThat(deletionNotice.type()).isEqualTo(MESSAGE_TYPE_NOTE_DELETED);
+        assertThat(sessionB.isOpen()).as("Verbindung bleibt trotz Notiz-Loeschung offen").isTrue();
 
         // 10) Die Note ist wirklich weg.
         var getAfterDelete = get("/api/v1/vaults/" + vaultId + "/notes/" + noteId, actorHeader);

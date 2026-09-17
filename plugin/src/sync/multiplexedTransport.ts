@@ -5,6 +5,10 @@ const NOTE_ID_LENGTH = 36;
 
 const TYPE_JOIN = 2;
 const TYPE_LEAVE = 3;
+/** Muss zum Server (SyncFrame.java) passen: genau diese Notiz wurde geloescht, Verbindung bleibt bestehen. */
+const TYPE_NOTE_DELETED = 4;
+/** Muss zu {@code SyncClient.CLOSE_CODE_NOTE_DELETED} passen - SyncClient reagiert bereits darauf, bleibt unveraendert. */
+const CLOSE_CODE_NOTE_DELETED = 4404;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -244,6 +248,19 @@ export class MultiplexedTransport {
     const type = raw[0];
     const noteId = textDecoder.decode(raw.subarray(1, 1 + NOTE_ID_LENGTH));
     const payload = raw.subarray(1 + NOTE_ID_LENGTH);
-    this.virtualSockets.get(noteId)?.dispatchMessage(type, payload);
+    const vs = this.virtualSockets.get(noteId);
+    if (!vs) {
+      return;
+    }
+    if (type === TYPE_NOTE_DELETED) {
+      // Betrifft NUR diese eine Notiz, NICHT die geteilte Verbindung - deshalb ein synthetisches
+      // Close ausschliesslich auf ihrem virtuellen Socket (SyncClient reagiert bereits auf
+      // Close-Code 4404 mit `onNoteDeleted`, bleibt dafuer unveraendert), statt die echte
+      // Verbindung zu trennen und damit alle anderen gejointen Notizen mitzureissen.
+      this.virtualSockets.delete(noteId);
+      vs.dispatchClose(CLOSE_CODE_NOTE_DELETED, "note deleted");
+      return;
+    }
+    vs.dispatchMessage(type, payload);
   }
 }

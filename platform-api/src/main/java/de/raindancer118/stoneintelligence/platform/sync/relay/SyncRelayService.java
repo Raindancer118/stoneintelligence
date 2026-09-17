@@ -12,8 +12,6 @@ import org.springframework.stereotype.Service;
 @Service
 public class SyncRelayService {
 
-    public static final int CLOSE_CODE_NOTE_DELETED = 4404;
-
     private final SnapshotStore snapshotStore;
     private final SyncRoomRegistry registry;
 
@@ -49,8 +47,11 @@ public class SyncRelayService {
         registry.leave(noteId, session);
     }
 
-    /** Die Note wurde geloescht (Tombstone) - alle verbundenen Clients werden getrennt. */
+    /**
+     * Die Note wurde geloescht (Tombstone) - alle beteiligten Sessions werden benachrichtigt und
+     * verlassen den Raum, ihre Verbindung selbst bleibt fuer andere gejointe Notizen bestehen.
+     */
     public void onNoteDeleted(NoteId noteId) {
-        registry.closeAll(noteId, CLOSE_CODE_NOTE_DELETED, "note deleted");
+        registry.notifyDeletedAndLeaveAll(noteId);
     }
 }

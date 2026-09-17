@@ -142,8 +142,20 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         return false;
     }
 
-    /** Wrappt eine Spring-{@link WebSocketSession} als {@link SyncSession}, framt mit {@link SyncFrame}. */
-    private record WebSocketSyncSession(WebSocketSession session) implements SyncSession {
+    /**
+     * Wrappt eine Spring-{@link WebSocketSession} als {@link SyncSession}, framt mit
+     * {@link SyncFrame}. Bewusst eine NICHT-statische innere Klasse (statt eines record wie
+     * vorher) - {@link #notifyNoteDeleted} muss den eigenen {@link #joinedNotesBySession}-Eintrag
+     * dieser Session bereinigen, sonst wuerde ein (fehlerhafter/boeswilliger) Client nach einer
+     * Loeschung weiter Updates fuer die laengst geloeschte NoteId senden koennen.
+     */
+    private final class WebSocketSyncSession implements SyncSession {
+
+        private final WebSocketSession session;
+
+        private WebSocketSyncSession(WebSocketSession session) {
+            this.session = session;
+        }
 
         @Override
         public String id() {
@@ -160,10 +172,28 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             send(SyncFrame.TYPE_AWARENESS, noteId, payload);
         }
 
+        @Override
+        public void notifyNoteDeleted(NoteId noteId) {
+            var joined = joinedNotesBySession.get(session.getId());
+            if (joined != null) {
+                joined.remove(noteId);
+            }
+            send(SyncFrame.TYPE_NOTE_DELETED, noteId, new byte[0]);
+        }
+
         private void send(byte messageType, NoteId noteId, byte[] payload) {
             var frame = new SyncFrame(messageType, noteId, payload);
             try {
-                session.sendMessage(new BinaryMessage(frame.encode()));
+                // WebSocketSession.sendMessage() ist NICHT threadsicher (Tomcat/Spring-Doku) -
+                // seit der Multiplexing-Umstellung kann dieselbe Session gleichzeitig aus
+                // verschiedenen Threads beliefert werden (z. B. ein JOIN-Catchup fuer Notiz A UND
+                // ein Broadcast fuer Notiz B praktisch zeitgleich). Ohne diese Synchronisierung
+                // gehen unter Last vereinzelt Frames verloren (live per Simulation gefunden:
+                // VaultSyncSimulationIT, ein Burst aus 120 gleichzeitigen Joins verlor
+                // zuverlaessig genau eine zufaellige Notiz).
+                synchronized (session) {
+                    session.sendMessage(new BinaryMessage(frame.encode()));
+                }
             } catch (IOException e) {
                 throw new SyncSessionSendException(session.getId(), e);
             }
@@ -176,6 +206,22 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             } catch (IOException ignored) {
                 // Session ist ohnehin bereits weg - nichts weiter zu tun.
             }
+        }
+
+        /**
+         * Nicht mehr automatisch generiert, seit dies kein record mehr ist (s. Klassendoc oben) -
+         * OHNE das wuerde {@code SyncRoomRegistry.leave} (nutzt {@code Set.remove}, verlangt
+         * strukturelle Gleichheit) den bei JOIN eingetragenen Eintrag nie wiederfinden, weil pro
+         * Nachricht eine FRISCHE {@code WebSocketSyncSession}-Instanz erzeugt wird.
+         */
+        @Override
+        public boolean equals(Object obj) {
+            return obj instanceof WebSocketSyncSession other && session.equals(other.session);
+        }
+
+        @Override
+        public int hashCode() {
+            return session.hashCode();
         }
     }
 }

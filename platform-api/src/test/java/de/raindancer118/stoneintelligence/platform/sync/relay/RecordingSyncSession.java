@@ -10,6 +10,7 @@ final class RecordingSyncSession implements SyncSession {
     final List<byte[]> receivedDocUpdates = new ArrayList<>();
     final List<NoteId> receivedDocUpdateNoteIds = new ArrayList<>();
     final List<byte[]> receivedAwarenessUpdates = new ArrayList<>();
+    final List<NoteId> notifiedDeletedNoteIds = new ArrayList<>();
     Integer closedWithCode;
     String closedWithReason;
 
@@ -31,6 +32,11 @@ final class RecordingSyncSession implements SyncSession {
     @Override
     public void sendAwarenessUpdate(NoteId noteId, byte[] payload) {
         receivedAwarenessUpdates.add(payload);
+    }
+
+    @Override
+    public void notifyNoteDeleted(NoteId noteId) {
+        notifiedDeletedNoteIds.add(noteId);
     }
 
     @Override
