@@ -306,4 +306,26 @@ describe("MultiplexedTransport", () => {
     realSocket.deliver(frame(TYPE_DOC_UPDATE, NOTE_ID_B, [1, 2, 3]));
     expect(messagesB).toHaveBeenCalledTimes(1);
   });
+
+  it("should_dispatchErrorAndScheduleReconnect_when_theUrlProviderRejects", async () => {
+    // Regression: schlug das Holen einer frischen URL/Ticket fehl (z. B. weil der Token-Refresh
+    // gerade mit HTTP 400 scheitert, s. main.ts getAccessToken), blieb die virtuelle Verbindung
+    // fuer immer auf "connecting" stehen - es wurde nie ein echtes Socket erzeugt, also feuerten
+    // auch nie dessen onerror/onclose-Handler, die sonst einen Reconnect anstossen wuerden.
+    const realSocket = new FakeRealSocket();
+    const getUrl = vi.fn()
+      .mockRejectedValueOnce(new Error("token refresh failed"))
+      .mockResolvedValueOnce("wss://example.invalid");
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const transport = new MultiplexedTransport(getUrl, () => realSocket, { sleep, reconnectDelayMs: 500 });
+    const errorA = vi.fn();
+    const vsA = transport.createVirtualSocket(NOTE_ID_A);
+    vsA.onerror = errorA;
+
+    await vi.waitFor(() => expect(errorA).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(sleep).toHaveBeenCalledWith(500));
+    await waitUntilConnecting(realSocket);
+
+    expect(getUrl).toHaveBeenCalledTimes(2);
+  });
 });
