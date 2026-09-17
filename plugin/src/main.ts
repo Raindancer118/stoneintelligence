@@ -301,6 +301,13 @@ export default class StoneIntelligencePlugin extends Plugin {
     if (!this.settings.vaultId) {
       return;
     }
+    try {
+      await this.reconcileMissingNotesFromServer();
+    } catch (error) {
+      // Reconciliation ist ein Download-Bonus, kein Muss - ein Fehler hier (z. B. Netzwerk) soll
+      // nicht verhindern, dass lokal bereits vorhandene Notizen weiterhin synchronisiert werden.
+      console.error("StoneIntelligence: Reconciliation fehlgeschlagen", error);
+    }
     for (const file of this.app.vault.getMarkdownFiles()) {
       try {
         await this.startSync(file);
@@ -310,6 +317,38 @@ export default class StoneIntelligencePlugin extends Plugin {
         // ebenfalls nie synchronisiert, nur weil eine einzelne frueh im Durchlauf hakt.
         console.error(`StoneIntelligence: Sync fuer "${file.path}" fehlgeschlagen`, error);
       }
+    }
+  }
+
+  /**
+   * Laedt Notizen herunter, die auf dem Server existieren, aber lokal (noch) fehlen - der Fall,
+   * der bisher komplett unbehandelt war: ein neues/leeres Vault auf einem zweiten Geraet bekam
+   * NIE etwas heruntergeladen, weil `syncAllNotes()` nur ueber bereits lokal vorhandene Dateien
+   * iterierte. Legt fuer jede fehlende Notiz eine leere lokale Platzhalterdatei an (der
+   * `create`-Vault-Event startet darueber automatisch `startSync`, das dann per Late-Joiner-
+   * Catchup den echten Inhalt vom Server einspielt, s. `startSync`).
+   */
+  private async reconcileMissingNotesFromServer(): Promise<void> {
+    const localPaths = new Set(this.app.vault.getMarkdownFiles().map((f) => f.path));
+    const serverNotes = await this.noteApiClient.listAllNotes(this.settings.vaultId);
+
+    for (const note of serverNotes) {
+      if (localPaths.has(note.path)) {
+        continue;
+      }
+      // NoteId VOR dem Anlegen der Datei eintragen: der `create`-Event-Handler ruft `startSync`
+      // auf, dessen `ensureNoteId` sonst eine ZWEITE Note fuer denselben Pfad anlegen wuerde
+      // (Fehlerklasse 5) statt die bereits vorhandene Server-Note zu uebernehmen.
+      this.settings.noteIds[note.path] = note.id;
+      await this.saveSettings();
+
+      const folderPath = note.path.split("/").slice(0, -1).join("/");
+      if (folderPath && !this.app.vault.getAbstractFileByPath(folderPath)) {
+        await this.app.vault.createFolder(folderPath).catch(() => {
+          // Race mit einer anderen gerade heruntergeladenen Notiz im selben Ordner - harmlos.
+        });
+      }
+      await this.app.vault.create(note.path, "");
     }
   }
 
@@ -353,11 +392,17 @@ export default class StoneIntelligencePlugin extends Plugin {
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     const initialContent = await this.app.vault.read(file);
-    if (text.toString() !== initialContent) {
+    if (text.length === 0 && initialContent.length > 0) {
+      // Kein Server-/Catchup-Inhalt eingetroffen (Y.Text ist leer) - diese Notiz hat noch keine
+      // Server-Historie, lokaler Inhalt ist die Wahrheit und wird eingespielt.
       doc.transact(() => {
-        text.delete(0, text.length);
         text.insert(0, initialContent);
       });
+    } else if (text.length > 0 && text.toString() !== initialContent) {
+      // Catchup hat Server-Inhalt geliefert, der vom lokalen abweicht - das ist der Normalfall
+      // beim ERSTEN Sync einer via reconcileMissingNotesFromServer() heruntergeladenen Notiz
+      // (lokal nur ein leerer Platzhalter). Server-Stand gewinnt und wird in die Datei geschrieben.
+      await this.applyRemoteContentToFile(file, text.toString());
     }
 
     const session: NoteSyncSession = {
