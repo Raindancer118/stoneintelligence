@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { AuthentikAuthClient, OIDC_REDIRECT_URI } from "../src/sync/AuthentikAuthClient";
+import { AuthentikAuthClient } from "../src/sync/AuthentikAuthClient";
+
+const TEST_REDIRECT_URI = "http://127.0.0.1:42813/callback";
 
 describe("AuthentikAuthClient", () => {
   describe("generateCodeChallenge", () => {
@@ -43,7 +45,7 @@ describe("AuthentikAuthClient", () => {
       const url = AuthentikAuthClient.buildAuthorizationUrl(
         "https://portal.tstieh.de/application/o/authorize/",
         "my-client-id",
-        OIDC_REDIRECT_URI,
+        TEST_REDIRECT_URI,
         "the-challenge",
         "the-state",
       );
@@ -51,7 +53,7 @@ describe("AuthentikAuthClient", () => {
       const parsed = new URL(url);
       expect(parsed.searchParams.get("response_type")).toBe("code");
       expect(parsed.searchParams.get("client_id")).toBe("my-client-id");
-      expect(parsed.searchParams.get("redirect_uri")).toBe(OIDC_REDIRECT_URI);
+      expect(parsed.searchParams.get("redirect_uri")).toBe(TEST_REDIRECT_URI);
       expect(parsed.searchParams.get("code_challenge")).toBe("the-challenge");
       expect(parsed.searchParams.get("code_challenge_method")).toBe("S256");
       expect(parsed.searchParams.get("state")).toBe("the-state");
@@ -95,7 +97,9 @@ describe("AuthentikAuthClient", () => {
       );
       const before = Date.now();
 
-      const tokens = await client.exchangeCodeForTokens("https://issuer/token", "the-code", "the-verifier");
+      const tokens = await client.exchangeCodeForTokens(
+        "https://issuer/token", "the-code", "the-verifier", "obsidian://stoneintelligence-auth",
+      );
 
       expect(tokens.accessToken).toBe("at");
       expect(tokens.refreshToken).toBe("rt");
@@ -105,6 +109,26 @@ describe("AuthentikAuthClient", () => {
       expect(options.body).toContain("client_id=my-client");
       expect(options.body).toContain("code=the-code");
       expect(options.body).toContain("code_verifier=the-verifier");
+      expect(options.body).toContain(`redirect_uri=${encodeURIComponent("obsidian://stoneintelligence-auth")}`);
+    });
+
+    it("should_useTheGivenRedirectUri_notAFixedOne", async () => {
+      // Regression: der Redirect-URI-Parameter MUSS exakt dem der Autorisierungsanfrage
+      // entsprechen (RFC 6749 4.1.3) - frueher war hier fest die Desktop-Loopback-URI verdrahtet,
+      // was fuer jeden anderen Redirect-Pfad (Webapp, Mobile) einen Token-Exchange-Fehlschlag
+      // erzeugt haette.
+      const fakeFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ access_token: "at", refresh_token: "rt", expires_in: 3600 }),
+      });
+      const client = new AuthentikAuthClient(
+        { issuerUrl: "https://issuer", clientId: "my-client" }, fakeFetch as unknown as typeof fetch,
+      );
+
+      await client.exchangeCodeForTokens("https://issuer/token", "code", "verifier", "https://kb.tstieh.de/callback");
+
+      const [, options] = fakeFetch.mock.calls[0] as [string, RequestInit];
+      expect(options.body).toContain(`redirect_uri=${encodeURIComponent("https://kb.tstieh.de/callback")}`);
     });
 
     it("should_throw_when_exchangeFails", async () => {
@@ -113,7 +137,59 @@ describe("AuthentikAuthClient", () => {
         { issuerUrl: "https://issuer", clientId: "client" }, fakeFetch as unknown as typeof fetch,
       );
 
-      await expect(client.exchangeCodeForTokens("https://issuer/token", "code", "verifier")).rejects.toThrow("400");
+      await expect(
+        client.exchangeCodeForTokens("https://issuer/token", "code", "verifier", "obsidian://stoneintelligence-auth"),
+      ).rejects.toThrow("400");
+    });
+  });
+
+  describe("login", () => {
+    function fakeFetchFor(discovery: object, tokens: object): typeof fetch {
+      return vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: async () => discovery })
+        .mockResolvedValueOnce({ ok: true, json: async () => tokens }) as unknown as typeof fetch;
+    }
+
+    it("should_openAuthorizationUrl_withGivenRedirectUri_andExchangeTheReturnedCode", async () => {
+      const fakeFetch = fakeFetchFor(
+        { authorization_endpoint: "https://issuer/auth", token_endpoint: "https://issuer/token" },
+        { access_token: "at", refresh_token: "rt", expires_in: 3600 },
+      );
+      const client = new AuthentikAuthClient({ issuerUrl: "https://issuer", clientId: "my-client" }, fakeFetch);
+      const openAuthorizationUrl = vi.fn();
+      let capturedState = "";
+      const awaitCode = vi.fn().mockImplementation(async (state: string) => {
+        capturedState = state;
+        return "the-code";
+      });
+
+      const tokens = await client.login({
+        redirectUri: "obsidian://stoneintelligence-auth",
+        openAuthorizationUrl,
+        awaitCode,
+      });
+
+      expect(tokens.accessToken).toBe("at");
+      const openedUrl = new URL(openAuthorizationUrl.mock.calls[0][0] as string);
+      expect(openedUrl.searchParams.get("redirect_uri")).toBe("obsidian://stoneintelligence-auth");
+      expect(openedUrl.searchParams.get("state")).toBe(capturedState);
+      const [, exchangeOptions] = (fakeFetch as ReturnType<typeof vi.fn>).mock.calls[1] as [string, RequestInit];
+      expect(exchangeOptions.body).toContain("code=the-code");
+      expect(exchangeOptions.body).toContain(`redirect_uri=${encodeURIComponent("obsidian://stoneintelligence-auth")}`);
+    });
+
+    it("should_propagate_when_awaitCodeRejects", async () => {
+      const fakeFetch = fakeFetchFor(
+        { authorization_endpoint: "https://issuer/auth", token_endpoint: "https://issuer/token" },
+        {},
+      );
+      const client = new AuthentikAuthClient({ issuerUrl: "https://issuer", clientId: "my-client" }, fakeFetch);
+
+      await expect(client.login({
+        redirectUri: "obsidian://stoneintelligence-auth",
+        openAuthorizationUrl: vi.fn(),
+        awaitCode: vi.fn().mockRejectedValue(new Error("state mismatch - moeglicher CSRF-Versuch")),
+      })).rejects.toThrow("state mismatch");
     });
   });
 

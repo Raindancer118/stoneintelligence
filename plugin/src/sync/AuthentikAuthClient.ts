@@ -22,17 +22,14 @@ interface TokenResponseBody {
   expires_in: number;
 }
 
-export const OIDC_REDIRECT_PORT = 42813;
-export const OIDC_REDIRECT_URI = `http://127.0.0.1:${OIDC_REDIRECT_PORT}/callback`;
-
 /**
  * OAuth2 Authorization Code + PKCE gegen Authentik (Plan.md Abschnitt 4.4: "SSO/OIDC als
  * einziger Auth-Pfad fuer Menschen ... Plugin-Login"). Kein Client-Secret - das Plugin ist ein
  * Public Client, PKCE (S256) ersetzt das Secret als Schutz gegen Code-Interception.
  *
- * <p>{@link login} funktioniert NUR auf dem Desktop (Node-`http` fuer den Loopback-Callback via
- * Electron) - auf Mobile gibt es noch keinen Redirect-Mechanismus. Bekannte Einschraenkung,
- * s. Project.md.
+ * <p>{@link login} ist plattform-agnostisch (s. dessen Doc-Kommentar) - funktioniert seit
+ * Einfuehrung des `obsidian://`-Redirects (s. main.ts/desktopAuthRedirect.ts) sowohl auf
+ * Desktop als auch auf Mobile.
  */
 export class AuthentikAuthClient {
   constructor(
@@ -110,7 +107,14 @@ export class AuthentikAuthClient {
     return (await response.json()) as OidcDiscoveryDocument;
   }
 
-  async exchangeCodeForTokens(tokenEndpoint: string, code: string, codeVerifier: string): Promise<StoredTokens> {
+  /**
+   * `redirectUri` MUSS exakt der aus der Autorisierungsanfrage sein (RFC 6749 4.1.3) - Authentik
+   * lehnt den Tausch sonst ab. Frueher hier fest verdrahtet auf die Desktop-Loopback-URI, was nur
+   * zufaellig nie auffiel, solange es der einzige Redirect-Pfad war.
+   */
+  async exchangeCodeForTokens(
+    tokenEndpoint: string, code: string, codeVerifier: string, redirectUri: string,
+  ): Promise<StoredTokens> {
     const response = await this.fetchImpl(tokenEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -118,7 +122,7 @@ export class AuthentikAuthClient {
         grant_type: "authorization_code",
         client_id: this.settings.clientId,
         code,
-        redirect_uri: OIDC_REDIRECT_URI,
+        redirect_uri: redirectUri,
         code_verifier: codeVerifier,
       }).toString(),
     });
@@ -145,59 +149,31 @@ export class AuthentikAuthClient {
   }
 
   /**
-   * Voller interaktiver Login: OIDC-Discovery, PKCE-Paar erzeugen, Systembrowser oeffnen,
-   * auf den Redirect an einen lokalen Loopback-Server warten, Code gegen Tokens tauschen.
+   * Voller interaktiver Login: OIDC-Discovery, PKCE-Paar erzeugen, Systembrowser oeffnen (per
+   * {@link redirect}.openAuthorizationUrl), auf den Redirect warten (per
+   * {@link redirect}.awaitCode), Code gegen Tokens tauschen. Bewusst plattform-agnostisch: WIE der
+   * Browser geoeffnet wird und WIE der Redirect abgefangen wird, unterscheidet sich zwischen
+   * Desktop (lokaler Loopback-HTTP-Server + `electron.shell.openExternal`, s. desktopAuthRedirect.ts)
+   * und Mobile (Obsidians eigenes `obsidian://`-URI-Schema + `registerObsidianProtocolHandler`,
+   * s. main.ts) - dieser Client kennt nur die Strategie-Schnittstelle, nicht die Plattform.
    */
-  async login(): Promise<StoredTokens> {
+  async login(redirect: {
+    redirectUri: string;
+    openAuthorizationUrl: (url: string) => void | Promise<void>;
+    awaitCode: (expectedState: string) => Promise<string>;
+  }): Promise<StoredTokens> {
     const discovery = await this.discover();
     const verifier = AuthentikAuthClient.generateRandomToken();
     const challenge = await AuthentikAuthClient.generateCodeChallenge(verifier);
     const state = AuthentikAuthClient.generateRandomToken();
 
-    const codePromise = AuthentikAuthClient.awaitRedirectCode(state);
+    const codePromise = redirect.awaitCode(state);
     const authorizationUrl = AuthentikAuthClient.buildAuthorizationUrl(
-      discovery.authorization_endpoint, this.settings.clientId, OIDC_REDIRECT_URI, challenge, state,
+      discovery.authorization_endpoint, this.settings.clientId, redirect.redirectUri, challenge, state,
     );
-
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { shell } = require("electron");
-    await shell.openExternal(authorizationUrl);
+    await redirect.openAuthorizationUrl(authorizationUrl);
 
     const code = await codePromise;
-    return this.exchangeCodeForTokens(discovery.token_endpoint, code, verifier);
-  }
-
-  private static awaitRedirectCode(expectedState: string): Promise<string> {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const http = require("http") as typeof import("http");
-    return new Promise((resolve, reject) => {
-      const server = http.createServer((req, res) => {
-        const requestUrl = new URL(req.url ?? "", OIDC_REDIRECT_URI);
-        if (requestUrl.pathname !== "/callback") {
-          res.writeHead(404).end();
-          return;
-        }
-        const code = requestUrl.searchParams.get("code");
-        const state = requestUrl.searchParams.get("state");
-        const error = requestUrl.searchParams.get("error");
-
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(error
-          ? `<html><body>Login fehlgeschlagen: ${AuthentikAuthClient.escapeHtml(error)}. Dieses Fenster kann geschlossen werden.</body></html>`
-          : "<html><body>Login erfolgreich - dieses Fenster kann geschlossen werden.</body></html>");
-        server.close();
-
-        if (error) {
-          reject(new Error(`authorization failed: ${error}`));
-        } else if (state !== expectedState) {
-          reject(new Error("state mismatch - moeglicher CSRF-Versuch"));
-        } else if (!code) {
-          reject(new Error("no authorization code in callback"));
-        } else {
-          resolve(code);
-        }
-      });
-      server.listen(OIDC_REDIRECT_PORT, "127.0.0.1");
-    });
+    return this.exchangeCodeForTokens(discovery.token_endpoint, code, verifier, redirect.redirectUri);
   }
 }

@@ -1,10 +1,15 @@
 import { Compartment } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
+import { App, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
 import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
 import { type SessionSnapshot, StatusView, VIEW_TYPE_STATUS } from "./StatusView";
 import { AuthentikAuthClient, type StoredTokens } from "./sync/AuthentikAuthClient";
+import { awaitDesktopRedirectCode, DESKTOP_REDIRECT_URI, openAuthorizationUrlDesktop } from "./sync/desktopAuthRedirect";
+import {
+  handleMobileRedirectCallback, MOBILE_REDIRECT_ACTION, MOBILE_REDIRECT_URI,
+  openAuthorizationUrlMobile, type PendingAuthCallback,
+} from "./sync/mobileAuthRedirect";
 import { NoteApiClient } from "./sync/NoteApiClient";
 import { OperationJournal } from "./sync/OperationJournal";
 import { SyncClient } from "./sync/SyncClient";
@@ -79,6 +84,7 @@ export default class StoneIntelligencePlugin extends Plugin {
   private readonly liveBindingCompartment = new Compartment();
   private liveBoundPath: string | null = null;
   private statusBarItem!: HTMLElement;
+  private pendingAuthCallback: PendingAuthCallback | null = null;
 
   /**
    * Liefert ein gueltiges Access-Token, refresht bei Bedarf still im Hintergrund (Phase 3: OIDC
@@ -103,8 +109,21 @@ export default class StoneIntelligencePlugin extends Plugin {
     return refreshed.accessToken;
   };
 
+  /**
+   * Redirect-Strategie ist plattformabhaengig: Desktop nutzt einen lokalen Loopback-HTTP-Server
+   * (Node `http` gibt es nur dort), Mobile nutzt Obsidians eigenes `obsidian://`-URI-Schema ueber
+   * `registerObsidianProtocolHandler` (in `onload()` registriert, s. dort).
+   */
   async login(): Promise<void> {
-    const tokens = await this.authClient.login();
+    const redirect = Platform.isDesktopApp
+      ? { redirectUri: DESKTOP_REDIRECT_URI, openAuthorizationUrl: openAuthorizationUrlDesktop, awaitCode: awaitDesktopRedirectCode }
+      : {
+          redirectUri: MOBILE_REDIRECT_URI,
+          openAuthorizationUrl: openAuthorizationUrlMobile,
+          awaitCode: (state: string) => this.awaitMobileRedirectCode(state),
+        };
+
+    const tokens = await this.authClient.login(redirect);
     this.settings.tokens = tokens;
     await this.saveData(this.settings);
     new Notice("StoneIntelligence: Login erfolgreich.");
@@ -115,12 +134,24 @@ export default class StoneIntelligencePlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
+  /** Wartet auf den `obsidian://`-Redirect (Mobile) - der Protokoll-Handler ist in {@link onload} registriert. */
+  private awaitMobileRedirectCode(expectedState: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      this.pendingAuthCallback = { state: expectedState, resolve, reject };
+    });
+  }
+
   async onload(): Promise<void> {
     await this.loadSettings();
     this.authClient = new AuthentikAuthClient({
       issuerUrl: this.settings.oidcIssuerUrl, clientId: this.settings.oidcClientId,
     });
     this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl, this.getAccessToken);
+    this.registerObsidianProtocolHandler(MOBILE_REDIRECT_ACTION, (params) => {
+      const pending = this.pendingAuthCallback;
+      this.pendingAuthCallback = null;
+      handleMobileRedirectCallback(pending, params as unknown as Record<string, string>);
+    });
     this.addSettingTab(new StoneIntelligenceSettingTab(this.app, this));
 
     this.registerEditorExtension([this.liveBindingCompartment.of([])]);
