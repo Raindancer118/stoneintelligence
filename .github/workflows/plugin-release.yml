@@ -49,3 +49,4 @@ jobs:
           files: |
             plugin/manifest.json
             plugin/main.js
+            plugin/styles.css

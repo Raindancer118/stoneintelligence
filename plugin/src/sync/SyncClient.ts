@@ -29,6 +29,8 @@ const MESSAGE_TYPE_AWARENESS = 1;
 /** Muss zu {@code SyncRelayService.CLOSE_CODE_NOTE_DELETED} auf dem Server passen. */
 export const CLOSE_CODE_NOTE_DELETED = 4404;
 
+export type SyncStatus = "connecting" | "connected" | "disconnected" | "error";
+
 /**
  * Client-Seite des "dummen" Yjs-Relays (Plan.md Abschnitt 2/8.4): der Server interpretiert die
  * Bytes nicht, er verteilt sie nur. {@link doc} ist die Source of Truth (ADR 0002) - die
@@ -42,6 +44,10 @@ export class SyncClient {
 
   /** Wird aufgerufen, wenn der Server die Verbindung mit {@link CLOSE_CODE_NOTE_DELETED} trennt. */
   onNoteDeleted: (() => void) | null = null;
+
+  /** Fuer Sichtbarkeit (Status-Leiste/-Ansicht) - kein Teil des Sync-Protokolls selbst. */
+  status: SyncStatus = "connecting";
+  onStatusChange: ((status: SyncStatus) => void) | null = null;
 
   constructor(
     private readonly wsUrl: string,
@@ -73,8 +79,11 @@ export class SyncClient {
   }
 
   connect(): void {
+    this.setStatus("connecting");
     this.socket = this.wsFactory(this.wsUrl);
     this.socket.binaryType = "arraybuffer";
+    this.socket.onopen = () => this.setStatus("connected");
+    this.socket.onerror = () => this.setStatus("error");
     this.socket.onmessage = (event) => {
       const raw = new Uint8Array(event.data as ArrayBuffer);
       if (raw.length === 0) {
@@ -91,13 +100,21 @@ export class SyncClient {
     this.socket.onclose = (event) => {
       if (event.code === CLOSE_CODE_NOTE_DELETED) {
         this.onNoteDeleted?.();
+        return;
       }
+      this.setStatus(event.code === 1000 ? "disconnected" : "error");
     };
   }
 
   disconnect(): void {
     this.socket?.close();
     this.socket = null;
+    this.setStatus("disconnected");
+  }
+
+  private setStatus(status: SyncStatus): void {
+    this.status = status;
+    this.onStatusChange?.(status);
   }
 
   private send(messageType: number, payload: Uint8Array): void {

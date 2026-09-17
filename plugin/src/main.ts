@@ -3,6 +3,7 @@ import type { EditorView } from "@codemirror/view";
 import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
 import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
+import { type SessionSnapshot, StatusView, VIEW_TYPE_STATUS } from "./StatusView";
 import { AuthentikAuthClient, type StoredTokens } from "./sync/AuthentikAuthClient";
 import { NoteApiClient } from "./sync/NoteApiClient";
 import { OperationJournal } from "./sync/OperationJournal";
@@ -77,6 +78,7 @@ export default class StoneIntelligencePlugin extends Plugin {
   private tokenEndpoint: string | null = null;
   private readonly liveBindingCompartment = new Compartment();
   private liveBoundPath: string | null = null;
+  private statusBarItem!: HTMLElement;
 
   /**
    * Liefert ein gueltiges Access-Token, refresht bei Bedarf still im Hintergrund (Phase 3: OIDC
@@ -161,6 +163,58 @@ export default class StoneIntelligencePlugin extends Plugin {
       window.setInterval(() => this.journal.evictOlderThan(5 * 60_000), 60_000) as unknown as number,
     );
 
+    this.registerView(VIEW_TYPE_STATUS, (leaf) => new StatusView(leaf, this));
+    this.statusBarItem = this.addStatusBarItem();
+    this.statusBarItem.addClass("stoneintelligence-status-bar");
+    this.statusBarItem.onclick = () => void this.activateStatusView();
+    this.updateStatusBar();
+    this.registerInterval(window.setInterval(() => this.updateStatusBar(), 2000) as unknown as number);
+
+    this.addCommand({
+      id: "stoneintelligence-show-status",
+      name: "Status anzeigen",
+      callback: () => void this.activateStatusView(),
+    });
+    this.addCommand({
+      id: "stoneintelligence-login",
+      name: "Jetzt einloggen",
+      callback: async () => {
+        try {
+          await this.login();
+        } catch (error) {
+          new Notice(`StoneIntelligence: Login fehlgeschlagen - ${(error as Error).message}`);
+        }
+      },
+    });
+    this.addCommand({
+      id: "stoneintelligence-resync-all",
+      name: "Alle Notizen neu synchronisieren",
+      callback: async () => {
+        for (const path of [...this.sessions.keys()]) {
+          this.stopSync(path);
+        }
+        await this.syncAllNotes();
+        new Notice("StoneIntelligence: Neu synchronisiert.");
+      },
+    });
+    this.addCommand({
+      id: "stoneintelligence-resync-active",
+      name: "Aktuelle Notiz neu verbinden",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        const isTrackableNote = file instanceof TFile && file.extension === "md";
+        if (checking) {
+          return isTrackableNote;
+        }
+        if (file) {
+          this.stopSync(file.path);
+          void this.startSync(file);
+          new Notice(`StoneIntelligence: "${file.path}" wird neu verbunden.`);
+        }
+        return true;
+      },
+    });
+
     this.app.workspace.onLayoutReady(() => {
       void this.syncAllNotes();
     });
@@ -170,6 +224,46 @@ export default class StoneIntelligencePlugin extends Plugin {
     for (const path of [...this.sessions.keys()]) {
       this.stopSync(path);
     }
+  }
+
+  async activateStatusView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(VIEW_TYPE_STATUS)[0];
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false) ?? workspace.getLeaf(true);
+      await leaf.setViewState({ type: VIEW_TYPE_STATUS, active: true });
+    }
+    workspace.revealLeaf(leaf);
+  }
+
+  isLoggedIn(): boolean {
+    return this.settings.tokens !== null;
+  }
+
+  getVaultId(): string {
+    return this.settings.vaultId;
+  }
+
+  getSyncSessions(): SessionSnapshot[] {
+    return [...this.sessions.values()].map((session) => ({ path: session.path, status: session.client.status }));
+  }
+
+  private updateStatusBar(): void {
+    const sessions = [...this.sessions.values()];
+    const connected = sessions.filter((s) => s.client.status === "connected").length;
+    const errored = sessions.filter((s) => s.client.status === "error").length;
+
+    let text: string;
+    if (!this.isLoggedIn()) {
+      text = "○ StoneIntelligence: nicht angemeldet";
+    } else if (errored > 0) {
+      text = `⚠ StoneIntelligence: ${errored} Fehler`;
+    } else if (sessions.length === 0) {
+      text = "○ StoneIntelligence: keine Notizen";
+    } else {
+      text = `● StoneIntelligence: ${connected}/${sessions.length}`;
+    }
+    this.statusBarItem.setText(text);
   }
 
   private async syncAllNotes(): Promise<void> {

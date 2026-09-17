@@ -168,4 +168,73 @@ describe("SyncClient", () => {
       expect(onNoteDeleted).not.toHaveBeenCalled();
     });
   });
+
+  describe("status tracking", () => {
+    it("should_startAsConnecting_then_becomeConnected_when_socketOpens", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+
+      client.connect();
+      expect(client.status).toBe("connecting");
+
+      socket.onopen?.({} as Event);
+      expect(client.status).toBe("connected");
+    });
+
+    it("should_notifyOnStatusChange_when_statusTransitions", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      const onStatusChange = vi.fn();
+      client.onStatusChange = onStatusChange;
+
+      client.connect();
+      socket.onopen?.({} as Event);
+
+      expect(onStatusChange).toHaveBeenCalledWith("connecting");
+      expect(onStatusChange).toHaveBeenCalledWith("connected");
+    });
+
+    it("should_becomeError_when_socketReportsAnError", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      client.connect();
+
+      socket.onerror?.({} as Event);
+
+      expect(client.status).toBe("error");
+    });
+
+    it("should_becomeDisconnected_when_socketClosesNormally", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      client.connect();
+      socket.onopen?.({} as Event);
+
+      socket.remoteClose(1000, "normal closure");
+
+      expect(client.status).toBe("disconnected");
+    });
+
+    it("should_becomeError_when_socketClosesAbnormally", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      client.connect();
+      socket.onopen?.({} as Event);
+
+      socket.remoteClose(1006, "abnormal closure");
+
+      expect(client.status).toBe("error");
+    });
+
+    it("should_becomeDisconnected_when_disconnectIsCalled", () => {
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      client.connect();
+      socket.onopen?.({} as Event);
+
+      client.disconnect();
+
+      expect(client.status).toBe("disconnected");
+    });
+  });
 });
