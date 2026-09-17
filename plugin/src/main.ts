@@ -489,6 +489,20 @@ export default class StoneIntelligencePlugin extends Plugin {
     }
   }
 
+  /**
+   * Registriert die Session SOFORT (nicht erst nach vollstaendigem Verbindungsaufbau) und laesst
+   * das eigentliche Verbinden+Content-Merge im Hintergrund laufen (s. `mergeInitialContent`).
+   *
+   * <p>Fruehere Version wartete HIER (blockierend) bis zu 30s pro Notiz auf die Verbindung, BEVOR
+   * sie zur naechsten Notiz weiterging - `syncAllNotes()`/`reconcileMissingNotesFromServer()`
+   * rufen `startSync` aber SEQUENTIELL fuer jede Notiz auf. Bei einem groesseren Vault (100+
+   * Notizen) UND einer gerade langsamen/gestoerten Verbindung summierte sich das zu vielen
+   * Minuten, in denen scheinbar ueberhaupt nichts passierte (kein neuer Netzwerk-Request, keine
+   * Konsolen-Ausgabe) - live beobachtet nach einem manuellen "Alle Notizen neu synchronisieren".
+   * Das eigene Staffeln der Verbindungen ist ohnehin schon Aufgabe von
+   * `MultiplexedTransport.joinStaggerMs` - diese zusaetzliche, sequentielle Blockade hier war nur
+   * doppelte, schaedliche Drosselung obendrauf.
+   */
   private async doStartSync(file: TFile, priority: boolean): Promise<void> {
     const noteId = await this.ensureNoteId(file);
     const transport = this.ensureTransport();
@@ -505,6 +519,38 @@ export default class StoneIntelligencePlugin extends Plugin {
     const client = new SyncClient("", () => transport.createVirtualSocket(noteId, { priority }), doc);
     client.onNoteDeleted = () => this.handleRemoteNoteDeleted(file.path);
     client.connect();
+
+    const session: NoteSyncSession = {
+      path: file.path,
+      noteId,
+      client,
+      unbindDocObserver: () => text.unobserve(observer),
+      hasLiveEditorBinding: false,
+    };
+
+    const observer = (): void => {
+      if (session.hasLiveEditorBinding) {
+        // yCollab haelt den Editor bereits zeichengenau synchron, Obsidians eigenes Autosave
+        // uebernimmt das Schreiben auf die Datei - der grobe Volltext-Pfad wuerde nur
+        // redundant/konfliktaer dieselbe Aenderung ein zweites Mal auf die Datei schreiben.
+        return;
+      }
+      void this.applyRemoteContentToFile(file, text.toString());
+    };
+    text.observe(observer);
+
+    this.sessions.set(file.path, session);
+
+    void this.mergeInitialContent(file, client, doc, text);
+  }
+
+  /**
+   * Wartet im Hintergrund auf den tatsaechlichen Verbindungsaufbau (bei einer gestaffelten
+   * Warteschlange kann das dauern), dann auf eine kurze Catchup-Gnadenfrist, und entscheidet erst
+   * DANACH, ob lokaler oder Server-Inhalt gewinnt. Blockiert bewusst NICHT den Aufrufer von
+   * `doStartSync` - s. dessen Klassendoc.
+   */
+  private async mergeInitialContent(file: TFile, client: SyncClient, doc: Y.Doc, text: Y.Text): Promise<void> {
     await this.awaitConnected(client);
 
     // Kurze Gnadenfrist, damit ein eventueller Late-Joiner-Catchup (die Notiz hat bereits
@@ -530,27 +576,6 @@ export default class StoneIntelligencePlugin extends Plugin {
       // (lokal nur ein leerer Platzhalter). Server-Stand gewinnt und wird in die Datei geschrieben.
       await this.applyRemoteContentToFile(file, text.toString());
     }
-
-    const session: NoteSyncSession = {
-      path: file.path,
-      noteId,
-      client,
-      unbindDocObserver: () => text.unobserve(observer),
-      hasLiveEditorBinding: false,
-    };
-
-    const observer = (): void => {
-      if (session.hasLiveEditorBinding) {
-        // yCollab haelt den Editor bereits zeichengenau synchron, Obsidians eigenes Autosave
-        // uebernimmt das Schreiben auf die Datei - der grobe Volltext-Pfad wuerde nur
-        // redundant/konfliktaer dieselbe Aenderung ein zweites Mal auf die Datei schreiben.
-        return;
-      }
-      void this.applyRemoteContentToFile(file, text.toString());
-    };
-    text.observe(observer);
-
-    this.sessions.set(file.path, session);
   }
 
   /**
