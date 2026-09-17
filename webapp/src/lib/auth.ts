@@ -13,8 +13,12 @@ const userManager = new UserManager({
   post_logout_redirect_uri: window.location.origin,
   response_type: "code",
   scope: "openid profile email offline_access",
-  automaticSilentRenew: true,
-  userStore: undefined,
+  // Bewusst aus: monitorSession/automaticSilentRenew bauen eine Check-Session-Iframe- bzw.
+  // Silent-Renew-Infrastruktur auf, die schon beim Laden der Seite (noch ohne eingeloggten
+  // Nutzer) Metadaten nachlaedt - ein einzelner Nutzer, der sich bei Bedarf neu einloggt, ist
+  // hier einfacher und robuster als stille Hintergrund-Renews ueber ein Iframe.
+  monitorSession: false,
+  automaticSilentRenew: false,
 });
 
 export async function login(): Promise<void> {
@@ -25,8 +29,13 @@ export async function completeLogin(): Promise<User> {
   return userManager.signinRedirectCallback();
 }
 
+/** Faellt bewusst auf "nicht angemeldet" zurueck statt die ganze App mit einem Fehler zu blockieren. */
 export async function getUser(): Promise<User | null> {
-  return userManager.getUser();
+  try {
+    return await userManager.getUser();
+  } catch {
+    return null;
+  }
 }
 
 export async function logout(): Promise<void> {

@@ -25,26 +25,31 @@
         await completeLogin();
         window.history.replaceState({}, "", "/");
       }
-      user = await getUser();
-      if (user) {
-        await refreshVaults();
-      }
     } catch (e) {
-      error = (e as Error).message;
-    } finally {
-      loading = false;
+      error = `Login fehlgeschlagen: ${(e as Error).message}`;
     }
+
+    user = await getUser();
+    if (user) {
+      try {
+        await refreshVaults();
+      } catch (e) {
+        error = `Vaults konnten nicht geladen werden: ${(e as Error).message}`;
+      }
+    }
+    loading = false;
   });
 </script>
 
 {#if loading}
   <p class="status">Laden…</p>
-{:else if error}
-  <p class="status error">{error}</p>
 {:else if !user}
   <section class="gate">
     <h1>StoneIntelligence</h1>
     <p>Anmeldung über Authentik, um deine Vaults zu verwalten.</p>
+    {#if error}
+      <p class="status error">{error}</p>
+    {/if}
     <button onclick={() => startLogin()}>Mit Authentik anmelden</button>
   </section>
 {:else}
@@ -54,6 +59,9 @@
       <span class="greeting">Willkommen, {preferredUsername(user)}.</span>
       <button class="logout" onclick={() => startLogout()}>Abmelden</button>
     </header>
+    {#if error}
+      <p class="status error">{error}</p>
+    {/if}
     <div class="body">
       <aside>
         <Sidebar {vaults} selectedId={selected?.id ?? null} onSelect={(v) => (selected = v)} onCreated={refreshVaults} />
