@@ -18,7 +18,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 public class TicketHandshakeInterceptor implements HandshakeInterceptor {
 
     public static final String ATTR_VAULT_ID = "vaultId";
-    public static final String ATTR_NOTE_ID = "noteId";
     public static final String ATTR_ACTOR = "actor";
 
     private final TicketService ticketService;
@@ -49,7 +48,6 @@ public class TicketHandshakeInterceptor implements HandshakeInterceptor {
         }
 
         attributes.put(ATTR_VAULT_ID, claims.get().vaultId());
-        attributes.put(ATTR_NOTE_ID, claims.get().noteId());
         attributes.put(ATTR_ACTOR, claims.get().actor());
         return true;
     }

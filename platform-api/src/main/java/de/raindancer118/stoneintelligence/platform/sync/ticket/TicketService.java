@@ -5,7 +5,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Optional;
-import de.raindancer118.stoneintelligence.domain.id.NoteId;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
 
 /**
@@ -30,16 +29,16 @@ public class TicketService {
         this.store = store;
     }
 
-    public SyncTicket issue(VaultId vaultId, NoteId noteId, String actor) {
+    public SyncTicket issue(VaultId vaultId, String actor) {
         var now = clock.instant();
-        var ticket = new SyncTicket(newToken(), vaultId, noteId, actor, now, now.plus(ttl));
+        var ticket = new SyncTicket(newToken(), vaultId, actor, now, now.plus(ttl));
         store.put(ticket);
         return ticket;
     }
 
     public Optional<TicketClaims> redeem(String token) {
         return store.takeIfValid(token, clock.instant())
-            .map(ticket -> new TicketClaims(ticket.vaultId(), ticket.noteId(), ticket.actor()));
+            .map(ticket -> new TicketClaims(ticket.vaultId(), ticket.actor()));
     }
 
     private String newToken() {

@@ -3,7 +3,6 @@ package de.raindancer118.stoneintelligence.platform.sync.ticket;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Optional;
-import de.raindancer118.stoneintelligence.domain.id.NoteId;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -15,7 +14,6 @@ public class JdbcTicketStore implements TicketStore {
     private static final RowMapper<SyncTicket> TICKET_MAPPER = (rs, rowNum) -> new SyncTicket(
         rs.getString("token"),
         VaultId.of(rs.getString("vault_id")),
-        NoteId.of(rs.getString("note_id")),
         rs.getString("actor"),
         rs.getTimestamp("issued_at").toInstant(),
         rs.getTimestamp("expires_at").toInstant()
@@ -30,12 +28,11 @@ public class JdbcTicketStore implements TicketStore {
     @Override
     public void put(SyncTicket ticket) {
         jdbcClient.sql("""
-                INSERT INTO platform.sync_tickets (token, vault_id, note_id, actor, issued_at, expires_at)
-                VALUES (:token, :vaultId, :noteId, :actor, :issuedAt, :expiresAt)
+                INSERT INTO platform.sync_tickets (token, vault_id, actor, issued_at, expires_at)
+                VALUES (:token, :vaultId, :actor, :issuedAt, :expiresAt)
                 """)
             .param("token", ticket.token())
             .param("vaultId", ticket.vaultId().value())
-            .param("noteId", ticket.noteId().value())
             .param("actor", ticket.actor())
             // Postgres' JDBC-Treiber kann den SQL-Typ fuer ein rohes java.time.Instant nicht
             // ableiten (setObject() schlaegt fehl) - explizit auf java.sql.Timestamp abbilden.
@@ -55,7 +52,7 @@ public class JdbcTicketStore implements TicketStore {
     public Optional<SyncTicket> takeIfValid(String token, Instant now) {
         var ticket = jdbcClient.sql("""
                 DELETE FROM platform.sync_tickets WHERE token = :token AND expires_at >= :now
-                RETURNING token, vault_id, note_id, actor, issued_at, expires_at
+                RETURNING token, vault_id, actor, issued_at, expires_at
                 """)
             .param("token", token)
             .param("now", Timestamp.from(now))

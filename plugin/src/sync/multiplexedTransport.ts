@@ -1,0 +1,192 @@
+import type { WebSocketFactory, WebSocketLike } from "./SyncClient";
+
+/** Muss zum Server (SyncFrame.java) passen: Standard-UUID-Stringform, immer 36 ASCII-Zeichen. */
+const NOTE_ID_LENGTH = 36;
+
+const TYPE_JOIN = 2;
+const TYPE_LEAVE = 3;
+
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+/**
+ * Verhaelt sich fuer {@link SyncClient} exakt wie ein echtes WebSocket, ist aber in Wahrheit ein
+ * "Kanal" innerhalb einer geteilten {@link MultiplexedTransport}-Verbindung. `SyncClient` bleibt
+ * dadurch komplett unveraendert und ungetestet-unberuehrt - es sieht weiterhin nur
+ * `[Typ-Byte][Payload]`, die NoteId wird transparent vom Transport hinzugefuegt/entfernt.
+ */
+class VirtualSocket implements WebSocketLike {
+  binaryType = "";
+  onopen: ((ev: Event) => void) | null = null;
+  onmessage: ((ev: MessageEvent) => void) | null = null;
+  onclose: ((ev: CloseEvent) => void) | null = null;
+  onerror: ((ev: Event) => void) | null = null;
+
+  constructor(
+    private readonly noteId: string,
+    private readonly transport: MultiplexedTransport,
+  ) {}
+
+  send(data: ArrayBuffer): void {
+    const bytes = new Uint8Array(data);
+    this.transport.sendFramed(bytes[0], this.noteId, bytes.subarray(1));
+  }
+
+  close(): void {
+    this.transport.leave(this.noteId);
+  }
+
+  dispatchOpen(): void {
+    this.onopen?.(new Event("open"));
+  }
+
+  dispatchMessage(type: number, payload: Uint8Array): void {
+    const framed = new Uint8Array(1 + payload.length);
+    framed[0] = type;
+    framed.set(payload, 1);
+    this.onmessage?.({ data: framed.buffer } as MessageEvent);
+  }
+
+  dispatchClose(code: number, reason: string): void {
+    this.onclose?.({ code, reason } as CloseEvent);
+  }
+
+  dispatchError(): void {
+    this.onerror?.(new Event("error"));
+  }
+}
+
+export interface MultiplexedTransportOptions {
+  /** Wartezeit zwischen zwei JOIN-Nachrichten - verhindert einen Burst aus hunderten gleichzeitigen Joins. */
+  joinStaggerMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * EINE geteilte WebSocket-Verbindung fuer beliebig viele Notizen (statt vorher: eine Verbindung
+ * PRO Notiz) - Toms ausdruecklicher Wunsch nach "maximal drei Verbindungen, am liebsten eine
+ * durch die alles geht". Neue Notizen werden nicht sofort gejoint, sondern in eine Warteschlange
+ * gestellt und nacheinander mit {@link MultiplexedTransportOptions.joinStaggerMs} Abstand
+ * abgearbeitet ("queuen und Stueck fuer Stueck abarbeiten") - live beobachtet: ein Burst aus 177
+ * gleichzeitigen Verbindungs-/Join-Versuchen liess auf Mobile die kurzlebigen Sync-Tickets ablaufen,
+ * bevor die WebSocket-Verbindung (vom OS/der WebView gedrosselt) ueberhaupt zustande kam.
+ */
+export class MultiplexedTransport {
+  private realSocket: WebSocketLike | null = null;
+  private isOpen = false;
+  private readonly virtualSockets = new Map<string, VirtualSocket>();
+  private readonly joinQueue: string[] = [];
+  private draining = false;
+
+  private readonly joinStaggerMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
+
+  constructor(
+    private readonly url: string,
+    private readonly createRealSocket: WebSocketFactory,
+    options: MultiplexedTransportOptions = {},
+  ) {
+    this.joinStaggerMs = options.joinStaggerMs ?? 150;
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  /**
+   * Registriert eine neue Notiz. `priority: true` (die gerade aktiv geoeffnete Notiz) stellt sich
+   * VOR bereits wartende Hintergrund-Notizen - sonst muesste die aktive Notiz hinter einem
+   * moeglicherweise langen Hintergrund-Rueckstand auf ihren Join warten.
+   */
+  createVirtualSocket = (noteId: string, options: { priority?: boolean } = {}): WebSocketLike => {
+    const vs = new VirtualSocket(noteId, this);
+    this.virtualSockets.set(noteId, vs);
+    this.ensureRealSocketConnecting();
+    if (options.priority) {
+      this.joinQueue.unshift(noteId);
+    } else {
+      this.joinQueue.push(noteId);
+    }
+    void this.drainJoinQueue();
+    return vs;
+  };
+
+  private ensureRealSocketConnecting(): void {
+    if (this.realSocket) {
+      return;
+    }
+    const socket = this.createRealSocket(this.url);
+    socket.binaryType = "arraybuffer";
+    socket.onopen = () => {
+      this.isOpen = true;
+      void this.drainJoinQueue();
+    };
+    socket.onmessage = (ev) => this.handleIncoming(new Uint8Array(ev.data as ArrayBuffer));
+    socket.onclose = (ev) => {
+      this.isOpen = false;
+      for (const vs of this.virtualSockets.values()) {
+        vs.dispatchClose(ev.code, ev.reason);
+      }
+    };
+    socket.onerror = () => {
+      for (const vs of this.virtualSockets.values()) {
+        vs.dispatchError();
+      }
+    };
+    this.realSocket = socket;
+  }
+
+  private async drainJoinQueue(): Promise<void> {
+    if (this.draining || !this.isOpen) {
+      return;
+    }
+    this.draining = true;
+    try {
+      while (this.joinQueue.length > 0) {
+        const noteId = this.joinQueue.shift() as string;
+        const vs = this.virtualSockets.get(noteId);
+        if (!vs) {
+          continue;
+        }
+        this.sendFramed(TYPE_JOIN, noteId, new Uint8Array(0));
+        vs.dispatchOpen();
+        if (this.joinQueue.length > 0) {
+          await this.sleep(this.joinStaggerMs);
+        }
+      }
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  leave(noteId: string): void {
+    this.virtualSockets.delete(noteId);
+    const queueIndex = this.joinQueue.indexOf(noteId);
+    if (queueIndex >= 0) {
+      this.joinQueue.splice(queueIndex, 1);
+      return;
+    }
+    if (this.isOpen) {
+      this.sendFramed(TYPE_LEAVE, noteId, new Uint8Array(0));
+    }
+  }
+
+  sendFramed(type: number, noteId: string, payload: Uint8Array): void {
+    if (!this.realSocket) {
+      return;
+    }
+    const noteIdBytes = textEncoder.encode(noteId);
+    const framed = new Uint8Array(1 + noteIdBytes.length + payload.length);
+    framed[0] = type;
+    framed.set(noteIdBytes, 1);
+    framed.set(payload, 1 + noteIdBytes.length);
+    this.realSocket.send(framed.buffer as ArrayBuffer);
+  }
+
+  private handleIncoming(raw: Uint8Array): void {
+    if (raw.length < 1 + NOTE_ID_LENGTH) {
+      return;
+    }
+    const type = raw[0];
+    const noteId = textDecoder.decode(raw.subarray(1, 1 + NOTE_ID_LENGTH));
+    const payload = raw.subarray(1 + NOTE_ID_LENGTH);
+    this.virtualSockets.get(noteId)?.dispatchMessage(type, payload);
+  }
+}

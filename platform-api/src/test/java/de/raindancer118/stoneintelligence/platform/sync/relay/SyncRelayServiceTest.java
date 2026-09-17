@@ -46,6 +46,28 @@ class SyncRelayServiceTest {
 
             assertThat(sessionOnOtherNote.receivedDocUpdates).isEmpty();
         }
+
+        @Test
+        void should_tagEachUpdateWithItsOwnNoteId_when_oneSessionIsMultiplexedAcrossTwoRooms() {
+            // Seit der Multiplexing-Umstellung kann DIESELBE Verbindung (Session) mehrere
+            // Notiz-Raeume gleichzeitig joinen - der Client muss dann anhand der NoteId erkennen,
+            // zu welcher Notiz ein eingehendes Update gehoert.
+            var otherNoteId = NoteId.newId();
+            var multiplexed = new RecordingSyncSession("client");
+            var senderOnThisNote = new RecordingSyncSession("sender-a");
+            var senderOnOtherNote = new RecordingSyncSession("sender-b");
+            relay.onJoin(noteId, multiplexed);
+            relay.onJoin(otherNoteId, multiplexed);
+            relay.onJoin(noteId, senderOnThisNote);
+            relay.onJoin(otherNoteId, senderOnOtherNote);
+
+            relay.onUpdate(noteId, senderOnThisNote, bytes("update-for-this-note"), false);
+            relay.onUpdate(otherNoteId, senderOnOtherNote, bytes("update-for-other-note"), false);
+
+            assertThat(multiplexed.receivedDocUpdateNoteIds).containsExactly(noteId, otherNoteId);
+            assertThat(multiplexed.receivedDocUpdates).containsExactly(
+                bytes("update-for-this-note"), bytes("update-for-other-note"));
+        }
     }
 
     @Nested

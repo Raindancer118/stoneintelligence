@@ -64,6 +64,8 @@ class PlatformApiEndToEndIT {
 
     private static final byte MESSAGE_TYPE_DOC_UPDATE = 0;
     private static final byte MESSAGE_TYPE_AWARENESS = 1;
+    private static final byte MESSAGE_TYPE_JOIN = 2;
+    private static final int NOTE_ID_LENGTH = 36;
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES =
@@ -148,7 +150,9 @@ class PlatformApiEndToEndIT {
         protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
             var raw = new byte[message.getPayloadLength()];
             message.getPayload().get(raw);
-            received.add(new ReceivedFrame(raw[0], Arrays.copyOfRange(raw, 1, raw.length)));
+            // NoteId-Praefix (36 Byte) wird fuer die Testassertions ignoriert - dieser Test
+            // joint pro Client nur EINEN Raum, die NoteId ist also immer dieselbe.
+            received.add(new ReceivedFrame(raw[0], Arrays.copyOfRange(raw, 1 + NOTE_ID_LENGTH, raw.length)));
         }
 
         @Override
@@ -214,11 +218,15 @@ class PlatformApiEndToEndIT {
         var noteId = (String) created.get("id");
         assertThat(created.get("path")).isEqualTo("Meeting Notes.md");
 
-        // 2) Drei Sync-Tickets ausstellen (ein Ticket pro Client, single-use)
-        var ticketA = post("/api/v1/vaults/" + vaultId + "/notes/" + noteId + "/sync-tickets", actorHeader, null, Map.class);
-        var ticketB = post("/api/v1/vaults/" + vaultId + "/notes/" + noteId + "/sync-tickets", actorHeader, null, Map.class);
+        // 2) Zwei vault-skopierte Sync-Tickets ausstellen (ein Ticket pro Verbindung, single-use;
+        //    seit der Multiplexing-Umstellung nicht mehr notenskopiert - JOIN passiert ueber die
+        //    Verbindung selbst, s. Schritt 3).
+        var ticketA = post("/api/v1/vaults/" + vaultId + "/sync-tickets", actorHeader, null, Map.class);
+        var ticketB = post("/api/v1/vaults/" + vaultId + "/sync-tickets", actorHeader, null, Map.class);
 
-        // 3) Zwei ECHTE WebSocket-Clients verbinden sich zum selben Note-Sync-Room
+        // 3) Zwei ECHTE WebSocket-Clients verbinden sich, dann joint jeder explizit denselben
+        //    Notiz-Raum - eine Verbindung koennte hier genausogut mehrere Raeume gleichzeitig
+        //    joinen, dieser Test braucht pro Client aber nur einen.
         var wsClient = new StandardWebSocketClient();
         var handlerA = new CapturingHandler();
         var handlerB = new CapturingHandler();
@@ -226,22 +234,24 @@ class PlatformApiEndToEndIT {
         var sessionB = wsClient.execute(handlerB, wsUrl(ticketB)).get(5, TimeUnit.SECONDS);
         assertThat(sessionA.isOpen()).isTrue();
         assertThat(sessionB.isOpen()).isTrue();
+        joinNote(sessionA, noteId);
+        joinNote(sessionB, noteId);
 
         // 4) Client A sendet ein Dokument-Update - Client B muss es LIVE per Broadcast bekommen,
         //    Client A selbst NICHT (kein Echo).
-        sendDocUpdate(sessionA, "update-1-from-a");
+        sendDocUpdate(sessionA, noteId, "update-1-from-a");
         var frameAtB = handlerB.awaitNextFrame();
         assertThat(frameAtB.type()).isEqualTo(MESSAGE_TYPE_DOC_UPDATE);
         assertThat(new String(frameAtB.payload(), StandardCharsets.UTF_8)).isEqualTo("update-1-from-a");
         assertThat(handlerA.received).isEmpty();
 
         // 5) Client B sendet ein zweites Update - Client A muss es ebenfalls live bekommen.
-        sendDocUpdate(sessionB, "update-2-from-b");
+        sendDocUpdate(sessionB, noteId, "update-2-from-b");
         var frameAtA = handlerA.awaitNextFrame();
         assertThat(new String(frameAtA.payload(), StandardCharsets.UTF_8)).isEqualTo("update-2-from-b");
 
         // 6) Awareness-Nachricht: wird weitergeleitet, aber NIE als Dokument-Update gespeichert.
-        sendAwareness(sessionA, "cursor-at-42");
+        sendAwareness(sessionA, noteId, "cursor-at-42");
         var awarenessAtB = handlerB.awaitNextFrame();
         assertThat(awarenessAtB.type()).isEqualTo(MESSAGE_TYPE_AWARENESS);
         assertThat(new String(awarenessAtB.payload(), StandardCharsets.UTF_8)).isEqualTo("cursor-at-42");
@@ -257,9 +267,10 @@ class PlatformApiEndToEndIT {
 
         // 7) Ein DRITTER, spaeter beitretender Client bekommt per Late-Joiner-Catchup BEIDE
         //    bisherigen Dokument-Updates in Reihenfolge.
-        var ticketC = post("/api/v1/vaults/" + vaultId + "/notes/" + noteId + "/sync-tickets", actorHeader, null, Map.class);
+        var ticketC = post("/api/v1/vaults/" + vaultId + "/sync-tickets", actorHeader, null, Map.class);
         var handlerC = new CapturingHandler();
         var sessionC = wsClient.execute(handlerC, wsUrl(ticketC)).get(5, TimeUnit.SECONDS);
+        joinNote(sessionC, noteId);
         var catchup1 = handlerC.awaitNextFrame();
         var catchup2 = handlerC.awaitNextFrame();
         assertThat(new String(catchup1.payload(), StandardCharsets.UTF_8)).isEqualTo("update-1-from-a");
@@ -305,18 +316,24 @@ class PlatformApiEndToEndIT {
         return "ws://localhost:" + port + "/ws/sync?ticket=" + issuedTicket.get("token");
     }
 
-    private void sendDocUpdate(WebSocketSession session, String payload) throws Exception {
-        session.sendMessage(new BinaryMessage(frame(MESSAGE_TYPE_DOC_UPDATE, payload)));
+    /** Ohne JOIN akzeptiert der Server weder Catchup noch Doc-Update-/Awareness-Nachrichten fuer diese NoteId. */
+    private void joinNote(WebSocketSession session, String noteId) throws Exception {
+        session.sendMessage(new BinaryMessage(frame(MESSAGE_TYPE_JOIN, noteId, new byte[0])));
     }
 
-    private void sendAwareness(WebSocketSession session, String payload) throws Exception {
-        session.sendMessage(new BinaryMessage(frame(MESSAGE_TYPE_AWARENESS, payload)));
+    private void sendDocUpdate(WebSocketSession session, String noteId, String payload) throws Exception {
+        session.sendMessage(new BinaryMessage(frame(MESSAGE_TYPE_DOC_UPDATE, noteId, payload.getBytes(StandardCharsets.UTF_8))));
     }
 
-    private ByteBuffer frame(byte type, String payload) {
-        var payloadBytes = payload.getBytes(StandardCharsets.UTF_8);
-        var buffer = ByteBuffer.allocate(1 + payloadBytes.length);
-        buffer.put(type).put(payloadBytes);
+    private void sendAwareness(WebSocketSession session, String noteId, String payload) throws Exception {
+        session.sendMessage(new BinaryMessage(frame(MESSAGE_TYPE_AWARENESS, noteId, payload.getBytes(StandardCharsets.UTF_8))));
+    }
+
+    /** {@code [1 Byte Typ][36 Byte NoteId als ASCII-UUID][Rest: Payload]} - s. SyncFrame im Hauptcode. */
+    private ByteBuffer frame(byte type, String noteId, byte[] payload) {
+        var noteIdBytes = noteId.getBytes(StandardCharsets.US_ASCII);
+        var buffer = ByteBuffer.allocate(1 + noteIdBytes.length + payload.length);
+        buffer.put(type).put(noteIdBytes).put(payload);
         buffer.flip();
         return buffer;
     }
