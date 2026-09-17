@@ -44,23 +44,37 @@ function frame(type: number, noteId: string, payload: number[] = []): Uint8Array
   return framed;
 }
 
+/**
+ * Die URL/das Ticket wird jetzt PRO Verbindungsversuch frisch async geholt (Regression-Fix:
+ * ein Reconnect mit wiederverwendeter URL scheiterte immer mit 403, weil das eingebettete
+ * Single-Use-Ticket schon verbraucht war) - dadurch vergeht zwischen `createVirtualSocket()`
+ * und dem tatsaechlichen `createRealSocket()`-Aufruf mindestens ein Mikrotask-Tick. Tests warten
+ * deshalb explizit auf `onopen`, bevor sie `.open()` aufrufen.
+ */
+async function waitUntilConnecting(socket: FakeRealSocket): Promise<void> {
+  await vi.waitFor(() => expect(socket.onopen).not.toBeNull());
+}
+
 describe("MultiplexedTransport", () => {
-  it("should_createExactlyOneRealSocket_forMultipleVirtualSockets", () => {
-    const createRealSocket = vi.fn().mockReturnValue(new FakeRealSocket());
-    const transport = new MultiplexedTransport("wss://example.invalid", createRealSocket, { sleep: vi.fn() });
+  it("should_createExactlyOneRealSocket_forMultipleVirtualSockets", async () => {
+    const realSocket = new FakeRealSocket();
+    const createRealSocket = vi.fn().mockReturnValue(realSocket);
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", createRealSocket, { sleep: vi.fn() });
 
     transport.createVirtualSocket(NOTE_ID_A);
     transport.createVirtualSocket(NOTE_ID_B);
+    await waitUntilConnecting(realSocket);
 
     expect(createRealSocket).toHaveBeenCalledTimes(1);
   });
 
   it("should_sendJoinFrame_andDispatchOpen_forEachVirtualSocket_afterRealSocketOpens", async () => {
     const realSocket = new FakeRealSocket();
-    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep: vi.fn() });
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep: vi.fn() });
     const vsA = transport.createVirtualSocket(NOTE_ID_A);
     const openA = vi.fn();
     vsA.onopen = openA;
+    await waitUntilConnecting(realSocket);
 
     realSocket.open();
     await vi.waitFor(() => expect(openA).toHaveBeenCalledTimes(1));
@@ -72,9 +86,10 @@ describe("MultiplexedTransport", () => {
   it("should_staggerJoins_withSleepBetweenEach_when_multipleNotesArePending", async () => {
     const realSocket = new FakeRealSocket();
     const sleep = vi.fn().mockResolvedValue(undefined);
-    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep, joinStaggerMs: 150 });
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep, joinStaggerMs: 150 });
     transport.createVirtualSocket(NOTE_ID_A);
     transport.createVirtualSocket(NOTE_ID_B);
+    await waitUntilConnecting(realSocket);
 
     realSocket.open();
     await vi.waitFor(() => expect(realSocket.sent).toHaveLength(2));
@@ -85,9 +100,10 @@ describe("MultiplexedTransport", () => {
   it("should_joinPrioritizedNote_beforeAlreadyQueuedBackgroundNotes", async () => {
     const realSocket = new FakeRealSocket();
     const sleep = vi.fn().mockResolvedValue(undefined);
-    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep });
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep });
     transport.createVirtualSocket(NOTE_ID_B);
     transport.createVirtualSocket(NOTE_ID_A, { priority: true });
+    await waitUntilConnecting(realSocket);
 
     realSocket.open();
     await vi.waitFor(() => expect(realSocket.sent).toHaveLength(2));
@@ -98,13 +114,14 @@ describe("MultiplexedTransport", () => {
 
   it("should_routeIncomingMessage_toTheVirtualSocketMatchingItsNoteId_strippingTheNoteIdPrefix", async () => {
     const realSocket = new FakeRealSocket();
-    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep: vi.fn() });
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep: vi.fn() });
     const vsA = transport.createVirtualSocket(NOTE_ID_A);
     const vsB = transport.createVirtualSocket(NOTE_ID_B);
     const messagesA = vi.fn();
     const messagesB = vi.fn();
     vsA.onmessage = messagesA;
     vsB.onmessage = messagesB;
+    await waitUntilConnecting(realSocket);
     realSocket.open();
     await vi.waitFor(() => expect(realSocket.sent).toHaveLength(2));
 
@@ -118,8 +135,9 @@ describe("MultiplexedTransport", () => {
 
   it("should_prefixOutgoingVirtualSocketSend_withItsNoteId", async () => {
     const realSocket = new FakeRealSocket();
-    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep: vi.fn() });
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep: vi.fn() });
     const vsA = transport.createVirtualSocket(NOTE_ID_A);
+    await waitUntilConnecting(realSocket);
     realSocket.open();
     await vi.waitFor(() => expect(realSocket.sent).toHaveLength(1));
 
@@ -134,8 +152,9 @@ describe("MultiplexedTransport", () => {
 
   it("should_sendLeaveFrame_when_virtualSocketCloses", async () => {
     const realSocket = new FakeRealSocket();
-    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep: vi.fn() });
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep: vi.fn() });
     const vsA = transport.createVirtualSocket(NOTE_ID_A);
+    await waitUntilConnecting(realSocket);
     realSocket.open();
     await vi.waitFor(() => expect(realSocket.sent).toHaveLength(1));
 
@@ -145,15 +164,16 @@ describe("MultiplexedTransport", () => {
     expect(realSocket.sent[1][0]).toBe(TYPE_LEAVE);
   });
 
-  it("should_dispatchCloseToAllVirtualSockets_when_realSocketCloses", () => {
+  it("should_dispatchCloseToAllVirtualSockets_when_realSocketCloses", async () => {
     const realSocket = new FakeRealSocket();
-    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep: vi.fn().mockResolvedValue(undefined) });
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep: vi.fn().mockResolvedValue(undefined) });
     const vsA = transport.createVirtualSocket(NOTE_ID_A);
     const vsB = transport.createVirtualSocket(NOTE_ID_B);
     const closeA = vi.fn();
     const closeB = vi.fn();
     vsA.onclose = closeA;
     vsB.onclose = closeB;
+    await waitUntilConnecting(realSocket);
 
     realSocket.close();
 
@@ -161,12 +181,13 @@ describe("MultiplexedTransport", () => {
     expect(closeB).toHaveBeenCalledTimes(1);
   });
 
-  it("should_dispatchErrorToAllVirtualSockets_when_realSocketErrors", () => {
+  it("should_dispatchErrorToAllVirtualSockets_when_realSocketErrors", async () => {
     const realSocket = new FakeRealSocket();
-    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep: vi.fn().mockResolvedValue(undefined) });
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep: vi.fn().mockResolvedValue(undefined) });
     const vsA = transport.createVirtualSocket(NOTE_ID_A);
     const errorA = vi.fn();
     vsA.onerror = errorA;
+    await waitUntilConnecting(realSocket);
 
     realSocket.onerror?.(new Event("error"));
 
@@ -181,15 +202,40 @@ describe("MultiplexedTransport", () => {
     const secondSocket = new FakeRealSocket();
     const createRealSocket = vi.fn().mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket);
     const sleep = vi.fn().mockResolvedValue(undefined);
-    const transport = new MultiplexedTransport("wss://example.invalid", createRealSocket, { sleep });
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", createRealSocket, { sleep });
     transport.createVirtualSocket(NOTE_ID_A);
+    await waitUntilConnecting(firstSocket);
     firstSocket.open();
     await vi.waitFor(() => expect(firstSocket.sent).toHaveLength(1));
 
     firstSocket.close();
     transport.createVirtualSocket(NOTE_ID_B);
 
-    expect(createRealSocket).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(createRealSocket).toHaveBeenCalledTimes(2));
+  });
+
+  it("should_fetchAFreshUrlAndTicket_forEveryConnectionAttempt", async () => {
+    // Der eigentliche Regression-Kern: Tickets sind Single-Use - ein Reconnect MUSS eine neue
+    // URL/Ticket holen, niemals die urspruengliche wiederverwenden (live beobachtet: derselbe
+    // Ticket-Token in Dutzenden Reconnect-Versuchen in Folge, jedes Mal HTTP 403).
+    const firstSocket = new FakeRealSocket();
+    const secondSocket = new FakeRealSocket();
+    const createRealSocket = vi.fn().mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket);
+    const getUrl = vi.fn().mockResolvedValueOnce("wss://example.invalid?ticket=first")
+      .mockResolvedValueOnce("wss://example.invalid?ticket=second");
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const transport = new MultiplexedTransport(getUrl, createRealSocket, { sleep, reconnectDelayMs: 500 });
+    transport.createVirtualSocket(NOTE_ID_A);
+    await waitUntilConnecting(firstSocket);
+    firstSocket.open();
+    await vi.waitFor(() => expect(firstSocket.sent).toHaveLength(1));
+
+    firstSocket.close();
+    await vi.waitFor(() => expect(sleep).toHaveBeenCalledWith(500));
+    await vi.waitFor(() => expect(createRealSocket).toHaveBeenCalledTimes(2));
+
+    expect(getUrl).toHaveBeenCalledTimes(2);
+    expect(createRealSocket).toHaveBeenNthCalledWith(2, "wss://example.invalid?ticket=second");
   });
 
   it("should_rejoinAllRegisteredNotes_afterAutomaticReconnect", async () => {
@@ -198,14 +244,16 @@ describe("MultiplexedTransport", () => {
     const createRealSocket = vi.fn().mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket);
     const sleep = vi.fn().mockResolvedValue(undefined);
     const transport = new MultiplexedTransport(
-      "wss://example.invalid", createRealSocket, { sleep, reconnectDelayMs: 500 },
+      async () => "wss://example.invalid", createRealSocket, { sleep, reconnectDelayMs: 500 },
     );
     transport.createVirtualSocket(NOTE_ID_A);
+    await waitUntilConnecting(firstSocket);
     firstSocket.open();
     await vi.waitFor(() => expect(firstSocket.sent).toHaveLength(1));
 
     firstSocket.close();
     await vi.waitFor(() => expect(sleep).toHaveBeenCalledWith(500));
+    await waitUntilConnecting(secondSocket);
     secondSocket.open();
 
     await vi.waitFor(() => expect(secondSocket.sent).toHaveLength(1));
@@ -216,8 +264,9 @@ describe("MultiplexedTransport", () => {
     const firstSocket = new FakeRealSocket();
     const createRealSocket = vi.fn().mockReturnValueOnce(firstSocket);
     const sleep = vi.fn().mockResolvedValue(undefined);
-    const transport = new MultiplexedTransport("wss://example.invalid", createRealSocket, { sleep });
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", createRealSocket, { sleep });
     const vsA = transport.createVirtualSocket(NOTE_ID_A);
+    await waitUntilConnecting(firstSocket);
     firstSocket.open();
     await vi.waitFor(() => expect(firstSocket.sent).toHaveLength(1));
     vsA.close();
