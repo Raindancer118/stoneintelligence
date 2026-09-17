@@ -415,6 +415,13 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl, this.getAccessToken);
   }
 
+  /** Legt einen neuen Vault an und uebernimmt dessen ID direkt in die Einstellungen. */
+  async createVault(name: string): Promise<void> {
+    const vaultId = await this.noteApiClient.createVault(name);
+    this.settings.vaultId = vaultId;
+    await this.saveSettings();
+  }
+
   /** Serialisiert die reine Verbindungskonfiguration (KEINE Tokens/NoteId-Cache) als JSON. */
   connectionConfigJson(): string {
     const config: ConnectionConfig = {
@@ -478,6 +485,27 @@ class StoneIntelligenceSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
       }),
     );
+
+    let newVaultName = "";
+    new Setting(containerEl)
+      .setName("Neuen Vault anlegen")
+      .setDesc("Braucht eine gueltige Anmeldung (s. u.) - der anlegende Account bekommt automatisch volle Rechte im neuen Vault.")
+      .addText((text) => text.setPlaceholder("Name des Vaults").onChange((value) => (newVaultName = value)))
+      .addButton((button) =>
+        button.setButtonText("Anlegen").onClick(async () => {
+          if (!newVaultName.trim()) {
+            new Notice("StoneIntelligence: Bitte einen Vault-Namen eingeben.");
+            return;
+          }
+          try {
+            await this.plugin.createVault(newVaultName.trim());
+            new Notice("StoneIntelligence: Vault angelegt und Vault-ID uebernommen.");
+            this.display();
+          } catch (error) {
+            new Notice(`StoneIntelligence: Vault anlegen fehlgeschlagen - ${(error as Error).message}`);
+          }
+        }),
+      );
 
     new Setting(containerEl)
       .setName("OIDC Issuer URL")

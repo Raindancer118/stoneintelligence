@@ -14,6 +14,20 @@ export class NoteApiClient {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
+  /** Legt einen neuen Vault an; der anlegende Actor bekommt serverseitig automatisch volle Rechte darin. */
+  async createVault(name: string): Promise<string> {
+    const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${await this.getAccessToken()}` },
+      body: JSON.stringify({ name }),
+    });
+    if (!response.ok) {
+      throw new Error(`failed to create vault: HTTP ${response.status}`);
+    }
+    const created = (await response.json()) as { id: string };
+    return created.id;
+  }
+
   async createNote(vaultId: string, path: string, noteLevel: number): Promise<string> {
     const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/notes`, {
       method: "POST",

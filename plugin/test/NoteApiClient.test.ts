@@ -2,6 +2,34 @@ import { describe, expect, it, vi } from "vitest";
 import { NoteApiClient } from "../src/sync/NoteApiClient";
 
 describe("NoteApiClient", () => {
+  describe("createVault", () => {
+    it("should_returnCreatedVaultId_when_serverRespondsOk", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: "vault-1" }) });
+      const getAccessToken = vi.fn().mockResolvedValue("the-access-token");
+      const client = new NoteApiClient("https://platform.example", getAccessToken, fakeFetch as unknown as typeof fetch);
+
+      const vaultId = await client.createVault("my-vault");
+
+      expect(vaultId).toBe("vault-1");
+      expect(fakeFetch).toHaveBeenCalledWith(
+        "https://platform.example/api/v1/vaults",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer the-access-token" },
+          body: JSON.stringify({ name: "my-vault" }),
+        }),
+      );
+    });
+
+    it("should_throw_when_serverRespondsWithError", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status: 401 });
+      const getAccessToken = vi.fn().mockResolvedValue("token");
+      const client = new NoteApiClient("https://platform.example", getAccessToken, fakeFetch as unknown as typeof fetch);
+
+      await expect(client.createVault("my-vault")).rejects.toThrow("401");
+    });
+  });
+
   describe("createNote", () => {
     it("should_returnCreatedNoteId_when_serverRespondsOk", async () => {
       const fakeFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: "note-1" }) });
