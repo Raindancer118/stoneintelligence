@@ -5,6 +5,7 @@ import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
 import { type SessionSnapshot, StatusView, VIEW_TYPE_STATUS } from "./StatusView";
 import { AuthentikAuthClient, type StoredTokens } from "./sync/AuthentikAuthClient";
+import { dedupeInFlight } from "./sync/dedupeInFlight";
 import { awaitDesktopRedirectCode, DESKTOP_REDIRECT_URI, openAuthorizationUrlDesktop } from "./sync/desktopAuthRedirect";
 import {
   handleMobileRedirectCallback, MOBILE_REDIRECT_ACTION, MOBILE_REDIRECT_URI,
@@ -97,6 +98,17 @@ export default class StoneIntelligencePlugin extends Plugin {
   private noteApiClient!: NoteApiClient;
   private authClient!: AuthentikAuthClient;
   private tokenEndpoint: string | null = null;
+  /**
+   * Dedupliziert gleichzeitige Refresh-Versuche - ohne das riefen mehrere parallele Aufrufer
+   * (Reconciliation, Ticket-Ausstellung, ... - der Multiplex-Transport stoesst oft mehrere
+   * gleichzeitig an) alle unabhaengig `refreshAccessToken` mit demselben, noch gueltig
+   * aussehenden Refresh-Token auf. Authentik rotiert Refresh-Tokens (macht den alten nach
+   * erfolgreicher Einloesung ungueltig) - der zweite, quasi zeitgleiche Versuch scheiterte
+   * dadurch garantiert mit HTTP 400, und weil KEIN neuer Token gespeichert wurde, wiederholte
+   * sich das bei jedem weiteren Zugriff endlos (live beobachtet: WS blieb dauerhaft auf
+   * "verbindet", `POST .../token/` scheiterte alle paar Sekunden mit 400).
+   */
+  private readonly dedupeTokenRefresh = dedupeInFlight<StoredTokens>();
   private readonly liveBindingCompartment = new Compartment();
   private liveBoundPath: string | null = null;
   private statusBarItem!: HTMLElement;
@@ -122,14 +134,32 @@ export default class StoneIntelligencePlugin extends Plugin {
     if (Date.now() < tokens.expiresAt) {
       return tokens.accessToken;
     }
-    if (!this.tokenEndpoint) {
-      this.tokenEndpoint = (await this.authClient.discover()).token_endpoint;
-    }
-    const refreshed = await this.authClient.refreshAccessToken(this.tokenEndpoint, tokens.refreshToken);
-    this.settings.tokens = refreshed;
-    await this.saveData(this.settings);
+    const refreshed = await this.dedupeTokenRefresh(() => this.refreshTokens(tokens.refreshToken));
     return refreshed.accessToken;
   };
+
+  /**
+   * Schlaegt der Refresh fehl (z. B. weil der Token bereits andernorts verbraucht/rotiert
+   * wurde), werden die gespeicherten Tokens geloescht statt sie unveraendert zu lassen - sonst
+   * wuerde JEDER weitere Aufruf denselben, bereits ungueltigen Refresh-Token erneut versuchen
+   * und ewig mit HTTP 400 scheitern. Danach zeigt die naechste Statusabfrage klar "nicht
+   * angemeldet" statt eines stillen Endlos-Fehlers.
+   */
+  private async refreshTokens(refreshToken: string): Promise<StoredTokens> {
+    try {
+      if (!this.tokenEndpoint) {
+        this.tokenEndpoint = (await this.authClient.discover()).token_endpoint;
+      }
+      const refreshed = await this.authClient.refreshAccessToken(this.tokenEndpoint, refreshToken);
+      this.settings.tokens = refreshed;
+      await this.saveData(this.settings);
+      return refreshed;
+    } catch (error) {
+      this.settings.tokens = null;
+      await this.saveData(this.settings);
+      throw error;
+    }
+  }
 
   /**
    * Redirect-Strategie ist plattformabhaengig: Desktop nutzt einen lokalen Loopback-HTTP-Server

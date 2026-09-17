@@ -177,6 +177,15 @@ export class MultiplexedTransport {
         this.scheduleReconnectIfNeeded();
       };
       this.realSocket = socket;
+    } catch (error) {
+      // Die URL/Ticket-Beschaffung selbst ist fehlgeschlagen (z. B. Token-Refresh mit HTTP 400,
+      // s. main.ts getAccessToken) - es wurde nie ein echtes Socket erzeugt, dessen onerror/
+      // onclose sonst einen Reconnect anstoessen wuerde. OHNE diesen expliziten Pfad bliebe jede
+      // registrierte Notiz fuer immer auf "connecting" stehen (live beobachtet).
+      for (const vs of this.virtualSockets.values()) {
+        vs.dispatchError();
+      }
+      this.scheduleReconnectIfNeeded();
     } finally {
       this.connecting = false;
     }
