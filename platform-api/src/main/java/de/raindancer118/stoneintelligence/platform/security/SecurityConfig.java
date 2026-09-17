@@ -65,7 +65,21 @@ public class SecurityConfig {
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Operation-Id"));
         configuration.setMaxAge(3600L);
 
+        // /ws/sync braucht KEINE CORS-Durchsetzung: der Handshake ist ueber das Single-Use-Ticket
+        // selbst abgesichert (s. TicketHandshakeInterceptor), nicht ueber Origin+Credentials wie
+        // ein normaler Browser-Request. `.requestMatchers("/ws/sync").permitAll()` (s. oben)
+        // regelt nur die AUTORISIERUNG - Spring Securitys CorsFilter ist eine fruehere, davon
+        // komplett getrennte Pruefung und lehnt eine ECHTE (nicht nur Preflight-)Anfrage mit
+        // einem nicht erlaubten Origin pauschal mit 403 ab. Obsidian Desktop (Electron) schickt
+        // einen Origin, der nie in ALLOWED_ORIGINS (nur die Webapp) stehen kann - live beobachtet:
+        // jeder Verbindungsversuch von Obsidian Desktop scheiterte mit 403, BEVOR das Ticket
+        // ueberhaupt geprueft wurde.
+        var wsConfiguration = new CorsConfiguration();
+        wsConfiguration.setAllowedOriginPatterns(List.of("*"));
+        wsConfiguration.setAllowedMethods(List.of("GET"));
+
         var source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/ws/sync", wsConfiguration);
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }
