@@ -3,6 +3,20 @@ import { withRateLimitRetry } from "./retryFetch";
 
 export type AccessTokenProvider = () => Promise<string>;
 
+export interface NoteListItem {
+  id: string;
+  vaultId: string;
+  path: string;
+  noteLevel: number;
+}
+
+export interface ReconciliationPage {
+  epochId: string;
+  complete: boolean;
+  nextCursor: string | null;
+  notes: NoteListItem[];
+}
+
 /**
  * REST-Client fuer ID-first Note-CRUD gegen platform-api (Plan.md Abschnitt 3, Fehlerklasse 5).
  *
@@ -42,6 +56,42 @@ export class NoteApiClient {
     }
     const created = (await response.json()) as { id: string };
     return created.id;
+  }
+
+  /**
+   * Fehlerklasse 2 (Plan.md Abschnitt 3): eine Seite ist erst dann vollstaendig, wenn
+   * `complete === true` - ein `nextCursor` OHNE `complete` darf niemals als Grundlage fuer lokale
+   * Loeschungen/Vollstaendigkeitsannahmen dienen. `listAllNotes` (unten) kapselt das Paging.
+   */
+  async listNotes(vaultId: string, cursor?: string, pageSize = 100): Promise<ReconciliationPage> {
+    const params = new URLSearchParams({ pageSize: String(pageSize) });
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/notes?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${await this.getAccessToken()}` },
+    });
+    if (!response.ok) {
+      throw new Error(`failed to list notes: HTTP ${response.status}`);
+    }
+    return (await response.json()) as ReconciliationPage;
+  }
+
+  /** Laeuft `listNotes` bis `complete === true` durch und gibt alle Notizen des Vaults zurueck. */
+  async listAllNotes(vaultId: string): Promise<NoteListItem[]> {
+    const all: NoteListItem[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await this.listNotes(vaultId, cursor);
+      all.push(...page.notes);
+      if (page.complete) {
+        return all;
+      }
+      cursor = page.nextCursor ?? undefined;
+      if (!cursor) {
+        return all;
+      }
+    }
   }
 
   async renameNote(vaultId: string, noteId: string, newPath: string): Promise<void> {
