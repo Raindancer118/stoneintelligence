@@ -147,7 +147,7 @@ describe("MultiplexedTransport", () => {
 
   it("should_dispatchCloseToAllVirtualSockets_when_realSocketCloses", () => {
     const realSocket = new FakeRealSocket();
-    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep: vi.fn() });
+    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep: vi.fn().mockResolvedValue(undefined) });
     const vsA = transport.createVirtualSocket(NOTE_ID_A);
     const vsB = transport.createVirtualSocket(NOTE_ID_B);
     const closeA = vi.fn();
@@ -163,7 +163,7 @@ describe("MultiplexedTransport", () => {
 
   it("should_dispatchErrorToAllVirtualSockets_when_realSocketErrors", () => {
     const realSocket = new FakeRealSocket();
-    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep: vi.fn() });
+    const transport = new MultiplexedTransport("wss://example.invalid", () => realSocket, { sleep: vi.fn().mockResolvedValue(undefined) });
     const vsA = transport.createVirtualSocket(NOTE_ID_A);
     const errorA = vi.fn();
     vsA.onerror = errorA;
@@ -171,5 +171,60 @@ describe("MultiplexedTransport", () => {
     realSocket.onerror?.(new Event("error"));
 
     expect(errorA).toHaveBeenCalledTimes(1);
+  });
+
+  it("should_createAFreshRealSocket_afterTheFirstOneCloses", async () => {
+    // Regression: ohne diesen Reconnect blieb JEDE Notiz, die NACH dem ersten Verbindungsabbruch
+    // registriert wurde, fuer immer auf "connecting" stehen - der Transport hielt an der toten
+    // Verbindung fest und hat nie eine neue erstellt (live beobachtet: "verbindet" haengt ewig).
+    const firstSocket = new FakeRealSocket();
+    const secondSocket = new FakeRealSocket();
+    const createRealSocket = vi.fn().mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const transport = new MultiplexedTransport("wss://example.invalid", createRealSocket, { sleep });
+    transport.createVirtualSocket(NOTE_ID_A);
+    firstSocket.open();
+    await vi.waitFor(() => expect(firstSocket.sent).toHaveLength(1));
+
+    firstSocket.close();
+    transport.createVirtualSocket(NOTE_ID_B);
+
+    expect(createRealSocket).toHaveBeenCalledTimes(2);
+  });
+
+  it("should_rejoinAllRegisteredNotes_afterAutomaticReconnect", async () => {
+    const firstSocket = new FakeRealSocket();
+    const secondSocket = new FakeRealSocket();
+    const createRealSocket = vi.fn().mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const transport = new MultiplexedTransport(
+      "wss://example.invalid", createRealSocket, { sleep, reconnectDelayMs: 500 },
+    );
+    transport.createVirtualSocket(NOTE_ID_A);
+    firstSocket.open();
+    await vi.waitFor(() => expect(firstSocket.sent).toHaveLength(1));
+
+    firstSocket.close();
+    await vi.waitFor(() => expect(sleep).toHaveBeenCalledWith(500));
+    secondSocket.open();
+
+    await vi.waitFor(() => expect(secondSocket.sent).toHaveLength(1));
+    expect(secondSocket.sent[0][0]).toBe(TYPE_JOIN);
+  });
+
+  it("should_notReconnect_when_noVirtualSocketsAreRegisteredAnymore", async () => {
+    const firstSocket = new FakeRealSocket();
+    const createRealSocket = vi.fn().mockReturnValueOnce(firstSocket);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const transport = new MultiplexedTransport("wss://example.invalid", createRealSocket, { sleep });
+    const vsA = transport.createVirtualSocket(NOTE_ID_A);
+    firstSocket.open();
+    await vi.waitFor(() => expect(firstSocket.sent).toHaveLength(1));
+    vsA.close();
+
+    firstSocket.close();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(createRealSocket).toHaveBeenCalledTimes(1);
   });
 });
