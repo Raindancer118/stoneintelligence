@@ -1,0 +1,77 @@
+@font-face {
+  font-family: "Iosevka Custom";
+  src: local("Iosevka"), local("JetBrains Mono"), local("Fira Code");
+}
+
+:root {
+  --ink: #14120f;
+  --ink-raised: #1c1a16;
+  --ink-line: #2e2a22;
+  --paper: #ece6d8;
+  --paper-dim: #a89e88;
+  --ember: #d97a3f;
+  --ember-dim: #8f5330;
+  --moss: #7a9b6e;
+  --rust: #c25b4a;
+  --radius: 3px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+body {
+  background-image:
+    linear-gradient(var(--ink-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--ink-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: -1px -1px;
+  background-attachment: fixed;
+  background-color: var(--ink);
+}
+
+code,
+.mono {
+  font-family: "Iosevka Custom", "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.92em;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.5em;
+}
+
+a {
+  color: var(--ember);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: var(--ember-dim);
+  color: var(--paper);
+}
