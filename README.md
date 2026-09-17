@@ -91,7 +91,7 @@ npm install
 npm run build
 ```
 
-Das erzeugt `plugin/main.js` neben dem bereits vorhandenen `manifest.json`.
+Das erzeugt `plugin/main.js` neben dem bereits vorhandenen `manifest.json` und `styles.css`.
 
 ### In einen Obsidian-Vault installieren
 
@@ -101,6 +101,7 @@ Im Ziel-Vault (der Obsidian-Vault, der synchronisiert werden soll) einen Ordner
 ```
 manifest.json
 main.js
+styles.css
 ```
 
 Danach in Obsidian: Einstellungen → Community-Plugins → „StoneIntelligence“ aktivieren.
@@ -108,12 +109,13 @@ Danach in Obsidian: Einstellungen → Community-Plugins → „StoneIntelligence
 ### Alternativ: Installation über BRAT
 
 Ab dem ersten Versions-Tag (`X.Y.Z`) baut eine GitHub Action automatisch ein Release mit
-`manifest.json` + `main.js` als Assets (`.github/workflows/plugin-release.yml`). Damit lässt sich
-das Plugin auch über [BRAT](https://github.com/TfTHacker/obsidian42-brat) installieren:
+`manifest.json` + `main.js` + `styles.css` als Assets (`.github/workflows/plugin-release.yml`).
+Damit lässt sich das Plugin auch über [BRAT](https://github.com/TfTHacker/obsidian42-brat)
+installieren:
 
 1. BRAT-Plugin in Obsidian installieren und aktivieren.
 2. In BRAT: „Add Beta plugin“ → `Raindancer118/stoneintelligence` eintragen.
-3. BRAT lädt `manifest.json`/`main.js` vom neuesten Release und hält sie automatisch aktuell.
+3. BRAT lädt die Release-Assets vom neuesten Release und hält sie automatisch aktuell.
 
 ### Plugin konfigurieren
 
@@ -128,6 +130,22 @@ In den Plugin-Einstellungen (Einstellungen → StoneIntelligence) folgende Felde
 
 Ohne gültige Vault-ID und einen erreichbaren Server bleibt die Live-Synchronisation inaktiv;
 lokales Bearbeiten von Notizen im Vault funktioniert davon unabhängig weiterhin normal.
+
+### Status & Befehle
+
+Das Plugin zeigt seinen Verbindungsstatus in der Statusleiste unten rechts an
+(z. B. `● StoneIntelligence: 2/3`, `⚠ StoneIntelligence: 1 Fehler` oder
+`○ StoneIntelligence: nicht angemeldet`). Ein Klick darauf öffnet die
+Status-Ansicht in der rechten Seitenleiste: sie zeigt Anmeldestatus,
+konfigurierten Vault und pro Notiz den Live-Sync-Status (verbindet…,
+synchronisiert, getrennt, Fehler).
+
+Über die Befehlspalette (`Strg/Cmd+P`) stehen außerdem zur Verfügung:
+
+- **StoneIntelligence: Status anzeigen** — öffnet die Status-Ansicht
+- **StoneIntelligence: Anmelden** — startet den Login-Flow
+- **StoneIntelligence: Alle Notizen neu synchronisieren**
+- **StoneIntelligence: Aktive Notiz neu synchronisieren**
 
 ## Repo-Struktur
 
