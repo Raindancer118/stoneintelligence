@@ -16,11 +16,13 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.raindancer118.stoneintelligence.platform.security.TestJwtSupport;
 import de.raindancer118.stoneintelligence.platform.sync.relay.SyncRelayService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -49,9 +51,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * jeweiligen Spring-Test-Client-API-Generation.
  *
  * <p>Braucht einen laufenden Docker-Daemon (Testcontainers) - siehe Project.md fuer den Status
- * in dieser Entwicklungsumgebung.
+ * in dieser Entwicklungsumgebung. Seit Phase 3 (OIDC-Durchsetzung) authentifiziert sich dieser
+ * Test mit echten, von {@link TestJwtSupport} signierten Bearer-Tokens statt eines
+ * X-Actor-Headers - der Vault selbst wird ueber die echte {@code POST /api/v1/vaults}-API
+ * angelegt (bootstrapt den anlegenden Actor automatisch mit vollen Rechten), nicht mehr per
+ * direktem SQL-Insert.
  */
 @Testcontainers
+@Import(TestJwtSupport.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class PlatformApiEndToEndIT {
 
@@ -85,7 +92,12 @@ class PlatformApiEndToEndIT {
         return "http://localhost:" + port;
     }
 
-    private <T> T post(String path, Map<String, String> headers, Object body, Class<T> responseType) throws Exception {
+    /** {@code Authorization: Bearer <jwt>}-Header fuer ein echtes, signiertes Test-Token. */
+    private static Map<String, String> bearerAuth(String actor) {
+        return Map.of("Authorization", "Bearer " + TestJwtSupport.signedJwtFor(actor));
+    }
+
+    private HttpResponse<String> postRaw(String path, Map<String, String> headers, Object body) throws Exception {
         var builder = HttpRequest.newBuilder(URI.create(baseUrl() + path));
         headers.forEach(builder::header);
         if (body != null) {
@@ -94,7 +106,11 @@ class PlatformApiEndToEndIT {
         } else {
             builder.POST(HttpRequest.BodyPublishers.noBody());
         }
-        var response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private <T> T post(String path, Map<String, String> headers, Object body, Class<T> responseType) throws Exception {
+        var response = postRaw(path, headers, body);
         assertThat(response.statusCode()).as("POST %s -> %s", path, response.body()).isEqualTo(200);
         return json.readValue(response.body(), responseType);
     }
@@ -113,9 +129,10 @@ class PlatformApiEndToEndIT {
         return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    private HttpResponse<String> get(String path) throws Exception {
-        return http.send(HttpRequest.newBuilder(URI.create(baseUrl() + path)).GET().build(),
-            HttpResponse.BodyHandlers.ofString());
+    private HttpResponse<String> get(String path, Map<String, String> headers) throws Exception {
+        var builder = HttpRequest.newBuilder(URI.create(baseUrl() + path)).GET();
+        headers.forEach(builder::header);
+        return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     /** Ein Frame roher Bytes empfangen (Typ-Byte + Payload getrennt), fuer Testassertions. */
@@ -148,14 +165,27 @@ class PlatformApiEndToEndIT {
     }
 
     @Test
-    void should_syncCreateEditRenameDelete_endToEnd_acrossTwoRealWebSocketClients() throws Exception {
-        var vaultId = UUID.randomUUID();
-        JdbcClient.create(dataSource).sql("INSERT INTO platform.vaults (id, name) VALUES (:id, :name)")
-            .param("id", vaultId)
-            .param("name", "e2e-test-vault")
-            .update();
+    void should_rejectUnauthenticatedRequest_withoutBearerToken() throws Exception {
+        var response = get("/api/v1/vaults/" + UUID.randomUUID() + "/notes/" + UUID.randomUUID(), Map.of());
 
-        var actorHeader = Map.of("X-Actor", "tom");
+        assertThat(response.statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void should_syncCreateEditRenameDelete_endToEnd_acrossTwoRealWebSocketClients() throws Exception {
+        var actorHeader = bearerAuth("tom");
+
+        // 0) Vault ueber die echte API anlegen - bootstrapt "tom" automatisch mit vollen
+        //    Rechten darin (VaultController), ganz ohne direkten SQL-Zugriff auf die Testdaten.
+        var vault = post("/api/v1/vaults", actorHeader, Map.of("name", "e2e-test-vault"), Map.class);
+        var vaultId = UUID.fromString((String) vault.get("id"));
+
+        // 0b) Ein zweiter Actor OHNE jegliche Berechtigung in diesem Vault (ADR 0006 Punkt 6:
+        //     die Rollen/Gruppen/ACL-Durchsetzung ist seit Phase 3 real, nicht mehr nur Domaenen-
+        //     logik) muss beim Versuch, eine Note anzulegen, mit 403 abgewiesen werden.
+        var forbiddenResponse = postRaw("/api/v1/vaults/" + vaultId + "/notes", bearerAuth("mallory"),
+            Map.of("path", "should-not-exist.md", "noteLevel", 1));
+        assertThat(forbiddenResponse.statusCode()).isEqualTo(403);
 
         // 1) Note anlegen (ID-first, Fehlerklasse 5)
         var created = post("/api/v1/vaults/" + vaultId + "/notes", actorHeader,
@@ -225,8 +255,9 @@ class PlatformApiEndToEndIT {
 
         // 9) Loeschen ueber REST - der noch verbundene Client B muss mit Close-Code 4404
         //    getrennt werden (Anforderungen.md: Loeschungen live synchronisieren).
-        var deleteResponse = delete("/api/v1/vaults/" + vaultId + "/notes/" + noteId,
-            Map.of("X-Actor", "tom", "X-Operation-Id", "e2e-delete-op-1"));
+        var deleteHeaders = new java.util.HashMap<>(actorHeader);
+        deleteHeaders.put("X-Operation-Id", "e2e-delete-op-1");
+        var deleteResponse = delete("/api/v1/vaults/" + vaultId + "/notes/" + noteId, deleteHeaders);
         assertThat(deleteResponse.statusCode()).isEqualTo(200);
         var tombstone = json.readValue(deleteResponse.body(), Map.class);
         assertThat(tombstone.get("operationId")).isEqualTo("e2e-delete-op-1");
@@ -235,11 +266,11 @@ class PlatformApiEndToEndIT {
         assertThat(handlerB.closeStatus.getCode()).isEqualTo(SyncRelayService.CLOSE_CODE_NOTE_DELETED);
 
         // 10) Die Note ist wirklich weg.
-        var getAfterDelete = get("/api/v1/vaults/" + vaultId + "/notes/" + noteId);
+        var getAfterDelete = get("/api/v1/vaults/" + vaultId + "/notes/" + noteId, actorHeader);
         assertThat(getAfterDelete.statusCode()).isEqualTo(404);
 
         // 11) Audit-Trail zeigt create + rename + delete, jeweils mit dem richtigen Actor.
-        var auditResponse = get("/api/v1/vaults/" + vaultId + "/notes/" + noteId + "/audit");
+        var auditResponse = get("/api/v1/vaults/" + vaultId + "/notes/" + noteId + "/audit", actorHeader);
         assertThat(auditResponse.statusCode()).isEqualTo(200);
         List<Map<String, Object>> auditEvents = json.readValue(auditResponse.body(), List.class);
         assertThat(auditEvents).extracting(event -> event.get("action"))

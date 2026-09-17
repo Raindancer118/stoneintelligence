@@ -2,13 +2,15 @@ package de.raindancer118.stoneintelligence.platform.ratelimit;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
- * Rate-Limit pro Nutzer (X-Actor-Header, s. {@code TicketController}/{@code NoteController} fuer
- * denselben provisorischen Identitaets-Platzhalter bis Phase 3 OIDC) - faellt auf die
- * Remote-Adresse zurueck, wenn der Header fehlt, statt komplett ungebremst durchzulassen.
+ * Rate-Limit pro Nutzer (authentifizierter OIDC-Principal seit Phase 3, s.
+ * {@code SecurityConfig}) - faellt auf die Remote-Adresse zurueck, wenn (noch) keine
+ * Authentifizierung vorliegt (z. B. ein Request, der ohnehin gleich mit 401 abgewiesen wird),
+ * statt komplett ungebremst durchzulassen.
  */
 @Component
 public class RateLimitInterceptor implements HandlerInterceptor {
@@ -21,7 +23,8 @@ public class RateLimitInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        var actor = request.getHeader("X-Actor");
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        var actor = (authentication != null && authentication.isAuthenticated()) ? authentication.getName() : null;
         var key = (actor != null && !actor.isBlank()) ? actor : request.getRemoteAddr();
 
         var result = limiter.tryConsume(key);

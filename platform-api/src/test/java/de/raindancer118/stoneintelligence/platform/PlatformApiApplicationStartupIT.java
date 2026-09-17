@@ -1,8 +1,10 @@
 package de.raindancer118.stoneintelligence.platform;
 
+import de.raindancer118.stoneintelligence.platform.security.TestJwtSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -15,9 +17,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Voller Wiring-Smoke-Test gegen echtes Postgres (Testcontainers): seit dem vertikalen
  * Sync-Slice (Phase 2) braucht der Kontext eine echte DataSource (JdbcClient-basierte
  * Repositories) - ein Kontext-Load ohne DB waere kein ehrlicher Test mehr. Braucht einen
- * laufenden Docker-Daemon (s. Project.md).
+ * laufenden Docker-Daemon (s. Project.md). {@link TestJwtSupport} liefert seit Phase 3 den
+ * einzigen {@code JwtDecoder} im Testkontext (die produktive, auf einen echten Authentik-Issuer
+ * zeigende Bean existiert hier nicht, s. deren Javadoc).
  */
 @Testcontainers
+@Import(TestJwtSupport.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class PlatformApiApplicationStartupIT {
 
