@@ -219,5 +219,43 @@ describe("AuthentikAuthClient", () => {
 
       await expect(client.refreshAccessToken("https://issuer/token", "rt")).rejects.toThrow("401");
     });
+
+    it("should_keepTheOldRefreshToken_when_theProviderOmitsANewOneInTheRefreshResponse", async () => {
+      // Regression, live gefunden ueber Authentik-Server-Logs ("Refresh token does not exist",
+      // token: "undefined"): Authentik liefert im Refresh-Grant (anders als beim initialen
+      // Code-Exchange) KEIN `refresh_token`-Feld zurueck, solange keine Rotation konfiguriert ist.
+      // Vorher wurde `body.refresh_token` (also `undefined`) blind uebernommen und gespeichert -
+      // `JSON.stringify` liess das Feld beim Speichern komplett wegfallen, und beim naechsten
+      // Refresh (typischerweise beim naechsten Obsidian-Neustart) wurde buchstaeblich der
+      // STRING "undefined" als `refresh_token` an Authentik geschickt (URLSearchParams
+      // stringified jeden Wert), was garantiert mit HTTP 400 scheiterte und die gesamte
+      // Anmeldung loeschte.
+      const fakeFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ access_token: "new-at", expires_in: 3600 }),
+      });
+      const client = new AuthentikAuthClient(
+        { issuerUrl: "https://issuer", clientId: "my-client" }, fakeFetch as unknown as typeof fetch,
+      );
+
+      const tokens = await client.refreshAccessToken("https://issuer/token", "old-rt");
+
+      expect(tokens.accessToken).toBe("new-at");
+      expect(tokens.refreshToken).toBe("old-rt");
+    });
+
+    it("should_useTheNewRefreshToken_when_theProviderDoesReturnOne", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ access_token: "new-at", refresh_token: "rotated-rt", expires_in: 3600 }),
+      });
+      const client = new AuthentikAuthClient(
+        { issuerUrl: "https://issuer", clientId: "my-client" }, fakeFetch as unknown as typeof fetch,
+      );
+
+      const tokens = await client.refreshAccessToken("https://issuer/token", "old-rt");
+
+      expect(tokens.refreshToken).toBe("rotated-rt");
+    });
   });
 });

@@ -26,6 +26,15 @@ public record SyncFrame(byte messageType, NoteId noteId, byte[] payload) {
      * nicht die gesamte (ggf. mit anderen Notizen geteilte) Verbindung - s. {@link SyncSession#notifyNoteDeleted}.
      */
     public static final byte TYPE_NOTE_DELETED = 4;
+    /**
+     * Server->Client: die komplette Late-Joiner-Update-Historie fuer diese Notiz wurde gesendet.
+     * Ohne dieses explizite Signal musste der Client raten, wann "genug" Zeit fuer den Catchup
+     * vergangen ist (fixe Gnadenfrist) - unter Last (viele/grosse Notizen, gestaffelte Joins auf
+     * derselben geteilten Verbindung) reichte diese Frist nachweislich nicht, der Client spielte
+     * dann lokalen Inhalt zusaetzlich zum inzwischen doch noch eingetroffenen Server-Inhalt ein
+     * (live beobachtet: verdreifachter Notizinhalt nach mehreren Reconnect-Zyklen).
+     */
+    public static final byte TYPE_CATCHUP_COMPLETE = 5;
 
     public static final int NOTE_ID_LENGTH = 36;
     private static final int HEADER_LENGTH = 1 + NOTE_ID_LENGTH;

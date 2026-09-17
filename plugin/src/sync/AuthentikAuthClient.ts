@@ -18,7 +18,7 @@ interface OidcDiscoveryDocument {
 
 interface TokenResponseBody {
   access_token: string;
-  refresh_token: string;
+  refresh_token?: string;
   expires_in: number;
 }
 
@@ -89,11 +89,20 @@ export class AuthentikAuthClient {
     return url.toString();
   }
 
-  private static toStoredTokens(body: TokenResponseBody): StoredTokens {
+  /**
+   * `previousRefreshToken` faengt den Fall auf, dass der Refresh-Grant (anders als der initiale
+   * Code-Exchange) KEIN `refresh_token`-Feld zurueckliefert - bei Authentik ohne aktivierte
+   * Rotation der Normalfall, nicht die Ausnahme. Ohne diesen Fallback wuerde `refreshToken`
+   * `undefined`, `JSON.stringify` liesse das Feld beim Speichern verschwinden, und der naechste
+   * Refresh-Versuch schickte buchstaeblich den String "undefined" an Authentik (live per
+   * Server-Log bestaetigt: "Refresh token does not exist", token: "undefined") - garantierter
+   * HTTP-400 und Komplettverlust der Anmeldung bei jedem folgenden Neustart.
+   */
+  private static toStoredTokens(body: TokenResponseBody, previousRefreshToken?: string): StoredTokens {
     const SAFETY_MARGIN_SECONDS = 30;
     return {
       accessToken: body.access_token,
-      refreshToken: body.refresh_token,
+      refreshToken: body.refresh_token ?? previousRefreshToken ?? "",
       expiresAt: Date.now() + (body.expires_in - SAFETY_MARGIN_SECONDS) * 1000,
     };
   }
@@ -145,7 +154,7 @@ export class AuthentikAuthClient {
     if (!response.ok) {
       throw new Error(`token refresh failed: HTTP ${response.status}`);
     }
-    return AuthentikAuthClient.toStoredTokens((await response.json()) as TokenResponseBody);
+    return AuthentikAuthClient.toStoredTokens((await response.json()) as TokenResponseBody, refreshToken);
   }
 
   /**

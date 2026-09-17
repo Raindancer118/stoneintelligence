@@ -20,12 +20,18 @@ public class SyncRelayService {
         this.registry = registry;
     }
 
-    /** Neuer Client tritt bei: Late-Joiner-Catchup mit der kompletten Update-Historie. */
+    /**
+     * Neuer Client tritt bei: Late-Joiner-Catchup mit der kompletten Update-Historie, danach ein
+     * explizites Abschlusssignal (s. {@link SyncSession#sendCatchupComplete}) - erst dann weiss
+     * der Client sicher, dass ein (noch) leeres lokales Dokument nicht auf eine noch unterwegs
+     * befindliche Historie wartet.
+     */
     public void onJoin(NoteId noteId, SyncSession session) {
         registry.join(noteId, session);
         for (var update : snapshotStore.listSince(noteId, 0)) {
             session.sendDocUpdate(noteId, update.payload());
         }
+        session.sendCatchupComplete(noteId);
     }
 
     /** Eingehendes Yjs-Dokument-Update: persistieren, dann an alle anderen Sessions im Room verteilen. */

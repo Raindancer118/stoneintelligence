@@ -128,6 +128,33 @@ class SyncRelayServiceTest {
 
             assertThat(lateJoiner.receivedDocUpdates).containsExactly(bytes("update-1"), bytes("update-2"));
         }
+
+        @Test
+        void should_sendCatchupCompleteAfterAllHistoricUpdates_when_clientJoinsAnExistingNote() {
+            // Regression: ohne dieses explizite Abschlusssignal musste der Client mit einer fixen
+            // Gnadenfrist raten, wann die Historie vollstaendig eingetroffen ist - unter Last kam
+            // sie zu spaet, und der Client mischte faelschlich lokalen Inhalt in ein Y.Text, das
+            // "nur noch nicht fertig" war, nicht wirklich leer (live beobachtet: verdreifachter
+            // Notizinhalt).
+            var early = new RecordingSyncSession("early");
+            relay.onJoin(noteId, early);
+            relay.onUpdate(noteId, early, bytes("update-1"), false);
+
+            var lateJoiner = new RecordingSyncSession("late");
+            relay.onJoin(noteId, lateJoiner);
+
+            assertThat(lateJoiner.catchupCompletedNoteIds).containsExactly(noteId);
+        }
+
+        @Test
+        void should_sendCatchupCompleteEvenWhenNoHistoryExistsYet_when_clientJoinsABrandNewNote() {
+            var firstJoiner = new RecordingSyncSession("first");
+
+            relay.onJoin(noteId, firstJoiner);
+
+            assertThat(firstJoiner.receivedDocUpdates).isEmpty();
+            assertThat(firstJoiner.catchupCompletedNoteIds).containsExactly(noteId);
+        }
     }
 
     @Nested
