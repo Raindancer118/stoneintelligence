@@ -15,6 +15,14 @@ final class RecordingSyncSession implements SyncSession {
     Integer closedWithCode;
     String closedWithReason;
 
+    /**
+     * EIN gemeinsamer, chronologisch geordneter Log ueber alle Ereignistypen - die separaten
+     * {@code receivedDocUpdates}/{@code catchupCompletedNoteIds}-Listen oben verlieren die
+     * relative Reihenfolge ZWISCHEN Ereignistypen (z. B. "kam das Update vor oder nach dem
+     * Catchup-Abschluss an?"), was fuer Nebenlaeufigkeits-Regressionstests genau die Frage ist.
+     */
+    final List<String> orderedEvents = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     RecordingSyncSession(String id) {
         this.id = id;
     }
@@ -28,6 +36,7 @@ final class RecordingSyncSession implements SyncSession {
     public void sendDocUpdate(NoteId noteId, byte[] payload) {
         receivedDocUpdateNoteIds.add(noteId);
         receivedDocUpdates.add(payload);
+        orderedEvents.add("doc-update:" + new String(payload, java.nio.charset.StandardCharsets.UTF_8));
     }
 
     @Override
@@ -43,6 +52,7 @@ final class RecordingSyncSession implements SyncSession {
     @Override
     public void sendCatchupComplete(NoteId noteId) {
         catchupCompletedNoteIds.add(noteId);
+        orderedEvents.add("catchup-complete");
     }
 
     @Override
