@@ -4,6 +4,7 @@ import { App, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile } from 
 import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
 import { type SessionSnapshot, StatusView, VIEW_TYPE_STATUS } from "./StatusView";
+import { actorDisplayNameFromAccessToken, pickUserColor } from "./sync/actorIdentity";
 import { AuthentikAuthClient, TokenRefreshRejectedError, type StoredTokens } from "./sync/AuthentikAuthClient";
 import { dedupeInFlight } from "./sync/dedupeInFlight";
 import { awaitDesktopRedirectCode, DESKTOP_REDIRECT_URI, openAuthorizationUrlDesktop } from "./sync/desktopAuthRedirect";
@@ -31,6 +32,19 @@ interface StoneIntelligenceSettings {
 type ConnectionConfig = Pick<
   StoneIntelligenceSettings, "platformApiUrl" | "platformWsUrl" | "vaultId" | "oidcIssuerUrl" | "oidcClientId"
 >;
+
+/**
+ * Architekturentscheidung 2026-09-18 (auf Toms ausdruecklichen Wunsch, nach Vorbild des
+ * Vorgaenger-Projekts `stonesync`, das NIE das ganze Vault live hielt, sondern nur gerade
+ * geoeffnete Notizen): die geteilte WebSocket-Verbindung traegt nur noch die AKTIVE Notiz live
+ * (Zeichen-Sync + Cursor-Presence). Alle anderen bekannten Notizen werden periodisch per kurzem
+ * Verbindungs-Connect-Catchup-Leave-Zyklus abgeglichen (`syncNoteInBackground`) - dieselbe
+ * Yjs-Sync-Maschinerie wie die aktive Notiz, nur nicht dauerhaft gejoint. Kein Server-Umbau
+ * noetig: der Server unterscheidet ohnehin nicht zwischen einem lang- und einem kurzlebigen Join.
+ */
+const BACKGROUND_POLL_INTERVAL_MS = 90_000;
+/** Kurzer Timeout je Hintergrund-Notiz - ein einzelner haengender Versuch darf den gesamten Poll-Durchlauf nicht blockieren; naechster Versuch folgt beim naechsten Intervall-Tick. */
+const BACKGROUND_SYNC_TIMEOUT_MS = 8_000;
 
 const DEFAULT_SETTINGS: StoneIntelligenceSettings = {
   platformApiUrl: "http://localhost:8080",
@@ -70,11 +84,13 @@ interface NoteSyncSession {
 }
 
 /**
- * Haelt das GESAMTE Vault synchron (nicht nur die geoeffnete Notiz, s. Project.md fuer die
- * Historie dieser Entscheidung) - je Notiz eine eigene WebSocket-Verbindung/Y.Doc-Session.
- * Fuer Hintergrund-Notes: Volltext-Sync (ganzer Dateiinhalt in einem Y.Text). Fuer die AKTIVE
- * Notiz: echtes CodeMirror-6-Zeichen-Binding via y-codemirror.next (yCollab), inkl.
- * Cursor-Presence ueber die geteilte Awareness-Instanz von {@link SyncClient}.
+ * Haelt das GESAMTE Vault synchron, aber NUR die AKTIVE (gerade geoeffnete) Notiz dauerhaft ueber
+ * die geteilte WebSocket-Verbindung live - echtes CodeMirror-6-Zeichen-Binding via
+ * y-codemirror.next (yCollab), inkl. Cursor-Presence ueber die geteilte Awareness-Instanz von
+ * {@link SyncClient}. Alle anderen Notizen werden periodisch per kurzem Connect-Catchup-Leave-
+ * Zyklus abgeglichen, s. {@link BACKGROUND_POLL_INTERVAL_MS} und `syncNoteInBackground` (Project.md
+ * fuer die volle Historie dieser Entscheidung - Vorgaengerversion hielt das gesamte Vault
+ * dauerhaft gejoint).
  */
 export default class StoneIntelligencePlugin extends Plugin {
   settings: StoneIntelligenceSettings = DEFAULT_SETTINGS;
@@ -95,6 +111,15 @@ export default class StoneIntelligencePlugin extends Plugin {
    * lostritt (das wuerde die absichtliche Serialisierung wieder aufheben, s. Klassendoc dort).
    */
   private readonly reconcilingPaths = new Set<string>();
+  /**
+   * Verhindert ueberlappende `pollBackgroundNotes`-Durchlaeufe: bei einem groesseren Vault (oder
+   * einer gerade langsamen Verbindung) kann ein einzelner Durchlauf laenger dauern als
+   * `BACKGROUND_POLL_INTERVAL_MS`, `window.setInterval` wartet das aber nicht ab - ohne dieses
+   * Flag koennten zwei parallele Durchlaeufe fuer DIESELBE Notiz gleichzeitig
+   * `MultiplexedTransport.createVirtualSocket` mit derselben `noteId` aufrufen und sich
+   * gegenseitig den virtuellen Kanal wegnehmen.
+   */
+  private backgroundPollRunning = false;
   private noteApiClient!: NoteApiClient;
   private authClient!: AuthentikAuthClient;
   private tokenEndpoint: string | null = null;
@@ -253,7 +278,11 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("create", (file) => {
         if (file instanceof TFile && file.extension === "md" && !this.reconcilingPaths.has(file.path)) {
-          void this.startSync(file, true);
+          // Einmaliger sofortiger Abgleich (Initial-Push, falls schon lokaler Inhalt vorhanden
+          // ist) statt dauerhaftem Live-Join - wird die Datei direkt danach auch geoeffnet
+          // (Obsidians ueblicher "Neue Notiz"-Ablauf), uebernimmt der separate `file-open`-Handler
+          // die eigentliche Live-Bindung.
+          void this.syncNoteInBackground(file.path, { preferLocal: true });
         }
       }),
     );
@@ -281,6 +310,9 @@ export default class StoneIntelligencePlugin extends Plugin {
 
     this.registerInterval(
       window.setInterval(() => this.journal.evictOlderThan(5 * 60_000), 60_000) as unknown as number,
+    );
+    this.registerInterval(
+      window.setInterval(() => void this.pollBackgroundNotes(), BACKGROUND_POLL_INTERVAL_MS) as unknown as number,
     );
 
     this.registerView(VIEW_TYPE_STATUS, (leaf) => new StatusView(leaf, this));
@@ -310,10 +342,12 @@ export default class StoneIntelligencePlugin extends Plugin {
       id: "stoneintelligence-resync-all",
       name: "Alle Notizen neu synchronisieren",
       callback: async () => {
-        for (const path of [...this.sessions.keys()]) {
-          this.stopSync(path);
+        if (this.liveBoundPath) {
+          this.stopSync(this.liveBoundPath);
+          this.liveBoundPath = null;
         }
         await this.syncAllNotes();
+        await this.pollBackgroundNotes();
         new Notice("StoneIntelligence: Neu synchronisiert.");
       },
     });
@@ -328,7 +362,10 @@ export default class StoneIntelligencePlugin extends Plugin {
         }
         if (file) {
           this.stopSync(file.path);
-          void this.startSync(file, true);
+          if (this.liveBoundPath === file.path) {
+            this.liveBoundPath = null;
+          }
+          void this.updateLiveEditorBinding(file);
           new Notice(`StoneIntelligence: "${file.path}" wird neu verbunden.`);
         }
         return true;
@@ -392,6 +429,12 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.statusBarItem.setText(text);
   }
 
+  /**
+   * Laeuft beim Plugin-Start einmal durch: laedt fehlende Notizen vom Server herunter und bindet
+   * eine bereits offene aktive Notiz sofort live, statt auf den naechsten Poll-Tick zu warten.
+   * Der eigentliche Hintergrundabgleich ALLER Notizen laeuft separat und dauerhaft ueber den in
+   * `onload` registrierten Intervall-Timer (`pollBackgroundNotes`), s. Klassendoc.
+   */
   private async syncAllNotes(): Promise<void> {
     if (!this.settings.vaultId) {
       return;
@@ -400,33 +443,109 @@ export default class StoneIntelligencePlugin extends Plugin {
       await this.reconcileMissingNotesFromServer();
     } catch (error) {
       // Reconciliation ist ein Download-Bonus, kein Muss - ein Fehler hier (z. B. Netzwerk) soll
-      // nicht verhindern, dass lokal bereits vorhandene Notizen weiterhin synchronisiert werden.
+      // nicht verhindern, dass die aktive Notiz weiterhin synchronisiert wird.
       console.error("StoneIntelligence: Reconciliation fehlgeschlagen", error);
     }
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      try {
-        await this.startSync(file);
-      } catch (error) {
-        // Ein einzelner fehlgeschlagener Start (z. B. Rate-Limit trotz Retry ausgeschoepft) darf
-        // den restlichen Vault-Sync nicht abbrechen - sonst wuerden alle folgenden Notizen
-        // ebenfalls nie synchronisiert, nur weil eine einzelne frueh im Durchlauf hakt.
-        console.error(`StoneIntelligence: Sync fuer "${file.path}" fehlgeschlagen`, error);
+    const activeFile = this.app.workspace.getActiveFile();
+    if (activeFile instanceof TFile && activeFile.extension === "md") {
+      await this.updateLiveEditorBinding(activeFile);
+    }
+  }
+
+  /**
+   * Gleicht ALLE bekannten Notizen AUSSER der gerade live gebundenen ab - ein Durchlauf des
+   * periodischen Hintergrund-Timers (`BACKGROUND_POLL_INTERVAL_MS`). Bewusst SEQUENTIELL (eine
+   * Notiz nach der anderen fertig abgeglichen, bevor die naechste startet), analog zum bisherigen
+   * `syncAllNotes`-Muster - vermeidet unkontrollierten Verbindungs-/Join-Burst auf der geteilten
+   * Verbindung bei einem groesseren Vault.
+   */
+  private async pollBackgroundNotes(): Promise<void> {
+    if (!this.settings.vaultId || this.backgroundPollRunning) {
+      return;
+    }
+    this.backgroundPollRunning = true;
+    try {
+      for (const path of Object.keys(this.settings.noteIds)) {
+        if (path === this.liveBoundPath) {
+          continue;
+        }
+        try {
+          await this.syncNoteInBackground(path, { preferLocal: false });
+        } catch (error) {
+          console.error(`StoneIntelligence: Hintergrund-Sync fuer "${path}" fehlgeschlagen`, error);
+        }
       }
+    } finally {
+      this.backgroundPollRunning = false;
+    }
+  }
+
+  /**
+   * Gleicht EINE einzelne Notiz per kurzlebigem Connect-Catchup-Leave-Zyklus ab (s. Klassendoc) -
+   * nutzt dieselbe {@link SyncClient}/{@link MultiplexedTransport}-Maschinerie wie die aktive
+   * Notiz, verlaesst die Verbindung aber sofort wieder danach, statt dauerhaft gejoint zu bleiben.
+   * No-op, wenn diese Notiz bereits live gebunden ist (die kuemmert sich selbst um ihren Stand)
+   * oder gerade woanders im Start-Prozess ist.
+   *
+   * <p>`preferLocal: true` (frisch angelegte/lokal geaenderte Notiz) laesst den soeben bekannten
+   * lokalen Inhalt gewinnen, wenn er vom Server-Stand abweicht - das ist genau DIESE Aenderung,
+   * die uebertragen werden soll. `preferLocal: false` (periodischer Poll ohne konkreten Anlass)
+   * laesst wie bisher den Server gewinnen, sobald er ueberhaupt Inhalt hat (dieselbe Heuristik wie
+   * `mergeInitialContent` fuer die aktive Notiz) - ein reiner Zeit-Tick ist kein Beleg dafuer, dass
+   * die lokale Datei die neuere ist.
+   */
+  private async syncNoteInBackground(path: string, options: { preferLocal: boolean }): Promise<void> {
+    if (this.sessions.has(path) || this.startingPaths.has(path) || !this.settings.vaultId) {
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      return;
+    }
+
+    const noteId = await this.ensureNoteId(file);
+    const transport = this.ensureTransport();
+    const doc = new Y.Doc();
+    const text = doc.getText("content");
+    const client = new SyncClient("", () => transport.createVirtualSocket(noteId, { priority: false }), doc);
+    client.connect();
+    try {
+      const connected = await this.awaitConnected(client, BACKGROUND_SYNC_TIMEOUT_MS);
+      if (!connected) {
+        return;
+      }
+      const caughtUp = await this.awaitCatchupComplete(client, BACKGROUND_SYNC_TIMEOUT_MS);
+      if (!caughtUp) {
+        return;
+      }
+
+      const localContent = await this.app.vault.read(file);
+      const serverContent = text.toString();
+      if (serverContent === localContent) {
+        return;
+      }
+      if (options.preferLocal || serverContent.length === 0) {
+        doc.transact(() => {
+          text.delete(0, text.length);
+          text.insert(0, localContent);
+        });
+      } else {
+        await this.applyRemoteContentToFile(file, serverContent);
+      }
+    } finally {
+      client.disconnect();
     }
   }
 
   /**
    * Laedt Notizen herunter, die auf dem Server existieren, aber lokal (noch) fehlen - der Fall,
-   * der bisher komplett unbehandelt war: ein neues/leeres Vault auf einem zweiten Geraet bekam
-   * NIE etwas heruntergeladen, weil `syncAllNotes()` nur ueber bereits lokal vorhandene Dateien
-   * iterierte. Legt fuer jede fehlende Notiz eine leere lokale Platzhalterdatei an und startet
-   * ihren Sync SOFORT UND EINZELN (nicht dem asynchronen `create`-Event ueberlassen) - bei
-   * Vaults mit vielen fehlenden Notizen (live beobachtet: 177) wuerden sonst bis zu 177
-   * WebSocket-Verbindungsversuche quasi gleichzeitig anlaufen; auf Mobile werden die vom
-   * OS/der WebView angedrosselt/gequeued, wodurch das kurzlebige Sync-Ticket (30s TTL) laengst
-   * abgelaufen ist, bevor der Handshake ueberhaupt drankommt - jede so betroffene Notiz landete
-   * dauerhaft auf "Fehler". Sequentiell (eine Notiz nach der anderen fertig verbunden) bleibt
-   * langsamer, aber zuverlaessig.
+   * der sonst komplett unbehandelt waere: ein neues/leeres Vault auf einem zweiten Geraet bekaeme
+   * NIE etwas heruntergeladen, weil der Hintergrund-Poll nur ueber bereits BEKANNTE (in
+   * `settings.noteIds` eingetragene) Notizen iteriert. Legt fuer jede fehlende Notiz eine leere
+   * lokale Platzhalterdatei an und synchronisiert sie SOFORT UND EINZELN (nicht dem naechsten
+   * Poll-Tick ueberlassen) - bei Vaults mit vielen fehlenden Notizen (live beobachtet: 177, damals
+   * noch mit dauerhaften WS-Joins) blieb ein Burst gleichzeitiger Verbindungsversuche sonst haengen;
+   * sequentiell (eine Notiz nach der anderen fertig abgeglichen) bleibt langsamer, aber zuverlaessig.
    */
   private async reconcileMissingNotesFromServer(): Promise<void> {
     const localPaths = new Set(this.app.vault.getMarkdownFiles().map((f) => f.path));
@@ -437,9 +556,9 @@ export default class StoneIntelligencePlugin extends Plugin {
         continue;
       }
       // NoteId VOR dem Anlegen der Datei eintragen: der `create`-Event-Handler ruft ebenfalls
-      // `startSync` auf (zusaetzlich zu unserem expliziten Aufruf unten) - dessen `ensureNoteId`
-      // wuerde sonst eine ZWEITE Note fuer denselben Pfad anlegen (Fehlerklasse 5) statt die
-      // bereits vorhandene Server-Note zu uebernehmen.
+      // `syncNoteInBackground` auf (zusaetzlich zu unserem expliziten Aufruf unten) - dessen
+      // `ensureNoteId` wuerde sonst eine ZWEITE Note fuer denselben Pfad anlegen (Fehlerklasse 5)
+      // statt die bereits vorhandene Server-Note zu uebernehmen.
       this.settings.noteIds[note.path] = note.id;
       await this.saveSettings();
 
@@ -452,7 +571,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       this.reconcilingPaths.add(note.path);
       try {
         const created = await this.app.vault.create(note.path, "");
-        await this.startSync(created);
+        await this.syncNoteInBackground(created.path, { preferLocal: false });
       } catch (error) {
         console.error(`StoneIntelligence: Download von "${note.path}" fehlgeschlagen`, error);
       } finally {
@@ -594,6 +713,15 @@ export default class StoneIntelligencePlugin extends Plugin {
     const client = new SyncClient("", () => transport.createVirtualSocket(noteId, { priority }), doc);
     client.onNoteDeleted = () => this.handleRemoteNoteDeleted(file.path);
     client.connect();
+    // Ohne dieses Feld haette y-codemirror.next fuer diesen Client keine Identitaet zum Anzeigen
+    // (`state.user` blieb bisher komplett ungesetzt) - Remote-Cursor faellt in diesem Fall auf
+    // eine generische, nicht unterscheidbare Standarddarstellung zurueck ("Anonymous", ein
+    // einzelnes Blau fuer alle). Name kommt aus demselben `preferred_username`-Claim, den der
+    // Server serverseitig als Actor-Identitaet nutzt; Farbe ist deterministisch aus dem Namen
+    // abgeleitet (uebernommen aus dem Vorgaenger-Projekt `stonesync`), damit dieselbe Person auf
+    // jedem Geraet/in jeder Session dieselbe Cursor-Farbe hat.
+    const actorName = actorDisplayNameFromAccessToken(this.settings.tokens?.accessToken);
+    client.awareness.setLocalStateField("user", { name: actorName, color: pickUserColor(actorName) });
 
     const session: NoteSyncSession = {
       path: file.path,
@@ -677,13 +805,13 @@ export default class StoneIntelligencePlugin extends Plugin {
     const generation = ++this.liveBindGeneration;
     const view = this.activeEditorView();
 
-    if (this.liveBoundPath) {
-      const previous = this.sessions.get(this.liveBoundPath);
-      if (previous) {
-        previous.hasLiveEditorBinding = false;
-      }
-      this.liveBoundPath = null;
+    if (this.liveBoundPath && this.liveBoundPath !== file?.path) {
+      // Vollstaendiges Stoppen (nicht nur die CM6-Bindung loesen) - die zuvor aktive Notiz faellt
+      // zurueck in den periodischen Hintergrund-Poll-Pool (s. Klassendoc "Architekturentscheidung
+      // 2026-09-18"). Nur EINE Notiz darf gleichzeitig die geteilte Verbindung dauerhaft halten.
+      this.stopSync(this.liveBoundPath);
     }
+    this.liveBoundPath = null;
 
     if (!view) {
       return;
@@ -762,10 +890,11 @@ export default class StoneIntelligencePlugin extends Plugin {
   private async handleLocalModify(file: TFile): Promise<void> {
     const session = this.sessions.get(file.path);
     if (!session) {
-      // Neue oder bisher ungetrackte Datei (z. B. Plugin-Start nach der ersten Aenderung) -
-      // startSync liest den aktuellen Inhalt bereits ein, kein separater Merge noetig. Prioritaet,
-      // da eine gerade lokal bearbeitete Datei per Definition die aktive Notiz ist.
-      void this.startSync(file, true);
+      // Eine Hintergrund-Notiz (nicht live gebunden) wurde lokal veraendert - z. B. durch ein
+      // anderes Plugin, ein externes Werkzeug, oder weil der Poll-Zyklus fuer diese Datei noch nie
+      // gelaufen ist. `preferLocal: true`, weil DIESE Aenderung gerade erst passiert ist und
+      // uebertragen werden soll - anders als beim periodischen Poll ohne konkreten Anlass.
+      void this.syncNoteInBackground(file.path, { preferLocal: true });
       return;
     }
     if (session.hasLiveEditorBinding) {
@@ -808,7 +937,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     if (!noteId || !this.settings.vaultId) {
       // Datei war noch nicht getrackt (z. B. Umbenennung direkt nach App-Start, bevor der
       // initiale Vault-Sync durchlief) - unter dem neuen Pfad frisch aufnehmen.
-      void this.startSync(file);
+      void this.syncNoteInBackground(file.path, { preferLocal: true });
       return;
     }
 
@@ -823,6 +952,12 @@ export default class StoneIntelligencePlugin extends Plugin {
       // aendert sich - kein Re-Connect noetig, die NoteId ist stabil (Fehlerklasse 5).
       session.path = file.path;
       this.sessions.set(file.path, session);
+      if (this.liveBoundPath === oldPath) {
+        // Ohne das wuerde `updateLiveEditorBinding` beim naechsten Aufruf faelschlich versuchen,
+        // eine Session unter dem inzwischen umbenannten (nicht mehr existenten) alten Pfad zu
+        // stoppen, statt die tatsaechlich aktive (jetzt umbenannte) Session zu erkennen.
+        this.liveBoundPath = file.path;
+      }
     }
 
     await this.noteApiClient.renameNote(this.settings.vaultId, noteId, file.path);
