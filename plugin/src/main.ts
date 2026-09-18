@@ -461,23 +461,28 @@ export default class StoneIntelligencePlugin extends Plugin {
    * geteilten, gequeuten Verbindung kann das je nach Position in der Warteschlange dauern (s.
    * `multiplexedTransport.ts`). Ohne dieses Warten wuerde die anschliessende Catchup-Gnadenfrist
    * in `doStartSync` viel zu frueh ablaufen, bevor die Notiz ueberhaupt gejoint wurde.
+   *
+   * <p>Gibt `false` zurueck, wenn `timeoutMs` ohne echtes "connected" verstreicht - der Aufrufer
+   * (`mergeInitialContent`) MUSS das als "noch nicht sicher verbunden" behandeln, NIE als Erfolg
+   * (ehemals ein P1-Bug: der Timeout-Pfad liess "unbekannt/nicht verbunden" faelschlich wie
+   * "Server ist leer" aussehen, s. docs/sync-comparison-review-2026-09-18.md).
    */
-  private awaitConnected(client: SyncClient, timeoutMs = 30_000): Promise<void> {
+  private awaitConnected(client: SyncClient, timeoutMs = 30_000): Promise<boolean> {
     if (client.status === "connected") {
-      return Promise.resolve();
+      return Promise.resolve(true);
     }
     return new Promise((resolve) => {
       const previous = client.onStatusChange;
       const timeout = window.setTimeout(() => {
         client.onStatusChange = previous;
-        resolve();
+        resolve(false);
       }, timeoutMs);
       client.onStatusChange = (status) => {
         previous?.(status);
         if (status === "connected") {
           window.clearTimeout(timeout);
           client.onStatusChange = previous;
-          resolve();
+          resolve(true);
         }
       };
     });
@@ -488,19 +493,24 @@ export default class StoneIntelligencePlugin extends Plugin {
    * COMPLETE`) statt auf eine fixe Gnadenfrist zu raten. `timeoutMs` bleibt als reines
    * Sicherheitsnetz (z. B. gegen einen sehr alten Server ohne dieses Signal oder ein verlorenes
    * Frame) - im Normalfall loest das Signal selbst lange vorher auf.
+   *
+   * <p>Gibt `false` zurueck, wenn der Timeout OHNE das Signal verstreicht. Der Aufrufer darf das
+   * NIE als "Server ist leer" interpretieren - ein leeres Y.Text bei Timeout kann genausogut
+   * bedeuten "die Historie ist einfach noch unterwegs", exakt der Fehlschluss, den dieses Signal
+   * eigentlich verhindern sollte (ehemals ein P1-Bug, s. docs/sync-comparison-review-2026-09-18.md).
    */
-  private awaitCatchupComplete(client: SyncClient, timeoutMs = 30_000): Promise<void> {
+  private awaitCatchupComplete(client: SyncClient, timeoutMs = 30_000): Promise<boolean> {
     return new Promise((resolve) => {
       const previous = client.onCatchupComplete;
       const timeout = window.setTimeout(() => {
         client.onCatchupComplete = previous;
-        resolve();
+        resolve(false);
       }, timeoutMs);
       client.onCatchupComplete = () => {
         previous?.();
         window.clearTimeout(timeout);
         client.onCatchupComplete = previous;
-        resolve();
+        resolve(true);
       };
     });
   }
@@ -577,30 +587,48 @@ export default class StoneIntelligencePlugin extends Plugin {
    * Warteschlange kann das dauern), dann auf eine kurze Catchup-Gnadenfrist, und entscheidet erst
    * DANACH, ob lokaler oder Server-Inhalt gewinnt. Blockiert bewusst NICHT den Aufrufer von
    * `doStartSync` - s. dessen Klassendoc.
+   *
+   * <p>Ein Timeout in {@link awaitConnected}/{@link awaitCatchupComplete} ist KEIN Erfolg -
+   * bricht die Funktion ohne jede Seed-Entscheidung ab und versucht es erneut, solange diese
+   * Session noch die aktuelle fuer `file.path` ist (sonst wurde sie zwischenzeitlich per
+   * `stopSync`/Neustart ersetzt oder beendet, ein weiterer Versuch waere sinnlos/falsch
+   * zugeordnet). `MultiplexedTransport` verbindet ohnehin automatisch neu - dieser Loop nutzt
+   * genau diese naechste Gelegenheit, statt selbst zu raten, wann "leer" wirklich leer bedeutet
+   * (ehemals ein P1-Bug: Timeout wurde wie ein bestaetigt leerer Server behandelt, s.
+   * docs/sync-comparison-review-2026-09-18.md).
    */
   private async mergeInitialContent(file: TFile, client: SyncClient, doc: Y.Doc, text: Y.Text): Promise<void> {
-    await this.awaitConnected(client);
+    while (this.sessions.get(file.path)?.client === client) {
+      const connected = await this.awaitConnected(client);
+      if (!connected) {
+        continue;
+      }
 
-    // Wartet auf das explizite Server-Signal "Catchup abgeschlossen" (s. SyncFrame.
-    // TYPE_CATCHUP_COMPLETE), statt wie frueher eine fixe Gnadenfrist zu raten - die war unter
-    // Last (viele/grosse Notizen, gestaffelte Joins auf derselben geteilten Verbindung)
-    // nachweislich zu kurz: der lokale Dateiinhalt wurde dann zusaetzlich zum inzwischen doch
-    // noch eingetroffenen Server-Inhalt eingespielt (additiv im CRDT, kein "letzter gewinnt") -
-    // live beobachtet als verdreifachter Notizinhalt nach mehreren Reconnect-Zyklen.
-    await this.awaitCatchupComplete(client);
+      // Wartet auf das explizite Server-Signal "Catchup abgeschlossen" (s. SyncFrame.
+      // TYPE_CATCHUP_COMPLETE), statt wie frueher eine fixe Gnadenfrist zu raten - die war unter
+      // Last (viele/grosse Notizen, gestaffelte Joins auf derselben geteilten Verbindung)
+      // nachweislich zu kurz: der lokale Dateiinhalt wurde dann zusaetzlich zum inzwischen doch
+      // noch eingetroffenen Server-Inhalt eingespielt (additiv im CRDT, kein "letzter gewinnt") -
+      // live beobachtet als verdreifachter Notizinhalt nach mehreren Reconnect-Zyklen.
+      const caughtUp = await this.awaitCatchupComplete(client);
+      if (!caughtUp) {
+        continue;
+      }
 
-    const initialContent = await this.app.vault.read(file);
-    if (text.length === 0 && initialContent.length > 0) {
-      // Kein Server-/Catchup-Inhalt eingetroffen (Y.Text ist leer) - diese Notiz hat noch keine
-      // Server-Historie, lokaler Inhalt ist die Wahrheit und wird eingespielt.
-      doc.transact(() => {
-        text.insert(0, initialContent);
-      });
-    } else if (text.length > 0 && text.toString() !== initialContent) {
-      // Catchup hat Server-Inhalt geliefert, der vom lokalen abweicht - das ist der Normalfall
-      // beim ERSTEN Sync einer via reconcileMissingNotesFromServer() heruntergeladenen Notiz
-      // (lokal nur ein leerer Platzhalter). Server-Stand gewinnt und wird in die Datei geschrieben.
-      await this.applyRemoteContentToFile(file, text.toString());
+      const initialContent = await this.app.vault.read(file);
+      if (text.length === 0 && initialContent.length > 0) {
+        // Kein Server-/Catchup-Inhalt eingetroffen (Y.Text ist leer) - diese Notiz hat noch keine
+        // Server-Historie, lokaler Inhalt ist die Wahrheit und wird eingespielt.
+        doc.transact(() => {
+          text.insert(0, initialContent);
+        });
+      } else if (text.length > 0 && text.toString() !== initialContent) {
+        // Catchup hat Server-Inhalt geliefert, der vom lokalen abweicht - das ist der Normalfall
+        // beim ERSTEN Sync einer via reconcileMissingNotesFromServer() heruntergeladenen Notiz
+        // (lokal nur ein leerer Platzhalter). Server-Stand gewinnt und wird in die Datei geschrieben.
+        await this.applyRemoteContentToFile(file, text.toString());
+      }
+      return;
     }
   }
 
