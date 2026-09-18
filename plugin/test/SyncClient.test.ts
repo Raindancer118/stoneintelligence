@@ -4,6 +4,7 @@ import { CLOSE_CODE_NOTE_DELETED, SyncClient, type WebSocketLike } from "../src/
 
 const MESSAGE_TYPE_DOC_UPDATE = 0;
 const MESSAGE_TYPE_AWARENESS = 1;
+const MESSAGE_TYPE_CATCHUP_COMPLETE = 5;
 
 function framed(type: number, payload: Uint8Array): ArrayBuffer {
   const buffer = new Uint8Array(1 + payload.length);
@@ -166,6 +167,37 @@ describe("SyncClient", () => {
       socket.remoteClose(1000, "normal closure");
 
       expect(onNoteDeleted).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("catchup-complete repair resync (offline-edit data loss)", () => {
+    it("should_resendTheFullLocalDocState_when_catchupCompletes_soEditsMadeWhileDisconnectedAreNotLost", () => {
+      // Regression for the P0 "offline edits are silently lost and never reconciled" finding
+      // (docs/sync-comparison-review-2026-09-18.md): the doc.on("update") listener only sends
+      // while a socket exists - an edit made between disconnect() and the next successful
+      // connect() was dropped forever, because Yjs never re-fires "update" for old changes.
+      const socketA = new FakeWebSocket();
+      const socketB = new FakeWebSocket();
+      const sockets = [socketA, socketB];
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => sockets.shift() as FakeWebSocket);
+      client.connect();
+      socketA.onopen?.({} as Event);
+
+      client.disconnect();
+      client.doc.getText("content").insert(0, "written while offline");
+
+      // Reconnect (mirrors what MultiplexedTransport does after a dropped physical socket: a
+      // fresh connect() call, fresh socket, fresh JOIN).
+      client.connect();
+      socketB.onopen?.({} as Event);
+      socketB.onmessage?.({ data: framed(MESSAGE_TYPE_CATCHUP_COMPLETE, new Uint8Array(0)) } as MessageEvent);
+
+      expect(socketB.sent.length).toBeGreaterThan(0);
+      const repairDoc = new Y.Doc();
+      for (const raw of socketB.sent) {
+        Y.applyUpdate(repairDoc, new Uint8Array(raw).subarray(1));
+      }
+      expect(repairDoc.getText("content").toString()).toBe("written while offline");
     });
   });
 

@@ -104,6 +104,7 @@ export class SyncClient {
       if (messageType === MESSAGE_TYPE_AWARENESS) {
         applyAwarenessUpdate(this.awareness, payload, this);
       } else if (messageType === MESSAGE_TYPE_CATCHUP_COMPLETE) {
+        this.resendFullStateAsRepair();
         this.onCatchupComplete?.();
       } else {
         Y.applyUpdate(this.doc, payload, this);
@@ -116,6 +117,22 @@ export class SyncClient {
       }
       this.setStatus(event.code === 1000 ? "disconnected" : "error");
     };
+  }
+
+  /**
+   * Sendet den kompletten aktuellen Doc-Zustand als ein einzelnes zusaetzliches Update, sobald
+   * der Late-Joiner-Catchup abgeschlossen ist (P0-Fix, s. docs/sync-comparison-review-2026-09-18.md
+   * "Offline updates are silently lost"): `doc.on("update")` sendet nur, WAEHREND ein Socket
+   * existiert - ein Edit zwischen `disconnect()` und dem naechsten erfolgreichen `connect()`
+   * (Verbindungsabbruch, Obsidian-Neustart mit noch ungespeichertem Journal-Replay, o.ä.) wurde
+   * bisher endgueltig verworfen, weil Yjs "update" fuer laengst vergangene Aenderungen nie erneut
+   * feuert. Ein volles `encodeStateAsUpdate` ist bei Yjs idempotent anwendbar (bereits bekannte
+   * CRDT-Structs werden beim Empfaenger uebersprungen) - erneutes Anwenden auf Server/Peers, die
+   * den Stand schon kennen, ist ein No-Op, kein Duplikat. Kein Server-Protokoll-Umbau noetig: der
+   * Server bleibt "dumm" (ADR 0002) und sieht nur ein weiteres opakes Update-Blob.
+   */
+  private resendFullStateAsRepair(): void {
+    this.send(MESSAGE_TYPE_DOC_UPDATE, Y.encodeStateAsUpdate(this.doc));
   }
 
   disconnect(): void {
