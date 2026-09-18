@@ -25,6 +25,7 @@ class FakeRealSocket implements WebSocketLike {
   onerror: ((ev: Event) => void) | null = null;
   readonly sent: Uint8Array[] = [];
   isOpen = false;
+  closeCallCount = 0;
 
   send(data: ArrayBuffer): void {
     if (!this.isOpen) {
@@ -34,6 +35,7 @@ class FakeRealSocket implements WebSocketLike {
   }
 
   close(): void {
+    this.closeCallCount += 1;
     this.isOpen = false;
     this.onclose?.({ code: 1000, reason: "closed" } as CloseEvent);
   }
@@ -390,6 +392,36 @@ describe("MultiplexedTransport", () => {
       await Promise.resolve();
       await Promise.resolve();
 
+      expect(createRealSocket).not.toHaveBeenCalled();
+    });
+
+    it("should_closeAndDiscardTheSocket_when_destroyHappensWhileTheTicketFetchIsStillPending", async () => {
+      // Regression (Codex-Verifikationsreview, s. docs/sync-comparison-review-2026-09-18.md
+      // Nachfolge-Report /tmp/codex-research/theoretical-optimum-report.md, Fund #7):
+      // ensureRealSocketConnecting prueft `destroyed` nur VOR dem `await this.getUrl()` - laeuft
+      // destroy() waehrend dieses Awaits, war der Ticket-Abruf schon "durch" die fruehe Pruefung
+      // und erzeugte danach ungeprueft trotzdem ein echtes Socket. Ein Logout waehrend eines noch
+      // ausstehenden Ticket-Requests hinterliess so genau die Verbindung, die destroy() eigentlich
+      // beenden sollte.
+      const realSocket = new FakeRealSocket();
+      const createRealSocket = vi.fn().mockReturnValue(realSocket);
+      let resolveUrl: (url: string) => void = () => {};
+      const pendingUrl = new Promise<string>((resolve) => {
+        resolveUrl = resolve;
+      });
+      const transport = new MultiplexedTransport(() => pendingUrl, createRealSocket, { sleep: vi.fn() });
+
+      transport.createVirtualSocket(NOTE_ID_A);
+      await Promise.resolve();
+      transport.destroy();
+      resolveUrl("wss://example.invalid");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // The pending ticket fetch must not be allowed to construct a real socket after destroy()
+      // already ran - creating one and immediately closing it would also be acceptable, but the
+      // implementation simply never constructs it once destroyed is observed post-await.
       expect(createRealSocket).not.toHaveBeenCalled();
     });
 
