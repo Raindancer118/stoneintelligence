@@ -111,6 +111,15 @@ export default class StoneIntelligencePlugin extends Plugin {
   private readonly dedupeTokenRefresh = dedupeInFlight<StoredTokens>();
   private readonly liveBindingCompartment = new Compartment();
   private liveBoundPath: string | null = null;
+  /**
+   * Monoton wachsender Generation-Zaehler gegen den P1-Fund "Obsidian editor binding can target
+   * the wrong file/view" (s. docs/sync-comparison-review-2026-09-18.md): `file-open` feuert bei
+   * schnellem A-zu-B-Wechsel zwei ueberlappende, unsequenzierte `updateLiveEditorBinding`-Aufrufe
+   * - ohne dieses Gate konnte der spaeter GESTARTETE, aber wegen `startSync`s Await frueher
+   * FERTIGE Aufruf fuer A den View ueberschreiben, NACHDEM der Aufruf fuer B bereits korrekt
+   * gebunden hatte - der Editor zeigte dann Notiz B an, band aber tatsaechlich an Notiz As Y.Text.
+   */
+  private liveBindGeneration = 0;
   private statusBarItem!: HTMLElement;
   private pendingAuthCallback: PendingAuthCallback | null = null;
   /**
@@ -659,6 +668,7 @@ export default class StoneIntelligencePlugin extends Plugin {
    * Hintergrund-Notes bleiben beim Volltext-Sync - nur der aktive Editor bekommt yCollab.
    */
   private async updateLiveEditorBinding(file: TFile | null): Promise<void> {
+    const generation = ++this.liveBindGeneration;
     const view = this.activeEditorView();
 
     if (this.liveBoundPath) {
@@ -678,6 +688,13 @@ export default class StoneIntelligencePlugin extends Plugin {
     }
 
     await this.startSync(file, true);
+    if (generation !== this.liveBindGeneration) {
+      // Ein neuerer Aufruf (ein weiterer Datei-/Ansichtswechsel waehrend dieses Awaits) hat die
+      // Zustaendigkeit fuer `liveBoundPath`/den Compartment bereits uebernommen oder wird das
+      // gleich tun - hier NICHTS mehr anfassen, sonst ueberschreibt dieser veraltete Aufruf dessen
+      // korrektes Ergebnis mit dem FALSCHEN Y.Text fuer den inzwischen angezeigten View.
+      return;
+    }
     const session = this.sessions.get(file.path);
     if (!session) {
       view.dispatch({ effects: this.liveBindingCompartment.reconfigure([]) });
