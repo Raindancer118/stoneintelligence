@@ -26,10 +26,12 @@ import org.springframework.web.socket.handler.BinaryWebSocketHandler;
  * jede Notiz ihre eigene WebSocket-Verbindung, ein Vault mit vielen Notizen hat auf manchen
  * Plattformen (Mobile) die Verbindungen des Betriebssystems/der WebView ausgeschoepft.
  *
- * <p>Die Berechtigungspruefung ({@link Permission#READ}) findet jetzt bei JOIN statt (frueher:
- * bei Ticket-Ausstellung) - genau EINMAL pro Notiz, nicht pro Nachricht (dieselbe bekannte
- * Grenze wie vorher: der Relay unterscheidet einzelne Update-/Awareness-Nachrichten nicht nach
- * Lese-/Schreibrecht).
+ * <p>Die Berechtigungspruefung findet bei JOIN statt (frueher: bei Ticket-Ausstellung), genau
+ * EINMAL pro Notiz, nicht pro Nachricht: {@link Permission#READ} entscheidet, ob ueberhaupt
+ * gejoint werden darf (Catchup, Awareness), {@link Permission#WRITE} zusaetzlich, ob Dokument-
+ * Updates von dieser Session akzeptiert werden ({@link #writableNotesBySession}) - ehemals ein
+ * P0-Sicherheitsbug (s. {@code docs/sync-comparison-review-2026-09-18.md}): jeder gejointe
+ * Client durfte schreiben, READ war effektiv WRITE.
  */
 @Component
 public class SyncWebSocketHandler extends BinaryWebSocketHandler {
@@ -40,6 +42,12 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
 
     /** Pro Session (WS-Verbindung) die aktuell gejointen Notiz-Raeume - Grundlage fuer Autorisierung und Cleanup. */
     private final Map<String, Set<NoteId>> joinedNotesBySession = new ConcurrentHashMap<>();
+    /**
+     * Pro Session die gejointen Notizen, fuer die der Actor zusaetzlich {@link Permission#WRITE}
+     * hat - getrennt von {@link #joinedNotesBySession} (das nur READ voraussetzt), weil sonst
+     * jeder Join automatisch Schreibrecht gewaehrt haette (s. Klassendoc).
+     */
+    private final Map<String, Set<NoteId>> writableNotesBySession = new ConcurrentHashMap<>();
 
     public SyncWebSocketHandler(SyncRelayService relay, NoteRepository notes, VaultAccessGuard access) {
         this.relay = relay;
@@ -50,6 +58,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         joinedNotesBySession.put(session.getId(), ConcurrentHashMap.newKeySet());
+        writableNotesBySession.put(session.getId(), ConcurrentHashMap.newKeySet());
     }
 
     @Override
@@ -74,7 +83,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
                 }
             }
             default -> {
-                if (hasJoined(session, frame.noteId())) {
+                if (hasWriteAccess(session, frame.noteId())) {
                     relay.onUpdate(frame.noteId(), syncSession, frame.payload(), isCiphertextNote(frame.noteId()));
                 }
             }
@@ -84,9 +93,12 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     /**
      * Prueft READ-Berechtigung auf die konkrete Notiz (Vault + Pfad, s. {@link VaultAccessGuard})
      * und traegt den Raum bei Erfolg als gejoint ein. Existiert die Notiz nicht in diesem Vault
-     * oder fehlt die Berechtigung, passiert einfach nichts (kein Join, kein Fehler-Frame) - der
-     * Client bekommt schlicht keinen Catchup und keine Updates fuer diese NoteId, ohne dass ein
-     * Rueckschluss moeglich ist, WARUM (existiert nicht vs. keine Berechtigung).
+     * oder fehlt die READ-Berechtigung, passiert einfach nichts (kein Join, kein Fehler-Frame) -
+     * der Client bekommt schlicht keinen Catchup und keine Updates fuer diese NoteId, ohne dass
+     * ein Rueckschluss moeglich ist, WARUM (existiert nicht vs. keine Berechtigung). Ob die
+     * Session zusaetzlich WRITE hat, wird separat (nicht-werfend) geprueft und in {@link
+     * #writableNotesBySession} vermerkt - ein reiner Leser joint erfolgreich (sieht Catchup +
+     * Live-Updates), darf aber keine eigenen Updates einspielen (s. {@link #hasWriteAccess}).
      */
     private void handleJoin(WebSocketSession session, NoteId noteId, SyncSession syncSession) {
         var vaultId = vaultIdOf(session);
@@ -101,11 +113,18 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             return;
         }
         joinedNotesBySession.get(session.getId()).add(noteId);
+        if (hasPermission(vaultId, actor, Permission.WRITE, note.get().path())) {
+            writableNotesBySession.get(session.getId()).add(noteId);
+        }
         relay.onJoin(noteId, syncSession);
     }
 
     private void handleLeave(WebSocketSession session, NoteId noteId, SyncSession syncSession) {
         var joined = joinedNotesBySession.get(session.getId());
+        var writable = writableNotesBySession.get(session.getId());
+        if (writable != null) {
+            writable.remove(noteId);
+        }
         if (joined != null && joined.remove(noteId)) {
             relay.onLeave(noteId, syncSession);
         }
@@ -116,8 +135,23 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         return joined != null && joined.contains(noteId);
     }
 
+    private boolean hasWriteAccess(WebSocketSession session, NoteId noteId) {
+        var writable = writableNotesBySession.get(session.getId());
+        return writable != null && writable.contains(noteId);
+    }
+
+    private boolean hasPermission(VaultId vaultId, String actor, Permission permission, String path) {
+        try {
+            access.require(vaultId, actor, permission, path);
+            return true;
+        } catch (ForbiddenException denied) {
+            return false;
+        }
+    }
+
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        writableNotesBySession.remove(session.getId());
         var joined = joinedNotesBySession.remove(session.getId());
         if (joined == null) {
             return;
