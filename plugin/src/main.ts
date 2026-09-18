@@ -162,9 +162,30 @@ export default class StoneIntelligencePlugin extends Plugin {
       if (error instanceof TokenRefreshRejectedError) {
         this.settings.tokens = null;
         await this.saveData(this.settings);
+        this.stopAllSyncDueToAuthLoss();
       }
       throw error;
     }
+  }
+
+  /**
+   * Reisst die geteilte Verbindung und alle Notiz-Sessions ab, sobald feststeht, dass die
+   * Anmeldung weg ist (Logout ODER eine definitive Refresh-Ablehnung) - ehemals ein P1-Bug (s.
+   * docs/sync-comparison-review-2026-09-18.md "Logout/terminal auth failure leaves the
+   * authorized socket alive"): weder `logout()` noch eine terminale Token-Ablehnung ruehrten
+   * bisher den bereits per Ticket authentifizierten physischen Socket an - der lief unveraendert
+   * weiter (inkl. seines 2-Sekunden-Reconnect-Loops gegen einen inzwischen ungueltigen
+   * Ticket-Endpunkt), bis der Nutzer sich zufaellig erneut anmeldete. `this.transport` wird auf
+   * `null` gesetzt statt nur zerstoert - eine zerstoerte Instanz ist nicht wiederverwendbar, s.
+   * deren `destroy()`-Doc; `ensureTransport()` erzeugt bei Bedarf (z. B. nach erneutem Login)
+   * automatisch eine frische.
+   */
+  private stopAllSyncDueToAuthLoss(): void {
+    for (const path of [...this.sessions.keys()]) {
+      this.stopSync(path);
+    }
+    this.transport?.destroy();
+    this.transport = null;
   }
 
   /**
@@ -190,6 +211,7 @@ export default class StoneIntelligencePlugin extends Plugin {
   async logout(): Promise<void> {
     this.settings.tokens = null;
     await this.saveData(this.settings);
+    this.stopAllSyncDueToAuthLoss();
   }
 
   /** Wartet auf den `obsidian://`-Redirect (Mobile) - der Protokoll-Handler ist in {@link onload} registriert. */

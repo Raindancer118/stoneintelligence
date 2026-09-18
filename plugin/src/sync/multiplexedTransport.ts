@@ -95,6 +95,15 @@ export class MultiplexedTransport {
   private readonly virtualSockets = new Map<string, VirtualSocket>();
   private readonly joinQueue: string[] = [];
   private draining = false;
+  /**
+   * Endgueltig heruntergefahren (Logout/terminale Auth-Ablehnung/Plugin-Unload) - unterscheidet
+   * sich von einem gewoehnlichen Verbindungsabbruch dadurch, dass NIE wieder automatisch neu
+   * verbunden wird. Ohne das lief der 2-Sekunden-Reconnect-Loop nach einem Logout unveraendert
+   * weiter und haemmerte mit dem (jetzt ungueltigen) Ticket-Endpunkt weiter auf den Server ein
+   * (P1-Fund, s. docs/sync-comparison-review-2026-09-18.md "Logout/terminal auth failure leaves
+   * the authorized socket alive").
+   */
+  private destroyed = false;
 
   private readonly joinStaggerMs: number;
   private readonly reconnectDelayMs: number;
@@ -117,6 +126,9 @@ export class MultiplexedTransport {
    */
   createVirtualSocket = (noteId: string, options: { priority?: boolean } = {}): WebSocketLike => {
     const vs = new VirtualSocket(noteId, this);
+    if (this.destroyed) {
+      return vs;
+    }
     this.virtualSockets.set(noteId, vs);
     void this.ensureRealSocketConnecting();
     if (options.priority) {
@@ -134,7 +146,7 @@ export class MultiplexedTransport {
    * (erfolgreichen ODER fehlgeschlagenen) Redemption-Versuch bereits verbraucht.
    */
   private async ensureRealSocketConnecting(): Promise<void> {
-    if (this.realSocket || this.connecting) {
+    if (this.destroyed || this.realSocket || this.connecting) {
       return;
     }
     this.connecting = true;
@@ -193,14 +205,30 @@ export class MultiplexedTransport {
 
   /** Automatischer Reconnect, solange noch mindestens eine Notiz verbunden bleiben will. */
   private scheduleReconnectIfNeeded(): void {
-    if (this.virtualSockets.size === 0) {
+    if (this.destroyed || this.virtualSockets.size === 0) {
       return;
     }
     void this.sleep(this.reconnectDelayMs).then(() => {
-      if (this.virtualSockets.size > 0 && !this.realSocket) {
+      if (!this.destroyed && this.virtualSockets.size > 0 && !this.realSocket) {
         void this.ensureRealSocketConnecting();
       }
     });
+  }
+
+  /**
+   * Beendet die geteilte Verbindung endgueltig - kein weiterer automatischer Reconnect, egal was
+   * als naechstes passiert. Aufzurufen bei Logout, einer terminalen (nicht-transienten)
+   * Auth-Ablehnung, oder Plugin-Unload. Danach ist dieser Transport nicht mehr nutzbar; fuer eine
+   * neue Verbindung (z. B. nach erneutem Login) wird eine frische `MultiplexedTransport`-Instanz
+   * gebraucht.
+   */
+  destroy(): void {
+    this.destroyed = true;
+    this.virtualSockets.clear();
+    this.joinQueue.length = 0;
+    this.realSocket?.close();
+    this.realSocket = null;
+    this.isOpen = false;
   }
 
   private async drainJoinQueue(): Promise<void> {
