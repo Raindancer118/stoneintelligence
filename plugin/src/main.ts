@@ -214,6 +214,16 @@ export default class StoneIntelligencePlugin extends Plugin {
         this.settings.tokens = null;
         await this.saveData(this.settings);
         this.stopAllSyncDueToAuthLoss();
+        // Aktiv melden, nicht nur die Statusleiste von "angemeldet" auf "nicht angemeldet"
+        // umspringen lassen: der Sync steht ab hier vollstaendig still, und ohne Hinweis war der
+        // einzige Beleg dafuer eine Fehlermeldung in der Entwicklerkonsole (live so passiert).
+        // 0 = bleibt stehen, bis sie weggeklickt wird - eine nach 5s verschwindende Meldung
+        // wuerde genau dann uebersehen, wenn sie auftritt (beim Start, vor dem ersten Blick).
+        new Notice(
+          "StoneIntelligence: Anmeldung abgelaufen, Sync gestoppt. Bitte ueber den Befehl "
+            + "\"StoneIntelligence: Anmelden\" (oder die Plugin-Einstellungen) neu anmelden.",
+          0,
+        );
       }
       throw error;
     }
