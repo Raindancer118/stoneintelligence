@@ -161,17 +161,25 @@ describe("SyncClient", () => {
     });
 
     it("should_notClearRemoteAwareness_when_theSocketClosesBecauseTheNoteWasDeleted", () => {
-      // TYPE_NOTE_DELETED is handled by onNoteDeleted entirely (the session is torn down by the
-      // caller) - clearing awareness here would be redundant, not wrong either way, but the
-      // early-return path must still exist and must not throw.
-      const socket = new FakeWebSocket();
-      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      // TYPE_NOTE_DELETED is handled by onNoteDeleted entirely - the caller (main.ts
+      // handleRemoteNoteDeleted) tears the whole session down via stopSync()/disconnect(), which
+      // already clears awareness there. Clearing it a second time here would be redundant, not
+      // wrong - but this test must actually prove that path is untouched, not just that nothing
+      // throws (flagged as vacuous by an independent second-pass review).
+      const [socketA, socketB] = FakeWebSocket.pair();
+      const clientA = new SyncClient("wss://example.invalid/ws/sync", () => socketA);
+      const clientB = new SyncClient("wss://example.invalid/ws/sync", () => socketB);
       const onNoteDeleted = vi.fn();
-      client.onNoteDeleted = onNoteDeleted;
-      client.connect();
+      clientB.onNoteDeleted = onNoteDeleted;
+      clientA.connect();
+      clientB.connect();
+      clientA.awareness.setLocalStateField("cursor", { pos: 42 });
+      expect(clientB.awareness.getStates().has(clientA.doc.clientID)).toBe(true);
 
-      expect(() => socket.remoteClose(CLOSE_CODE_NOTE_DELETED, "note deleted")).not.toThrow();
+      socketB.remoteClose(CLOSE_CODE_NOTE_DELETED, "note deleted");
+
       expect(onNoteDeleted).toHaveBeenCalledTimes(1);
+      expect(clientB.awareness.getStates().has(clientA.doc.clientID)).toBe(true);
     });
 
     it("should_republishLocalAwarenessState_when_catchupCompletesAfterAReconnect", () => {

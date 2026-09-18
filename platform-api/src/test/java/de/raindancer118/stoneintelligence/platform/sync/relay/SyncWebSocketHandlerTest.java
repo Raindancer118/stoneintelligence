@@ -104,4 +104,26 @@ class SyncWebSocketHandlerTest {
 
         assertThat(snapshotStore.listSince(note.id(), 0)).hasSize(1);
     }
+
+    @Test
+    void should_notAcceptFurtherDocUpdates_forANoteAfterItWasDeleted() {
+        // Regression (Codex-Verifikationsreview des Security-Fixes, s.
+        // /tmp/codex-research/theoretical-optimum-report.md Fund #1): notifyNoteDeleted raeumte
+        // nur joinedNotesBySession auf, NIE writableNotesBySession - der separate WRITE-Cache
+        // ueberlebte die Loeschung und liess eine (fehlerhafte/boeswillige) Session weiter
+        // Updates fuer eine laengst geloeschte NoteId persistieren.
+        var vaultId = VaultId.newId();
+        var note = notes.create(vaultId, "shared.md", NoteLevel.of(1), "creator");
+        var role = authorization.createRole(vaultId, "writer", Set.of(Permission.READ, Permission.WRITE));
+        var group = authorization.createGroup(vaultId, "writers");
+        authorization.assignRole(group.id(), role.id());
+        authorization.addMember(group.id(), "writer-actor");
+        var writer = connect(vaultId, "writer-actor");
+        send(writer, SyncFrame.TYPE_JOIN, note.id(), new byte[0]);
+
+        relay.onNoteDeleted(note.id());
+        send(writer, SyncFrame.TYPE_DOC_UPDATE, note.id(), "update after deletion".getBytes());
+
+        assertThat(snapshotStore.listSince(note.id(), 0)).isEmpty();
+    }
 }

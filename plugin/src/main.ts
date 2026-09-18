@@ -344,6 +344,12 @@ export default class StoneIntelligencePlugin extends Plugin {
     for (const path of [...this.sessions.keys()]) {
       this.stopSync(path);
     }
+    // OHNE das blieb der physische Socket offen, wenn beim Unload gerade null Notizen aktiv
+    // gejoint waren (`leave()` schliesst ihn nur, wenn `virtualSockets` dadurch leer wird UND
+    // ueberhaupt eine Notiz aktiv war - der Transport selbst kannte "Plugin wird entladen" nicht,
+    // s. Codex-Verifikationsreview des Auth-Teardown-Fixes).
+    this.transport?.destroy();
+    this.transport = null;
   }
 
   async activateStatusView(): Promise<void> {

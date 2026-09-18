@@ -212,6 +212,15 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             if (joined != null) {
                 joined.remove(noteId);
             }
+            // OHNE das ueberlebte der separate WRITE-Cache die Loeschung (P0-Sicherheitsfix in
+            // SyncWebSocketHandler.handleJoin fuehrte diesen zweiten Cache erst ein, s. dessen
+            // Klassendoc) - eine Session haette fuer eine laengst geloeschte NoteId weiter
+            // Dokument-Updates einspielen koennen, obwohl sie laut hasJoined() nicht mal mehr
+            // gejoint war (Fund aus der Codex-Verifikationsreview des Security-Fixes).
+            var writable = writableNotesBySession.get(session.getId());
+            if (writable != null) {
+                writable.remove(noteId);
+            }
             send(SyncFrame.TYPE_NOTE_DELETED, noteId, new byte[0]);
         }
 
