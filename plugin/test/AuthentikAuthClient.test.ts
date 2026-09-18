@@ -292,4 +292,34 @@ describe("AuthentikAuthClient", () => {
       expect(tokens.refreshToken).toBe("rotated-rt");
     });
   });
+
+  describe("fetchUserInfo", () => {
+    it("liest den Anzeigenamen vom userinfo-Endpunkt mit dem Access-Token", async () => {
+      const fakeFetch = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ name: "Tom Stieh", preferred_username: "tstieh" }),
+      }));
+      const client = new AuthentikAuthClient(
+        { issuerUrl: "https://issuer", clientId: "client" }, fakeFetch as unknown as typeof fetch,
+      );
+
+      const claims = await client.fetchUserInfo("https://issuer/userinfo", "the-access-token");
+
+      expect(claims).toEqual({ name: "Tom Stieh", preferred_username: "tstieh" });
+      expect(fakeFetch).toHaveBeenCalledWith("https://issuer/userinfo", {
+        headers: { Authorization: "Bearer the-access-token" },
+      });
+    });
+
+    it("gibt null zurueck statt zu werfen, wenn der Endpunkt nicht antwortet", async () => {
+      // Der Anzeigename ist reine Kosmetik am Cursor - ein Ausfall hier darf den Sync nie stoppen.
+      const fakeFetch = vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) }));
+      const client = new AuthentikAuthClient(
+        { issuerUrl: "https://issuer", clientId: "client" }, fakeFetch as unknown as typeof fetch,
+      );
+
+      await expect(client.fetchUserInfo("https://issuer/userinfo", "t")).resolves.toBeNull();
+    });
+  });
 });

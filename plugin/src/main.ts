@@ -4,7 +4,7 @@ import { App, MarkdownView, Notice, Platform, Plugin, PluginSettingTab, Setting,
 import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
 import { type SessionSnapshot, StatusView, VIEW_TYPE_STATUS } from "./StatusView";
-import { actorDisplayNameFromAccessToken, pickUserColor } from "./sync/actorIdentity";
+import { actorDisplayNameFromAccessToken, displayNameFromClaims, pickUserColor } from "./sync/actorIdentity";
 import { AuthentikAuthClient, TokenRefreshRejectedError, type StoredTokens } from "./sync/AuthentikAuthClient";
 import { dedupeInFlight } from "./sync/dedupeInFlight";
 import { awaitDesktopRedirectCode, DESKTOP_REDIRECT_URI, openAuthorizationUrlDesktop } from "./sync/desktopAuthRedirect";
@@ -27,6 +27,13 @@ interface StoneIntelligenceSettings {
   oidcClientId: string;
   tokens: StoredTokens | null;
   noteIds: Record<string, string>;
+  /**
+   * Zwischengespeicherter Anzeigename aus Authentiks `userinfo` - Label des eigenen Cursors bei
+   * allen anderen. Bewusst persistiert: er wird einmal nach dem Login aufgeloest, damit das
+   * Anlegen einer Sync-Session keinen Netzwerkaufruf braucht und auch dann einen Namen hat, wenn
+   * das Access-Token gerade abgelaufen/erneuert wird (genau dann stand vorher "Unbekannt").
+   */
+  displayName: string | null;
 }
 
 /** Felder, die eine "Verbindungskonfiguration" ausmachen - alles ausser Tokens/NoteId-Cache. */
@@ -60,6 +67,7 @@ const DEFAULT_SETTINGS: StoneIntelligenceSettings = {
   oidcClientId: "",
   tokens: null,
   noteIds: {},
+  displayName: null,
 };
 
 /**
@@ -250,6 +258,46 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   /**
+   * Anzeigename fuer den eigenen Cursor: bevorzugt der zwischengespeicherte Wert aus Authentiks
+   * `userinfo` (voller Name), sonst der Claim aus dem Access-Token.
+   *
+   * <p>Der Token-Pfad allein reichte nicht: er wurde beim Anlegen JEDER Session synchron aus
+   * `settings.tokens` gelesen - war dort in dem Moment kein Token (z. B. direkt nach einer
+   * abgelehnten Token-Erneuerung, oder bevor der erste Login durch war), stand am Cursor
+   * dauerhaft "Unbekannt", und zwar bis zum Neuaufbau genau dieser Session.
+   */
+  private actorDisplayName(): string {
+    return this.settings.displayName ?? actorDisplayNameFromAccessToken(this.settings.tokens?.accessToken);
+  }
+
+  /**
+   * Loest den Anzeigenamen ueber Authentiks `userinfo` auf, speichert ihn und zieht ihn bei
+   * bereits laufenden Sessions nach - sonst behielten Sessions, die vor der Aufloesung angelegt
+   * wurden, ihr altes Label bis zum naechsten Neuaufbau. Scheitert bewusst leise: ohne Namen
+   * greift {@link actorDisplayName} auf den Token-Claim zurueck, der Sync laeuft unveraendert.
+   */
+  private async refreshDisplayName(): Promise<void> {
+    try {
+      const discovery = await this.authClient.discover();
+      if (!discovery.userinfo_endpoint) {
+        return;
+      }
+      const claims = await this.authClient.fetchUserInfo(discovery.userinfo_endpoint, await this.getAccessToken());
+      const name = displayNameFromClaims(claims);
+      if (name === "Unbekannt") {
+        return;
+      }
+      this.settings.displayName = name;
+      await this.saveData(this.settings);
+      for (const session of this.sessions.values()) {
+        session.client.awareness.setLocalStateField("user", { name, color: pickUserColor(name) });
+      }
+    } catch (error) {
+      console.debug("StoneIntelligence: Anzeigename konnte nicht aufgeloest werden", error);
+    }
+  }
+
+  /**
    * Redirect-Strategie ist plattformabhaengig: Desktop nutzt einen lokalen Loopback-HTTP-Server
    * (Node `http` gibt es nur dort), Mobile nutzt Obsidians eigenes `obsidian://`-URI-Schema ueber
    * `registerObsidianProtocolHandler` (in `onload()` registriert, s. dort).
@@ -266,11 +314,13 @@ export default class StoneIntelligencePlugin extends Plugin {
     const tokens = await this.authClient.login(redirect);
     this.settings.tokens = tokens;
     await this.saveData(this.settings);
+    await this.refreshDisplayName();
     new Notice("StoneIntelligence: Login erfolgreich.");
   }
 
   async logout(): Promise<void> {
     this.settings.tokens = null;
+    this.settings.displayName = null;
     await this.saveData(this.settings);
     this.stopAllSyncDueToAuthLoss();
   }
@@ -404,6 +454,12 @@ export default class StoneIntelligencePlugin extends Plugin {
     });
 
     this.app.workspace.onLayoutReady(() => {
+      // Nachtraeglich fuer bestehende Anmeldungen: wer schon eingeloggt war, als es den
+      // zwischengespeicherten Anzeigenamen noch nicht gab, soll ihn bekommen, ohne sich dafuer
+      // neu anmelden zu muessen.
+      if (this.isLoggedIn() && !this.settings.displayName) {
+        void this.refreshDisplayName();
+      }
       void this.syncAllNotes();
     });
   }
@@ -753,7 +809,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     // Server serverseitig als Actor-Identitaet nutzt; Farbe ist deterministisch aus dem Namen
     // abgeleitet (uebernommen aus dem Vorgaenger-Projekt `stonesync`), damit dieselbe Person auf
     // jedem Geraet/in jeder Session dieselbe Cursor-Farbe hat.
-    const actorName = actorDisplayNameFromAccessToken(this.settings.tokens?.accessToken);
+    const actorName = this.actorDisplayName();
     client.awareness.setLocalStateField("user", { name: actorName, color: pickUserColor(actorName) });
     client.connect();
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actorDisplayNameFromAccessToken, decodeJwtClaims, pickUserColor } from "../src/sync/actorIdentity";
+import { actorDisplayNameFromAccessToken, decodeJwtClaims, displayNameFromClaims, pickUserColor } from "../src/sync/actorIdentity";
 
 /** Baut ein syntaktisch gueltiges (unsigniertes) JWT fuer Tests - Payload beliebig. */
 function fakeJwt(payload: Record<string, unknown>): string {
@@ -54,9 +54,36 @@ describe("actorDisplayNameFromAccessToken", () => {
   });
 
   it("should_returnAFallback_whenTheClaimIsAbsentOrMalformed", () => {
-    const token = fakeJwt({ sub: "abc123" });
-
-    expect(actorDisplayNameFromAccessToken(token)).toBe("Unbekannt");
+    // Nur `sub`: eine stabile Kennung ist als Cursor-Label immer noch besser als "Unbekannt" -
+    // sie unterscheidet zumindest zwei gleichzeitig anwesende Personen voneinander.
+    expect(actorDisplayNameFromAccessToken(fakeJwt({ sub: "abc123" }))).toBe("abc123");
     expect(actorDisplayNameFromAccessToken("garbage")).toBe("Unbekannt");
+    expect(actorDisplayNameFromAccessToken(fakeJwt({}))).toBe("Unbekannt");
+    expect(actorDisplayNameFromAccessToken(null)).toBe("Unbekannt");
+  });
+});
+
+describe("displayNameFromClaims", () => {
+  it("bevorzugt den vollen Anzeigenamen aus Authentik", () => {
+    expect(displayNameFromClaims({ name: "Tom Stieh", preferred_username: "tstieh", email: "t@x.de" }))
+      .toBe("Tom Stieh");
+  });
+
+  it("faellt auf preferred_username zurueck - denselben Claim, den der Server als Actor nutzt", () => {
+    expect(displayNameFromClaims({ preferred_username: "tstieh", email: "t@x.de" })).toBe("tstieh");
+  });
+
+  it("faellt weiter auf E-Mail und schliesslich auf sub zurueck", () => {
+    expect(displayNameFromClaims({ email: "t@x.de", sub: "abc" })).toBe("t@x.de");
+    expect(displayNameFromClaims({ sub: "abc" })).toBe("abc");
+  });
+
+  it("liefert Unbekannt, wenn gar nichts Brauchbares da ist", () => {
+    expect(displayNameFromClaims(null)).toBe("Unbekannt");
+    expect(displayNameFromClaims({})).toBe("Unbekannt");
+    expect(displayNameFromClaims({ name: "" })).toBe("Unbekannt");
+    // Nicht-String-Claims duerfen nicht durchrutschen (Cursor-Label waere sonst "[object Object]").
+    expect(displayNameFromClaims({ name: { given: "Tom" } } as unknown as Record<string, unknown>))
+      .toBe("Unbekannt");
   });
 });

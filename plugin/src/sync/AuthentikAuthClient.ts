@@ -14,6 +14,7 @@ export interface StoredTokens {
 interface OidcDiscoveryDocument {
   authorization_endpoint: string;
   token_endpoint: string;
+  userinfo_endpoint?: string;
 }
 
 interface TokenResponseBody {
@@ -120,6 +121,30 @@ export class AuthentikAuthClient {
       refreshToken: body.refresh_token ?? previousRefreshToken ?? "",
       expiresAt: Date.now() + (body.expires_in - SAFETY_MARGIN_SECONDS) * 1000,
     };
+  }
+
+  /**
+   * Holt die Profil-Claims des angemeldeten Nutzers vom `userinfo`-Endpunkt. Authentik liefert
+   * hier den vollen Anzeigenamen (`name`) - im Gegensatz zum Access-Token ist das unabhaengig
+   * davon, welche Claims der Provider in den Token schreibt, und es steht auch dann zur
+   * Verfuegung, wenn gerade kein dekodierbares JWT vorliegt.
+   *
+   * <p>Gibt bei jedem Fehler `null` zurueck statt zu werfen: der Name ist reine Kosmetik am
+   * Cursor-Label, ein Ausfall des Endpunkts darf den Sync niemals aufhalten.
+   */
+  async fetchUserInfo(userinfoEndpoint: string, accessToken: string): Promise<Record<string, unknown> | null> {
+    try {
+      const response = await this.fetchImpl(userinfoEndpoint, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) {
+        return null;
+      }
+      const body = (await response.json()) as unknown;
+      return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
   }
 
   async discover(): Promise<OidcDiscoveryDocument> {
