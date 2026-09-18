@@ -28,10 +28,24 @@ public class SyncRoomRegistry {
         });
     }
 
+    /**
+     * Isoliert jeden Empfaenger einzeln (P2-Fix, s. docs/sync-comparison-review-2026-09-18.md
+     * "One failed recipient can abort room broadcast"): ein einzelner werfender Versand (z. B.
+     * {@link SyncSessionSendException} bei einer bereits toten, aber noch nicht abgeraeumten
+     * Verbindung) durfte den Broadcast an alle SPAETER in der Iteration folgenden, gesunden
+     * Sessions nicht verhindern - das persistierte Update haette diese sonst erst bei ihrem
+     * naechsten vollstaendigen Catchup gesehen, statt live. Die werfende Session wird zusaetzlich
+     * sofort aus dem Room entfernt, statt bei jedem weiteren Broadcast erneut zu scheitern.
+     */
     public void broadcastExcept(NoteId noteId, SyncSession sender, java.util.function.Consumer<SyncSession> action) {
         for (var session : rooms.getOrDefault(noteId, Set.of())) {
-            if (!session.id().equals(sender.id())) {
+            if (session.id().equals(sender.id())) {
+                continue;
+            }
+            try {
                 action.accept(session);
+            } catch (RuntimeException failedSend) {
+                leave(noteId, session);
             }
         }
     }
