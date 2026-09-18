@@ -355,4 +355,59 @@ describe("MultiplexedTransport", () => {
     expect(() => transport.sendFramed(TYPE_DOC_UPDATE, NOTE_ID_A, new Uint8Array([1]))).not.toThrow();
     expect(realSocket.sent).toHaveLength(0);
   });
+
+  describe("destroy", () => {
+    // Regression (comparison review P1 "Logout/terminal auth failure leaves the authorized
+    // socket alive", docs/sync-comparison-review-2026-09-18.md): logout() only cleared stored
+    // tokens, the already ticket-authenticated physical socket and its infinite 2s reconnect loop
+    // kept running regardless.
+
+    it("should_closeTheRealSocket_when_destroyed", async () => {
+      const realSocket = new FakeRealSocket();
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep: vi.fn() });
+      transport.createVirtualSocket(NOTE_ID_A);
+      await waitUntilConnecting(realSocket);
+      realSocket.open();
+
+      transport.destroy();
+
+      expect(realSocket.isOpen).toBe(false);
+    });
+
+    it("should_stopReconnecting_when_destroyed", async () => {
+      const realSocket = new FakeRealSocket();
+      const createRealSocket = vi.fn().mockReturnValue(realSocket);
+      const sleep = vi.fn().mockResolvedValue(undefined);
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", createRealSocket, { sleep });
+      transport.createVirtualSocket(NOTE_ID_A);
+      await waitUntilConnecting(realSocket);
+      realSocket.open();
+      createRealSocket.mockClear();
+
+      transport.destroy();
+      // Even a stray close event arriving right after destroy() must not schedule a reconnect.
+      realSocket.onclose?.({ code: 1006, reason: "" } as CloseEvent);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(createRealSocket).not.toHaveBeenCalled();
+    });
+
+    it("should_notCreateARealSocket_when_aVirtualSocketIsRequestedAfterDestroy", async () => {
+      const realSocket = new FakeRealSocket();
+      const createRealSocket = vi.fn().mockReturnValue(realSocket);
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", createRealSocket, { sleep: vi.fn() });
+      transport.createVirtualSocket(NOTE_ID_A);
+      await waitUntilConnecting(realSocket);
+      realSocket.open();
+      transport.destroy();
+      createRealSocket.mockClear();
+
+      transport.createVirtualSocket(NOTE_ID_B);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(createRealSocket).not.toHaveBeenCalled();
+    });
+  });
 });
