@@ -8,6 +8,7 @@ import de.raindancer118.stoneintelligence.domain.notelevel.NoteLevel;
 import de.raindancer118.stoneintelligence.platform.audit.AuditService;
 import de.raindancer118.stoneintelligence.platform.identity.Permission;
 import de.raindancer118.stoneintelligence.platform.sync.relay.SyncRelayService;
+import de.raindancer118.stoneintelligence.platform.sync.relay.VaultAnnouncementService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,12 +35,14 @@ public class NoteController {
     private final SyncRelayService relay;
     private final AuditService audit;
     private final VaultAccessGuard access;
+    private final VaultAnnouncementService announcements;
 
-    public NoteController(NoteRepository notes, SyncRelayService relay, AuditService audit, VaultAccessGuard access) {
+    public NoteController(NoteRepository notes, SyncRelayService relay, AuditService audit, VaultAccessGuard access, VaultAnnouncementService announcements) {
         this.notes = notes;
         this.relay = relay;
         this.audit = audit;
         this.access = access;
+        this.announcements = announcements;
     }
 
     @PostMapping("/api/v1/vaults/{vaultId}/notes")
@@ -54,6 +57,9 @@ public class NoteController {
         access.require(vId, actor, Permission.CREATE, request.path());
         var note = notes.create(vId, request.path(), NoteLevel.of(request.noteLevel()), actor);
         audit.record(vId, note.id(), actor, "note.created", java.util.Map.of("path", note.path()));
+        // Sofort an alle verbundenen Geraete des Vaults - ohne das erfuehren sie von einer auf
+        // einem anderen Geraet angelegten Notiz erst beim naechsten vollstaendigen Abgleich.
+        announcements.announceNoteCreated(vId, note.id(), note.path());
         return NoteResponse.from(note);
     }
 
@@ -120,6 +126,7 @@ public class NoteController {
         access.require(vId, actor, Permission.WRITE, before != null ? before : request.path());
         var note = notes.rename(vId, nId, request.path());
         audit.record(vId, nId, actor, "note.renamed", java.util.Map.of("from", String.valueOf(before), "to", note.path()));
+        announcements.announceNoteRenamed(vId, nId, note.path());
         return NoteResponse.from(note);
     }
 
@@ -146,6 +153,13 @@ public class NoteController {
         // ein Client benachrichtigt, bevor der Audit-Eintrag (oder gar die Loeschung selbst bei
         // einem spaeteren Rollback) tatsaechlich feststeht.
         relay.onNoteDeleted(nId);
+        // `relay.onNoteDeleted` erreicht nur Sessions, die genau diese Notiz gejoint haben - seit
+        // das Plugin nur noch geoeffnete Notizen joint, ist das im Regelfall niemand. Die
+        // vault-weite Ankuendigung ist der Weg, auf dem die Loeschung die anderen Geraete
+        // ueberhaupt erreicht.
+        if (path != null) {
+            announcements.announceNoteDeleted(vId, nId, path);
+        }
         return TombstoneResponse.from(tombstone);
     }
 

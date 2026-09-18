@@ -26,8 +26,9 @@ class SyncWebSocketHandlerTest {
     private final FakeSnapshotStore snapshotStore = new FakeSnapshotStore();
     private final SyncRoomRegistry registry = new SyncRoomRegistry();
     private final SyncRelayService relay = new SyncRelayService(snapshotStore, registry);
+    private final VaultAnnouncementService announcements = new VaultAnnouncementService();
     private final SyncWebSocketHandler handler =
-        new SyncWebSocketHandler(relay, notes, new VaultAccessGuard(authorization));
+        new SyncWebSocketHandler(relay, notes, new VaultAccessGuard(authorization), announcements);
 
     private VaultId newReaderOnlyNote(String actor, String path) {
         var vaultId = VaultId.newId();

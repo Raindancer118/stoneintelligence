@@ -36,6 +36,18 @@ public record SyncFrame(byte messageType, NoteId noteId, byte[] payload) {
      */
     public static final byte TYPE_CATCHUP_COMPLETE = 5;
 
+    /**
+     * Server->Client, vault-weit: unter diesem Pfad wurde eine Notiz angelegt / geloescht /
+     * umbenannt (Payload = der Pfad als UTF-8, bei RENAMED der NEUE Pfad). Gehen an ALLE
+     * Verbindungen des Vaults, nicht nur an die eines Notiz-Raums - genau das ist ihr Zweck: seit
+     * das Plugin nur noch geoeffnete Notizen joint, erreicht eine notenskopierte Nachricht die
+     * anderen Geraete nicht mehr (s. {@link VaultAnnouncementService}). Das Wire-Layout bleibt
+     * unveraendert, es kommen nur neue Nachrichtentypen hinzu.
+     */
+    public static final byte TYPE_VAULT_NOTE_CREATED = 6;
+    public static final byte TYPE_VAULT_NOTE_DELETED = 7;
+    public static final byte TYPE_VAULT_NOTE_RENAMED = 8;
+
     public static final int NOTE_ID_LENGTH = 36;
     private static final int HEADER_LENGTH = 1 + NOTE_ID_LENGTH;
 

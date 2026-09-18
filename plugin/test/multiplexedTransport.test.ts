@@ -59,6 +59,11 @@ function frame(type: number, noteId: string, payload: number[] = []): Uint8Array
   return framed;
 }
 
+/** Ein vault-weites Bestandsereignis: Payload ist der Notizpfad als UTF-8. */
+function vaultFrame(type: number, noteId: string, path: string): Uint8Array {
+  return frame(type, noteId, [...new TextEncoder().encode(path)]);
+}
+
 /**
  * Die URL/das Ticket wird jetzt PRO Verbindungsversuch frisch async geholt (Regression-Fix:
  * ein Reconnect mit wiederverwendeter URL scheiterte immer mit 403, weil das eingebettete
@@ -440,6 +445,52 @@ describe("MultiplexedTransport", () => {
       await Promise.resolve();
 
       expect(createRealSocket).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("vault-weite Bestandsereignisse", () => {
+    it("meldet Anlage/Loeschung/Umbenennung auch fuer Notizen, die gar nicht gejoint sind", async () => {
+      // Genau der Zweck dieser Nachrichten: seit nur noch geoeffnete Notizen gejoint werden, gibt
+      // es fuer die betroffene Notiz typischerweise KEINEN virtuellen Socket - die Zustellung darf
+      // deshalb nicht an der Socket-Zuordnung haengen.
+      const events: Array<{ type: number; noteId: string; path: string }> = [];
+      const socket = new FakeRealSocket();
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => socket, {
+        sleep: vi.fn(),
+        onVaultEvent: (type, noteId, path) => events.push({ type, noteId, path }),
+      });
+      transport.createVirtualSocket(NOTE_ID_B);
+      await waitUntilConnecting(socket);
+      socket.open();
+
+      const fremdeNoteId = "22222222-2222-2222-2222-222222222222";
+      socket.deliver(vaultFrame(6, fremdeNoteId, "Ordner/Neu.md"));
+      socket.deliver(vaultFrame(8, fremdeNoteId, "Ordner/Umbenannt.md"));
+      socket.deliver(vaultFrame(7, fremdeNoteId, "Ordner/Umbenannt.md"));
+
+      expect(events).toEqual([
+        { type: 6, noteId: fremdeNoteId, path: "Ordner/Neu.md" },
+        { type: 8, noteId: fremdeNoteId, path: "Ordner/Umbenannt.md" },
+        { type: 7, noteId: fremdeNoteId, path: "Ordner/Umbenannt.md" },
+      ]);
+    });
+
+    it("reicht ein Bestandsereignis NICHT als Dokument-Update an den virtuellen Socket durch", async () => {
+      // Sonst landete der Pfad-Text als vermeintliches Yjs-Update im CRDT der offenen Notiz.
+      const socket = new FakeRealSocket();
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => socket, {
+        sleep: vi.fn(),
+        onVaultEvent: () => undefined,
+      });
+      const vs = transport.createVirtualSocket(NOTE_ID_A);
+      const received: ArrayBuffer[] = [];
+      vs.onmessage = (ev) => received.push(ev.data as ArrayBuffer);
+      await waitUntilConnecting(socket);
+      socket.open();
+
+      socket.deliver(vaultFrame(7, NOTE_ID_A, "Egal.md"));
+
+      expect(received).toHaveLength(0);
     });
   });
 });

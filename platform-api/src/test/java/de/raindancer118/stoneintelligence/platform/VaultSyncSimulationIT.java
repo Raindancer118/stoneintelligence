@@ -68,6 +68,9 @@ class VaultSyncSimulationIT {
      * erwarteten Nutzdaten sehen.
      */
     private static final byte MESSAGE_TYPE_CATCHUP_COMPLETE = 5;
+    private static final byte MESSAGE_TYPE_VAULT_NOTE_CREATED = 6;
+    private static final byte MESSAGE_TYPE_VAULT_NOTE_DELETED = 7;
+    private static final byte MESSAGE_TYPE_VAULT_NOTE_RENAMED = 8;
     private static final int NOTE_ID_LENGTH = 36;
 
     @DynamicPropertySource
@@ -126,6 +129,35 @@ class VaultSyncSimulationIT {
         return json.readValue(response.body(), responseType);
     }
 
+    private HttpResponse<String> patch(String path, Map<String, String> headers, Object body) throws Exception {
+        var builder = HttpRequest.newBuilder(URI.create(baseUrl() + path))
+            .header("Content-Type", "application/json")
+            .method("PATCH", HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)));
+        headers.forEach(builder::header);
+        return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    /**
+     * Gibt {@code subject} Lesezugriff AUSSCHLIESSLICH unterhalb von {@code pathPrefix}: eine
+     * Gruppe mit reiner READ-Rolle, plus zwei Pfadregeln (alles verwehren, den erlaubten Praefix
+     * wieder zulassen - der laengste Praefix gewinnt, s. {@code PathRules}).
+     */
+    private void grantReadOnlyOnPath(String vaultId, String subject, String pathPrefix) throws Exception {
+        var owner = bearerAuth(vaultOwners.get(vaultId));
+        var role = post("/api/v1/vaults/" + vaultId + "/roles", owner,
+            Map.of("name", "leser-" + subject, "permissions", List.of("READ")), Map.class);
+        var group = post("/api/v1/vaults/" + vaultId + "/groups", owner,
+            Map.of("name", "gruppe-" + subject), Map.class);
+        post("/api/v1/vaults/" + vaultId + "/groups/" + group.get("id") + "/members", owner,
+            Map.of("subject", subject), Map.class);
+        post("/api/v1/vaults/" + vaultId + "/groups/" + group.get("id") + "/roles/" + role.get("id"),
+            owner, null, Map.class);
+        post("/api/v1/vaults/" + vaultId + "/path-rules", owner,
+            Map.of("pathPrefix", "", "scopeSubject", subject, "effect", "DENY"), Map.class);
+        post("/api/v1/vaults/" + vaultId + "/path-rules", owner,
+            Map.of("pathPrefix", pathPrefix, "scopeSubject", subject, "effect", "ALLOW"), Map.class);
+    }
+
     private HttpResponse<String> delete(String path, Map<String, String> headers) throws Exception {
         var builder = HttpRequest.newBuilder(URI.create(baseUrl() + path)).DELETE();
         headers.forEach(builder::header);
@@ -138,9 +170,14 @@ class VaultSyncSimulationIT {
         return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
+    /** Vault-Id -> Ersteller, damit Helfer wie {@link #grantReadOnlyOnPath} mit dessen Rechten arbeiten koennen. */
+    private final Map<String, String> vaultOwners = new ConcurrentHashMap<>();
+
     private String createVault(String actor, String name) throws Exception {
         var vault = post("/api/v1/vaults", bearerAuth(actor), Map.of("name", name), Map.class);
-        return (String) vault.get("id");
+        var vaultId = (String) vault.get("id");
+        vaultOwners.put(vaultId, actor);
+        return vaultId;
     }
 
     private String createNote(String actor, String vaultId, String path) throws Exception {
@@ -251,6 +288,81 @@ class VaultSyncSimulationIT {
         void disconnectAbruptly() throws Exception {
             session.close();
         }
+    }
+
+    /**
+     * Der Kern der sofortigen Bestandssynchronisierung: Geraet B hat die betroffene Notiz NICHT
+     * gejoint (seit das Plugin nur noch geoeffnete Notizen joint, ist das der Normalfall) und muss
+     * Anlage, Umbenennung und Loeschung trotzdem sofort erfahren - frueher erfuhr es davon
+     * ueberhaupt nichts und entdeckte die Aenderung erst beim naechsten vollstaendigen Abgleich.
+     */
+    @Test
+    void should_announceNoteCreationToEveryDeviceOfTheVault_evenWhenTheyHaveNotJoinedThatNote() throws Exception {
+        var vaultId = createVault("ivan", "vault-announcements");
+        var deviceB = new Device("ivan");
+        deviceB.connect(vaultId);
+
+        var noteId = createNote("ivan", vaultId, "Ordner/Frisch angelegt.md");
+
+        var announcement = deviceB.handler.awaitFrame(noteId, 15);
+        assertThat(announcement.type()).isEqualTo(MESSAGE_TYPE_VAULT_NOTE_CREATED);
+        assertThat(new String(announcement.payload(), StandardCharsets.UTF_8)).isEqualTo("Ordner/Frisch angelegt.md");
+    }
+
+    @Test
+    void should_announceNoteDeletionToADeviceThatNeverJoinedTheNote() throws Exception {
+        var vaultId = createVault("judy", "vault-announcements-delete");
+        var noteId = createNote("judy", vaultId, "Verschwindet.md");
+
+        var deviceB = new Device("judy");
+        deviceB.connect(vaultId);
+
+        var deleteHeaders = new HashMap<>(bearerAuth("judy"));
+        deleteHeaders.put("X-Operation-Id", "sim-vault-announce-delete");
+        assertThat(delete("/api/v1/vaults/" + vaultId + "/notes/" + noteId, deleteHeaders).statusCode()).isEqualTo(200);
+
+        var announcement = deviceB.handler.awaitFrame(noteId, 15);
+        assertThat(announcement.type()).isEqualTo(MESSAGE_TYPE_VAULT_NOTE_DELETED);
+        assertThat(new String(announcement.payload(), StandardCharsets.UTF_8)).isEqualTo("Verschwindet.md");
+        assertThat(deviceB.session.isOpen()).as("eine Bestandsankuendigung trennt die Verbindung nicht").isTrue();
+    }
+
+    @Test
+    void should_announceNoteRenameWithTheNewPath_toADeviceThatNeverJoinedTheNote() throws Exception {
+        var vaultId = createVault("karl", "vault-announcements-rename");
+        var noteId = createNote("karl", vaultId, "Alt.md");
+
+        var deviceB = new Device("karl");
+        deviceB.connect(vaultId);
+
+        assertThat(patch("/api/v1/vaults/" + vaultId + "/notes/" + noteId, bearerAuth("karl"),
+            Map.of("path", "Ordner/Neu.md")).statusCode()).isEqualTo(200);
+
+        var announcement = deviceB.handler.awaitFrame(noteId, 15);
+        assertThat(announcement.type()).isEqualTo(MESSAGE_TYPE_VAULT_NOTE_RENAMED);
+        assertThat(new String(announcement.payload(), StandardCharsets.UTF_8)).isEqualTo("Ordner/Neu.md");
+    }
+
+    @Test
+    void should_notAnnounceANotePath_toADeviceWithoutReadPermissionOnIt() throws Exception {
+        // Sonst waere die Ankuendigung selbst ein Informationsleck ueber Existenz und Ablage
+        // fremder Notizen - unabhaengig davon, dass der Inhalt geschuetzt bleibt.
+        var vaultId = createVault("lena", "vault-announcements-acl");
+        grantReadOnlyOnPath(vaultId, "mallory", "Erlaubt/");
+
+        var outsider = new Device("mallory");
+        outsider.connect(vaultId);
+
+        var secretNoteId = createNote("lena", vaultId, "Geheim/Verschlusssache.md");
+        var allowedNoteId = createNote("lena", vaultId, "Erlaubt/Sichtbar.md");
+
+        // Die erlaubte Notiz kommt an - das beweist zugleich, dass ueberhaupt zugestellt wird und
+        // der fehlende Frame oben nicht bloss ein Timing-Artefakt ist.
+        var allowed = outsider.handler.awaitFrame(allowedNoteId, 15);
+        assertThat(allowed.type()).isEqualTo(MESSAGE_TYPE_VAULT_NOTE_CREATED);
+        assertThat(outsider.handler.byNote.get(secretNoteId))
+            .as("keine Ankuendigung fuer eine Notiz ausserhalb der erlaubten Pfade")
+            .isNullOrEmpty();
     }
 
     @Test

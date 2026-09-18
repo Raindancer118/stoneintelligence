@@ -12,7 +12,9 @@ import {
   handleMobileRedirectCallback, MOBILE_REDIRECT_ACTION, MOBILE_REDIRECT_URI,
   openAuthorizationUrlMobile, type PendingAuthCallback,
 } from "./sync/mobileAuthRedirect";
-import { MultiplexedTransport } from "./sync/multiplexedTransport";
+import {
+  MultiplexedTransport, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED,
+} from "./sync/multiplexedTransport";
 import { NoteApiClient } from "./sync/NoteApiClient";
 import { planEditorBindings } from "./sync/editorBindingPlan";
 import { OperationJournal } from "./sync/OperationJournal";
@@ -125,6 +127,14 @@ export default class StoneIntelligencePlugin extends Plugin {
    * lostritt (das wuerde die absichtliche Serialisierung wieder aufheben, s. Klassendoc dort).
    */
   private readonly reconcilingPaths = new Set<string>();
+  /**
+   * Pfade, an denen gerade eine vom SERVER angestossene Aenderung ausgefuehrt wird (Loeschen in
+   * den Papierkorb, Umbenennen). Obsidian feuert dafuer dieselben Vault-Events wie fuer eine
+   * echte Nutzeraktion - ohne diesen Guard wuerde das Plugin die gerade empfangene Aenderung
+   * postwendend als eigene Aenderung an den Server zurueckmelden (bei einer Loeschung waere das
+   * ein zweiter DELETE auf eine bereits geloeschte Notiz, beim Umbenennen ein Rueck-Rename).
+   */
+  private readonly serverDrivenPaths = new Set<string>();
   /**
    * Verhindert ueberlappende `pollBackgroundNotes`-Durchlaeufe: bei einem groesseren Vault (oder
    * einer gerade langsamen Verbindung) kann ein einzelner Durchlauf laenger dauern als
@@ -624,6 +634,121 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   /**
+   * Eine Bestandsaenderung aus dem Vault ist eingetroffen (ein anderes Geraet hat eine Notiz
+   * angelegt, geloescht oder umbenannt). Diese Nachrichten erreichen JEDES verbundene Geraet -
+   * anders als die notenskopierten Nachrichten, die nur bei gejointen, also geoeffneten Notizen
+   * ankommen (s. `VaultAnnouncementService` auf der Serverseite).
+   */
+  private async handleVaultEvent(messageType: number, noteId: string, path: string): Promise<void> {
+    try {
+      if (messageType === VAULT_NOTE_CREATED) {
+        await this.applyRemoteNoteCreated(noteId, path);
+      } else if (messageType === VAULT_NOTE_RENAMED) {
+        await this.applyRemoteNoteRenamed(noteId, path);
+      } else if (messageType === VAULT_NOTE_DELETED) {
+        await this.applyRemoteNoteDeleted(noteId, path);
+      }
+    } catch (error) {
+      console.error(`StoneIntelligence: Bestandsereignis fuer "${path}" fehlgeschlagen`, error);
+    }
+  }
+
+  /** Auf einem anderen Geraet angelegt: lokal als leeren Platzhalter anlegen und Inhalt holen. */
+  private async applyRemoteNoteCreated(noteId: string, path: string): Promise<void> {
+    if (this.app.vault.getAbstractFileByPath(path) instanceof TFile) {
+      // Schon da - typischerweise das Geraet, das die Notiz selbst angelegt hat. Die Zuordnung
+      // trotzdem sicherstellen, damit beide Seiten dieselbe NoteId benutzen (Fehlerklasse 5).
+      this.settings.noteIds[path] = noteId;
+      await this.saveSettings();
+      return;
+    }
+    // NoteId VOR dem Anlegen eintragen: der `create`-Vault-Event feuert sonst zuerst und
+    // `ensureNoteId` legte eine ZWEITE Note fuer denselben Pfad an, statt die bestehende zu nutzen.
+    this.settings.noteIds[path] = noteId;
+    await this.saveSettings();
+
+    const folderPath = path.split("/").slice(0, -1).join("/");
+    if (folderPath && !this.app.vault.getAbstractFileByPath(folderPath)) {
+      await this.app.vault.createFolder(folderPath).catch(() => {
+        // Race mit einer anderen gleichzeitig eintreffenden Notiz im selben Ordner - harmlos.
+      });
+    }
+    this.reconcilingPaths.add(path);
+    try {
+      const created = await this.app.vault.create(path, "");
+      await this.syncNoteInBackground(created.path, { preferLocal: false });
+    } finally {
+      this.reconcilingPaths.delete(path);
+    }
+  }
+
+  /** Auf einem anderen Geraet umbenannt: lokal nachziehen, ohne den Rename zurueckzumelden. */
+  private async applyRemoteNoteRenamed(noteId: string, newPath: string): Promise<void> {
+    const oldPath = this.pathForNoteId(noteId);
+    if (!oldPath || oldPath === newPath) {
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(oldPath);
+    if (!(file instanceof TFile)) {
+      return;
+    }
+
+    this.stopSync(oldPath);
+    delete this.settings.noteIds[oldPath];
+    this.settings.noteIds[newPath] = noteId;
+    await this.saveSettings();
+
+    const folderPath = newPath.split("/").slice(0, -1).join("/");
+    if (folderPath && !this.app.vault.getAbstractFileByPath(folderPath)) {
+      await this.app.vault.createFolder(folderPath).catch(() => undefined);
+    }
+    this.serverDrivenPaths.add(oldPath);
+    this.serverDrivenPaths.add(newPath);
+    try {
+      await this.app.fileManager.renameFile(file, newPath);
+    } finally {
+      this.serverDrivenPaths.delete(oldPath);
+      this.serverDrivenPaths.delete(newPath);
+    }
+    await this.syncOpenEditorBindings();
+  }
+
+  /**
+   * Auf einem anderen Geraet geloescht: lokale Datei in den Papierkorb (Toms Entscheidung -
+   * echtes Sync-Verhalten, aber wiederherstellbar). `fileManager.trashFile` respektiert dabei
+   * Obsidians eigene Einstellung "Geloeschte Dateien" (Obsidian-.trash oder System-Papierkorb),
+   * statt eine eigene, vom Nutzer nicht kontrollierbare Loeschpolitik zu erfinden.
+   */
+  private async applyRemoteNoteDeleted(noteId: string, path: string): Promise<void> {
+    const localPath = this.pathForNoteId(noteId) ?? path;
+    this.stopSync(localPath);
+    delete this.settings.noteIds[localPath];
+    await this.saveSettings();
+
+    const file = this.app.vault.getAbstractFileByPath(localPath);
+    if (!(file instanceof TFile)) {
+      return;
+    }
+    this.serverDrivenPaths.add(localPath);
+    try {
+      await this.app.fileManager.trashFile(file);
+    } finally {
+      this.serverDrivenPaths.delete(localPath);
+    }
+    new Notice(`StoneIntelligence: "${localPath}" wurde auf einem anderen Geraet geloescht und in den Papierkorb verschoben.`);
+  }
+
+  /** Lokaler Pfad, unter dem diese NoteId gerade gefuehrt wird - die Zuordnung ist pfad-indiziert. */
+  private pathForNoteId(noteId: string): string | null {
+    for (const [path, id] of Object.entries(this.settings.noteIds)) {
+      if (id === noteId) {
+        return path;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Laedt Notizen herunter, die auf dem Server existieren, aber lokal (noch) fehlen - der Fall,
    * der sonst komplett unbehandelt waere: ein neues/leeres Vault auf einem zweiten Geraet bekaeme
    * NIE etwas heruntergeladen, weil der Hintergrund-Poll nur ueber bereits BEKANNTE (in
@@ -687,7 +812,9 @@ export default class StoneIntelligencePlugin extends Plugin {
    */
   private ensureTransport(): MultiplexedTransport {
     if (!this.transport) {
-      this.transport = new MultiplexedTransport(() => this.issueFreshWsUrl(), (url) => new WebSocket(url));
+      this.transport = new MultiplexedTransport(() => this.issueFreshWsUrl(), (url) => new WebSocket(url), {
+        onVaultEvent: (type, noteId, path) => void this.handleVaultEvent(type, noteId, path),
+      });
     }
     return this.transport;
   }
@@ -1101,6 +1228,12 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   private async handleLocalDelete(file: TFile): Promise<void> {
+    if (this.serverDrivenPaths.has(file.path)) {
+      // Diese Loeschung haben WIR gerade als Reaktion auf eine Server-Ankuendigung ausgefuehrt -
+      // sie jetzt als eigene Aenderung zurueckzumelden waere ein zweiter DELETE auf eine bereits
+      // geloeschte Notiz.
+      return;
+    }
     const noteId = this.settings.noteIds[file.path];
     this.stopSync(file.path);
     if (!noteId || !this.settings.vaultId) {
@@ -1114,6 +1247,10 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   private async handleLocalRename(file: TFile, oldPath: string): Promise<void> {
+    if (this.serverDrivenPaths.has(oldPath) || this.serverDrivenPaths.has(file.path)) {
+      // Von uns selbst ausgefuehrter Nachzug einer Server-Umbenennung - nicht zurueckmelden.
+      return;
+    }
     const noteId = this.settings.noteIds[oldPath];
     if (!noteId || !this.settings.vaultId) {
       // Datei war noch nicht getrackt (z. B. Umbenennung direkt nach App-Start, bevor der
