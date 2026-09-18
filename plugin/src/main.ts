@@ -4,7 +4,7 @@ import { App, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile } from 
 import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
 import { type SessionSnapshot, StatusView, VIEW_TYPE_STATUS } from "./StatusView";
-import { AuthentikAuthClient, type StoredTokens } from "./sync/AuthentikAuthClient";
+import { AuthentikAuthClient, TokenRefreshRejectedError, type StoredTokens } from "./sync/AuthentikAuthClient";
 import { dedupeInFlight } from "./sync/dedupeInFlight";
 import { awaitDesktopRedirectCode, DESKTOP_REDIRECT_URI, openAuthorizationUrlDesktop } from "./sync/desktopAuthRedirect";
 import {
@@ -139,11 +139,15 @@ export default class StoneIntelligencePlugin extends Plugin {
   };
 
   /**
-   * Schlaegt der Refresh fehl (z. B. weil der Token bereits andernorts verbraucht/rotiert
-   * wurde), werden die gespeicherten Tokens geloescht statt sie unveraendert zu lassen - sonst
-   * wuerde JEDER weitere Aufruf denselben, bereits ungueltigen Refresh-Token erneut versuchen
-   * und ewig mit HTTP 400 scheitern. Danach zeigt die naechste Statusabfrage klar "nicht
-   * angemeldet" statt eines stillen Endlos-Fehlers.
+   * Loescht die gespeicherten Tokens NUR, wenn Authentik den Refresh-Token per HTTP 400/401
+   * definitiv ablehnt (bereits andernorts verbraucht/rotiert, widerrufen, abgelaufen) - das ist
+   * `TokenRefreshRejectedError`, s. AuthentikAuthClient.refreshAccessToken. Jeder andere Fehler
+   * (5xx, Timeout, noch kein Netzwerk beim Obsidian-Start) laesst die Tokens unveraendert und
+   * wirft weiter - sonst loggte ein rein voruebergehender Ausfall den Nutzer bei jedem Neustart
+   * aus (live beobachtet: Obsidian startet, das Plugin versucht den Refresh bevor das
+   * Betriebssystem das Netzwerk bereitgestellt hat, `discover()`/`refreshAccessToken()` schlagen
+   * mit einem Netzwerkfehler fehl, und die alte, undifferenzierte catch-Klausel wertete das
+   * faelschlich als "Refresh-Token ungueltig").
    */
   private async refreshTokens(refreshToken: string): Promise<StoredTokens> {
     try {
@@ -155,8 +159,10 @@ export default class StoneIntelligencePlugin extends Plugin {
       await this.saveData(this.settings);
       return refreshed;
     } catch (error) {
-      this.settings.tokens = null;
-      await this.saveData(this.settings);
+      if (error instanceof TokenRefreshRejectedError) {
+        this.settings.tokens = null;
+        await this.saveData(this.settings);
+      }
       throw error;
     }
   }

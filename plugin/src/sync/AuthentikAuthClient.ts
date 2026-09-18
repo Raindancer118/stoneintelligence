@@ -23,6 +23,21 @@ interface TokenResponseBody {
 }
 
 /**
+ * Wird ausschliesslich geworfen, wenn Authentik den Refresh-Grant mit HTTP 400/401 ablehnt - das
+ * ist die einzige Antwort, die tatsaechlich bedeutet "dieser Refresh-Token ist ungueltig"
+ * (abgelaufen, widerrufen, bereits rotiert). Jeder andere Fehler (5xx, Timeout, kein Netzwerk)
+ * sagt nichts ueber die Gueltigkeit des Tokens aus - Aufrufer duerfen NUR bei diesem Fehlertyp
+ * die gespeicherte Anmeldung loeschen, sonst wirft ein voruebergehender Ausfall (z. B. noch kein
+ * Netzwerk beim Obsidian-Start) den Nutzer bei jedem Neustart aus der Anmeldung.
+ */
+export class TokenRefreshRejectedError extends Error {
+  constructor(status: number) {
+    super(`token refresh rejected: HTTP ${status}`);
+    this.name = "TokenRefreshRejectedError";
+  }
+}
+
+/**
  * OAuth2 Authorization Code + PKCE gegen Authentik (Plan.md Abschnitt 4.4: "SSO/OIDC als
  * einziger Auth-Pfad fuer Menschen ... Plugin-Login"). Kein Client-Secret - das Plugin ist ein
  * Public Client, PKCE (S256) ersetzt das Secret als Schutz gegen Code-Interception.
@@ -152,6 +167,9 @@ export class AuthentikAuthClient {
       }).toString(),
     });
     if (!response.ok) {
+      if (response.status === 400 || response.status === 401) {
+        throw new TokenRefreshRejectedError(response.status);
+      }
       throw new Error(`token refresh failed: HTTP ${response.status}`);
     }
     return AuthentikAuthClient.toStoredTokens((await response.json()) as TokenResponseBody, refreshToken);

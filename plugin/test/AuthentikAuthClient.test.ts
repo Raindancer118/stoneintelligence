@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AuthentikAuthClient } from "../src/sync/AuthentikAuthClient";
+import { AuthentikAuthClient, TokenRefreshRejectedError } from "../src/sync/AuthentikAuthClient";
 
 const TEST_REDIRECT_URI = "http://127.0.0.1:42813/callback";
 
@@ -218,6 +218,40 @@ describe("AuthentikAuthClient", () => {
       );
 
       await expect(client.refreshAccessToken("https://issuer/token", "rt")).rejects.toThrow("401");
+    });
+
+    it("should_throwTokenRefreshRejectedError_when_authentikDefinitivelyRejectsTheRefreshToken", async () => {
+      // 400/401 on the refresh grant means Authentik itself declared the refresh token invalid
+      // (expired, revoked, already-rotated) - only THIS case justifies wiping the stored login.
+      for (const status of [400, 401]) {
+        const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status });
+        const client = new AuthentikAuthClient(
+          { issuerUrl: "https://issuer", clientId: "client" }, fakeFetch as unknown as typeof fetch,
+        );
+
+        await expect(client.refreshAccessToken("https://issuer/token", "rt"))
+          .rejects.toBeInstanceOf(TokenRefreshRejectedError);
+      }
+    });
+
+    it("should_throwAPlainError_notTokenRefreshRejectedError_when_theFailureIsTransient", async () => {
+      // A 5xx (server temporarily down) or a rejected fetch (no network yet at Obsidian startup,
+      // DNS not resolved, offline) says nothing about whether the refresh token itself is still
+      // valid - treating it as a rejection would log the user out on every hiccup, exactly the
+      // "logged out again" bug this guards against.
+      const serverError = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+      const clientForServerError = new AuthentikAuthClient(
+        { issuerUrl: "https://issuer", clientId: "client" }, serverError as unknown as typeof fetch,
+      );
+      await expect(clientForServerError.refreshAccessToken("https://issuer/token", "rt"))
+        .rejects.not.toBeInstanceOf(TokenRefreshRejectedError);
+
+      const networkFailure = vi.fn().mockRejectedValue(new Error("net::ERR_INTERNET_DISCONNECTED"));
+      const clientForNetworkFailure = new AuthentikAuthClient(
+        { issuerUrl: "https://issuer", clientId: "client" }, networkFailure as unknown as typeof fetch,
+      );
+      await expect(clientForNetworkFailure.refreshAccessToken("https://issuer/token", "rt"))
+        .rejects.not.toBeInstanceOf(TokenRefreshRejectedError);
     });
 
     it("should_keepTheOldRefreshToken_when_theProviderOmitsANewOneInTheRefreshResponse", async () => {
