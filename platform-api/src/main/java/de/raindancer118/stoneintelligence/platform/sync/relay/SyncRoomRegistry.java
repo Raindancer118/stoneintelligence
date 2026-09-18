@@ -44,7 +44,11 @@ public class SyncRoomRegistry {
             }
             try {
                 action.accept(session);
-            } catch (RuntimeException failedSend) {
+            } catch (SyncSessionSendException failedSend) {
+                // Bewusst NUR dieser Transport-spezifische Fehlertyp (s. dessen Klassendoc) - ein
+                // breites `catch (RuntimeException)` wuerde auch echte Programmierfehler in
+                // `action` verschlucken und stillschweigend als "toter Empfaenger" fehlinterpretieren
+                // (Fund aus der Codex-Verifikationsreview des Broadcast-Isolations-Fixes).
                 leave(noteId, session);
             }
         }
