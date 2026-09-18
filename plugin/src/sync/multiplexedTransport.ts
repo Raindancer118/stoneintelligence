@@ -152,6 +152,15 @@ export class MultiplexedTransport {
     this.connecting = true;
     try {
       const url = await this.getUrl();
+      if (this.destroyed) {
+        // destroy() lief WAEHREND dieses Awaits (z. B. Logout genau waehrend ein Ticket-Request
+        // unterwegs war) - die fruehe destroyed-Pruefung oben hat das nicht mehr gesehen. Ohne
+        // diesen zweiten Check haette der bereits initiierte Ticket-Abruf trotzdem noch ein
+        // echtes Socket erzeugt und in `this.realSocket` abgelegt, obwohl destroy() laengst
+        // "fertig" war - eine per Logout eigentlich beendete Verbindung waere doch noch
+        // aufgebaut worden (Fund aus dem zweiten Codex-Vergleichsreview).
+        return;
+      }
       const socket = this.createRealSocket(url);
       socket.binaryType = "arraybuffer";
       socket.onopen = () => {
