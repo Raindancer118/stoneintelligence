@@ -1,6 +1,7 @@
 package de.raindancer118.stoneintelligence.platform.sync.relay;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,6 +40,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     private final SyncRelayService relay;
     private final NoteRepository notes;
     private final VaultAccessGuard access;
+    private final VaultAnnouncementService announcements;
 
     /** Pro Session (WS-Verbindung) die aktuell gejointen Notiz-Raeume - Grundlage fuer Autorisierung und Cleanup. */
     private final Map<String, Set<NoteId>> joinedNotesBySession = new ConcurrentHashMap<>();
@@ -49,16 +51,21 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
      */
     private final Map<String, Set<NoteId>> writableNotesBySession = new ConcurrentHashMap<>();
 
-    public SyncWebSocketHandler(SyncRelayService relay, NoteRepository notes, VaultAccessGuard access) {
+    public SyncWebSocketHandler(SyncRelayService relay, NoteRepository notes, VaultAccessGuard access,
+                                VaultAnnouncementService announcements) {
         this.relay = relay;
         this.notes = notes;
         this.access = access;
+        this.announcements = announcements;
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         joinedNotesBySession.put(session.getId(), ConcurrentHashMap.newKeySet());
         writableNotesBySession.put(session.getId(), ConcurrentHashMap.newKeySet());
+        // Vault-weite Bestandsankuendigungen gelten fuer die GESAMTE Verbindung, unabhaengig
+        // davon, welche Notizen sie gerade gejoint hat - deshalb schon hier, nicht erst beim Join.
+        announcements.subscribe(vaultIdOf(session), new WebSocketSyncSession(session));
     }
 
     @Override
@@ -151,6 +158,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        announcements.unsubscribe(vaultIdOf(session), new WebSocketSyncSession(session));
         writableNotesBySession.remove(session.getId());
         var joined = joinedNotesBySession.remove(session.getId());
         if (joined == null) {
@@ -183,7 +191,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
      * dieser Session bereinigen, sonst wuerde ein (fehlerhafter/boeswilliger) Client nach einer
      * Loeschung weiter Updates fuer die laengst geloeschte NoteId senden koennen.
      */
-    private final class WebSocketSyncSession implements SyncSession {
+    private final class WebSocketSyncSession implements SyncSession, VaultSubscriber {
 
         private final WebSocketSession session;
 
@@ -228,6 +236,23 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         public void sendCatchupComplete(NoteId noteId) {
             send(SyncFrame.TYPE_CATCHUP_COMPLETE, noteId, new byte[0]);
         }
+
+        /**
+         * Eine Bestandsankuendigung darf nur an Empfaenger gehen, die die Notiz auch lesen
+         * duerfen - sonst verriete allein die Ankuendigung Existenz und Ablage fremder Notizen.
+         * Geprueft wird gegen den PFAD (nicht die NoteId): bei einer Loeschung ist die Notiz
+         * bereits weg, eine Id-basierte Pruefung liefe ins Leere.
+         */
+        @Override
+        public boolean mayRead(String path) {
+            return hasPermission(vaultIdOf(session), actorOf(session), Permission.READ, path);
+        }
+
+        @Override
+        public void sendVaultEvent(byte messageType, NoteId noteId, String path) {
+            send(messageType, noteId, path.getBytes(StandardCharsets.UTF_8));
+        }
+
 
         private void send(byte messageType, NoteId noteId, byte[] payload) {
             var frame = new SyncFrame(messageType, noteId, payload);

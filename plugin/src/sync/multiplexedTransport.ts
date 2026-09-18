@@ -7,6 +7,21 @@ const TYPE_JOIN = 2;
 const TYPE_LEAVE = 3;
 /** Muss zum Server (SyncFrame.java) passen: genau diese Notiz wurde geloescht, Verbindung bleibt bestehen. */
 const TYPE_NOTE_DELETED = 4;
+/**
+ * Vault-weite Bestandsereignisse (Server->Client, muessen zu `SyncFrame` passen): Notiz angelegt
+ * / geloescht / umbenannt, Payload ist der Pfad als UTF-8. Betreffen den gesamten Vault, nicht
+ * einen Notiz-Raum - sie kommen gerade auch fuer Notizen an, die dieses Geraet NICHT gejoint hat
+ * (seit nur noch geoeffnete Notizen joinen, ist das der Regelfall).
+ */
+export const VAULT_NOTE_CREATED = 6;
+export const VAULT_NOTE_DELETED = 7;
+export const VAULT_NOTE_RENAMED = 8;
+const TYPE_VAULT_NOTE_CREATED = VAULT_NOTE_CREATED;
+const TYPE_VAULT_NOTE_DELETED = VAULT_NOTE_DELETED;
+const TYPE_VAULT_NOTE_RENAMED = VAULT_NOTE_RENAMED;
+const VAULT_EVENT_TYPES = new Set([TYPE_VAULT_NOTE_CREATED, TYPE_VAULT_NOTE_DELETED, TYPE_VAULT_NOTE_RENAMED]);
+
+export type VaultEventHandler = (messageType: number, noteId: string, path: string) => void;
 /** Muss zu {@code SyncClient.CLOSE_CODE_NOTE_DELETED} passen - SyncClient reagiert bereits darauf, bleibt unveraendert. */
 const CLOSE_CODE_NOTE_DELETED = 4404;
 
@@ -66,6 +81,8 @@ export interface MultiplexedTransportOptions {
   /** Wartezeit vor einem automatischen Reconnect-Versuch, nachdem die Verbindung abgebrochen ist. */
   reconnectDelayMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  /** Empfaengt vault-weite Bestandsereignisse (Anlage/Loeschung/Umbenennung einer Notiz). */
+  onVaultEvent?: VaultEventHandler;
 }
 
 /**
@@ -108,6 +125,7 @@ export class MultiplexedTransport {
   private readonly joinStaggerMs: number;
   private readonly reconnectDelayMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly onVaultEvent: VaultEventHandler | null;
 
   constructor(
     private readonly getUrl: WsUrlProvider,
@@ -117,6 +135,7 @@ export class MultiplexedTransport {
     this.joinStaggerMs = options.joinStaggerMs ?? 150;
     this.reconnectDelayMs = options.reconnectDelayMs ?? 2000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.onVaultEvent = options.onVaultEvent ?? null;
   }
 
   /**
@@ -300,6 +319,16 @@ export class MultiplexedTransport {
     const type = raw[0];
     const noteId = textDecoder.decode(raw.subarray(1, 1 + NOTE_ID_LENGTH));
     const payload = raw.subarray(1 + NOTE_ID_LENGTH);
+
+    // VOR der Socket-Zuordnung: ein Bestandsereignis betrifft typischerweise eine Notiz, die
+    // dieses Geraet gar nicht gejoint hat - es hat also keinen virtuellen Socket, und die
+    // Zustellung darf nicht daran haengen. Ausserdem darf der Pfad-Text niemals als vermeintliches
+    // Yjs-Update im CRDT einer offenen Notiz landen.
+    if (VAULT_EVENT_TYPES.has(type)) {
+      this.onVaultEvent?.(type, noteId, textDecoder.decode(payload));
+      return;
+    }
+
     const vs = this.virtualSockets.get(noteId);
     if (!vs) {
       return;
