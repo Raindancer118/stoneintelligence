@@ -1,5 +1,5 @@
 import * as Y from "yjs";
-import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protocols/awareness";
+import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from "y-protocols/awareness";
 
 /**
  * Schmale Abstraktion ueber das Browser-/Electron-WebSocket, damit {@link SyncClient} ohne
@@ -115,6 +115,7 @@ export class SyncClient {
         this.onNoteDeleted?.();
         return;
       }
+      this.clearRemoteAwarenessStates();
       this.setStatus(event.code === 1000 ? "disconnected" : "error");
     };
   }
@@ -133,11 +134,40 @@ export class SyncClient {
    */
   private resendFullStateAsRepair(): void {
     this.send(MESSAGE_TYPE_DOC_UPDATE, Y.encodeStateAsUpdate(this.doc));
+    this.resendLocalAwarenessAsRepair();
+  }
+
+  /**
+   * Sendet den eigenen Awareness-Zustand nach jedem (Re-)Connect erneut - JOIN selbst erzeugt
+   * kein Awareness-Ereignis, ohne diese Republikation bliebe die eigene Praesenz (Cursor) fuer
+   * andere unsichtbar, bis sie sich zufaellig das naechste Mal aendert (P1-Fund, s.
+   * docs/sync-comparison-review-2026-09-18.md "Awareness has stale-cursor and late-join gaps").
+   */
+  private resendLocalAwarenessAsRepair(): void {
+    if (this.awareness.getLocalState() !== null) {
+      this.send(MESSAGE_TYPE_AWARENESS, encodeAwarenessUpdate(this.awareness, [this.doc.clientID]));
+    }
+  }
+
+  /**
+   * Entfernt jeden fremden Awareness-Zustand, sobald die physische Verbindung unerwartet
+   * abbricht - ohne das bliebe z. B. ein Cursor eines Peers, dessen Verbindung gerade abgerissen
+   * ist, als "Geist" dauerhaft sichtbar, bis (falls ueberhaupt) irgendein anderes Ereignis seinen
+   * Zustand ueberschreibt (gleicher P1-Fund wie oben). Entfernt bewusst NICHT den eigenen
+   * lokalen Zustand - der bleibt gueltig und wird nach dem naechsten erfolgreichen Reconnect
+   * automatisch wieder gesendet (s. {@link resendLocalAwarenessAsRepair}).
+   */
+  private clearRemoteAwarenessStates(): void {
+    const remoteClientIds = [...this.awareness.getStates().keys()].filter((id) => id !== this.doc.clientID);
+    if (remoteClientIds.length > 0) {
+      removeAwarenessStates(this.awareness, remoteClientIds, this);
+    }
   }
 
   disconnect(): void {
     this.socket?.close();
     this.socket = null;
+    this.clearRemoteAwarenessStates();
     this.setStatus("disconnected");
   }
 

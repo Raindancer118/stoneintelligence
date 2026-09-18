@@ -142,6 +142,58 @@ describe("SyncClient", () => {
 
       expect(clientB.doc.getText("content").toString()).toBe("hello");
     });
+
+    it("should_removeRemoteAwarenessStates_when_thePhysicalSocketClosesUnexpectedly", () => {
+      // Regression (comparison review P1 "Awareness has stale-cursor and late-join gaps"):
+      // without this, a peer whose connection drops leaves a ghost cursor behind forever, since
+      // nothing tells this client's awareness that the remote state is now stale.
+      const [socketA, socketB] = FakeWebSocket.pair();
+      const clientA = new SyncClient("wss://example.invalid/ws/sync", () => socketA);
+      const clientB = new SyncClient("wss://example.invalid/ws/sync", () => socketB);
+      clientA.connect();
+      clientB.connect();
+      clientA.awareness.setLocalStateField("cursor", { pos: 42 });
+      expect(clientB.awareness.getStates().has(clientA.doc.clientID)).toBe(true);
+
+      socketB.remoteClose(1001, "connection lost");
+
+      expect(clientB.awareness.getStates().has(clientA.doc.clientID)).toBe(false);
+    });
+
+    it("should_notClearRemoteAwareness_when_theSocketClosesBecauseTheNoteWasDeleted", () => {
+      // TYPE_NOTE_DELETED is handled by onNoteDeleted entirely (the session is torn down by the
+      // caller) - clearing awareness here would be redundant, not wrong either way, but the
+      // early-return path must still exist and must not throw.
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      const onNoteDeleted = vi.fn();
+      client.onNoteDeleted = onNoteDeleted;
+      client.connect();
+
+      expect(() => socket.remoteClose(CLOSE_CODE_NOTE_DELETED, "note deleted")).not.toThrow();
+      expect(onNoteDeleted).toHaveBeenCalledTimes(1);
+    });
+
+    it("should_republishLocalAwarenessState_when_catchupCompletesAfterAReconnect", () => {
+      // Regression: JOIN itself generates no awareness event, so after a reconnect a client's own
+      // presence could remain invisible to everyone else until its cursor happened to move again.
+      const socketA = new FakeWebSocket();
+      const socketB = new FakeWebSocket();
+      const sockets = [socketA, socketB];
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => sockets.shift() as FakeWebSocket);
+      client.connect();
+      socketA.onopen?.({} as Event);
+      client.awareness.setLocalStateField("cursor", { pos: 7 });
+      socketA.sent.length = 0;
+
+      client.disconnect();
+      client.connect();
+      socketB.onopen?.({} as Event);
+      socketB.onmessage?.({ data: framed(MESSAGE_TYPE_CATCHUP_COMPLETE, new Uint8Array(0)) } as MessageEvent);
+
+      const awarenessMessages = socketB.sent.filter((raw) => messageType(raw) === MESSAGE_TYPE_AWARENESS);
+      expect(awarenessMessages.length).toBeGreaterThan(0);
+    });
   });
 
   describe("remote note deletion", () => {
@@ -195,6 +247,9 @@ describe("SyncClient", () => {
       expect(socketB.sent.length).toBeGreaterThan(0);
       const repairDoc = new Y.Doc();
       for (const raw of socketB.sent) {
+        if (messageType(raw) !== MESSAGE_TYPE_DOC_UPDATE) {
+          continue;
+        }
         Y.applyUpdate(repairDoc, new Uint8Array(raw).subarray(1));
       }
       expect(repairDoc.getText("content").toString()).toBe("written while offline");
