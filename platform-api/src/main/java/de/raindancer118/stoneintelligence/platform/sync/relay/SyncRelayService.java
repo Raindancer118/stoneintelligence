@@ -27,6 +27,18 @@ public class SyncRelayService {
      * Grenze wie {@link SyncRoomRegistry} (Einzelinstanz-Betrieb, kein Cluster-Broker).
      */
     private final ConcurrentHashMap<NoteId, Object> noteLocks = new ConcurrentHashMap<>();
+    /**
+     * Letzter bekannter Awareness-Zustand je (Notiz, Session) - rein zum Nachliefern an spaeter
+     * beitretende Sessions (P1-Fund, s. docs/sync-comparison-review-2026-09-18.md "Awareness has
+     * stale-cursor and late-join gaps": ein Late-Joiner sah bisher niemanden, bis irgendein Peer
+     * zufaellig seinen Cursor bewegte). Bleibt "dumm" - die Bytes werden nie dekodiert, nur
+     * verwahrt und unveraendert weitergereicht. Deckt NICHT die Kehrseite ab: verlaesst eine
+     * Session den Raum, bekommen SCHON verbundene Peers keinen aktiven "Geist-Cursor entfernen"-
+     * Broadcast (dafuer muesste der Server die Yjs-Awareness-Client-ID aus dem Payload dekodieren,
+     * um eine Entfernungs-Nachricht zu konstruieren - bewusst nicht gemacht, dokumentierte Grenze).
+     */
+    private final ConcurrentHashMap<NoteId, ConcurrentHashMap<String, byte[]>> latestAwarenessBySession =
+        new ConcurrentHashMap<>();
 
     public SyncRelayService(SnapshotStore snapshotStore, SyncRoomRegistry registry) {
         this.snapshotStore = snapshotStore;
@@ -49,6 +61,14 @@ public class SyncRelayService {
             for (var update : snapshotStore.listSince(noteId, 0)) {
                 session.sendDocUpdate(noteId, update.payload());
             }
+            var retainedAwareness = latestAwarenessBySession.get(noteId);
+            if (retainedAwareness != null) {
+                for (var entry : retainedAwareness.entrySet()) {
+                    if (!entry.getKey().equals(session.id())) {
+                        session.sendAwarenessUpdate(noteId, entry.getValue());
+                    }
+                }
+            }
             session.sendCatchupComplete(noteId);
         }
     }
@@ -70,11 +90,16 @@ public class SyncRelayService {
      * - das waere kein Dokument-Zustand, sondern ephemere Praesenz-Information.
      */
     public void onAwarenessUpdate(NoteId noteId, SyncSession sender, byte[] payload) {
+        latestAwarenessBySession.computeIfAbsent(noteId, id -> new ConcurrentHashMap<>()).put(sender.id(), payload);
         registry.broadcastExcept(noteId, sender, session -> session.sendAwarenessUpdate(noteId, payload));
     }
 
     public void onLeave(NoteId noteId, SyncSession session) {
         registry.leave(noteId, session);
+        var retained = latestAwarenessBySession.get(noteId);
+        if (retained != null) {
+            retained.remove(session.id());
+        }
     }
 
     /**
@@ -83,5 +108,6 @@ public class SyncRelayService {
      */
     public void onNoteDeleted(NoteId noteId) {
         registry.notifyDeletedAndLeaveAll(noteId);
+        latestAwarenessBySession.remove(noteId);
     }
 }

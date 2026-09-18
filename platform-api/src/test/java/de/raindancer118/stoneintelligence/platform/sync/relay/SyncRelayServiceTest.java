@@ -99,7 +99,52 @@ class SyncRelayServiceTest {
         }
 
         @Test
+        void should_replayTheLastKnownAwarenessState_toALateJoiner() {
+            // Regression (comparison review P1 "Awareness has stale-cursor and late-join gaps"):
+            // a late joiner previously saw nobody's cursor until some peer happened to move again.
+            var early = new RecordingSyncSession("early");
+            relay.onJoin(noteId, early);
+            relay.onAwarenessUpdate(noteId, early, bytes("cursor-at-1"));
+            relay.onAwarenessUpdate(noteId, early, bytes("cursor-at-2"));
+
+            var lateJoiner = new RecordingSyncSession("late");
+            relay.onJoin(noteId, lateJoiner);
+
+            assertThat(lateJoiner.receivedAwarenessUpdates).containsExactly(bytes("cursor-at-2"));
+        }
+
+        @Test
+        void should_notReplayAwareness_fromASessionThatHasAlreadyLeft() {
+            var early = new RecordingSyncSession("early");
+            relay.onJoin(noteId, early);
+            relay.onAwarenessUpdate(noteId, early, bytes("cursor-at-1"));
+            relay.onLeave(noteId, early);
+
+            var lateJoiner = new RecordingSyncSession("late");
+            relay.onJoin(noteId, lateJoiner);
+
+            assertThat(lateJoiner.receivedAwarenessUpdates).isEmpty();
+        }
+
+        @Test
+        void should_notReplayAwareness_toTheSessionThatSentIt() {
+            // Defensive: a session id could in principle already be retained (e.g. rejoining the
+            // same note without the server having seen an explicit LEAVE first) - it must never
+            // receive its own last-known state echoed back as a "replay".
+            var early = new RecordingSyncSession("early");
+            relay.onJoin(noteId, early);
+            relay.onAwarenessUpdate(noteId, early, bytes("cursor-at-1"));
+
+            relay.onJoin(noteId, early);
+
+            assertThat(early.receivedAwarenessUpdates).isEmpty();
+        }
+
+        @Test
         void should_notMixAwarenessIntoLateJoinerDocUpdateCatchup_when_bothOccurred() {
+            // Awareness IS replayed to a late joiner (s. "should_replayTheLastKnownAwarenessState"
+            // oben), aber ueber den separaten sendAwarenessUpdate-Kanal - niemals vermischt mit dem
+            // Dokument-Update-Catchup selbst.
             var early = new RecordingSyncSession("early");
             relay.onJoin(noteId, early);
             relay.onUpdate(noteId, early, bytes("doc-update"), false);
@@ -109,7 +154,7 @@ class SyncRelayServiceTest {
             relay.onJoin(noteId, lateJoiner);
 
             assertThat(lateJoiner.receivedDocUpdates).containsExactly(bytes("doc-update"));
-            assertThat(lateJoiner.receivedAwarenessUpdates).isEmpty();
+            assertThat(lateJoiner.receivedAwarenessUpdates).containsExactly(bytes("cursor-at-42"));
         }
     }
 
