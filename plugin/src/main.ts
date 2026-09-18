@@ -1172,18 +1172,23 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   /**
-   * Der Server hat die Verbindung mit Close-Code 4404 getrennt (ein ANDERER Client hat die
-   * Note geloescht). Die lokale Datei wird bewusst NICHT automatisch geloescht - ein Server-
-   * Signal ohne Korrelation zu einer eigenen Operation ist keine ausreichende Grundlage fuer
-   * eine irreversible lokale Aktion. Stattdessen: Sync stoppen, NoteId-Zuordnung verwerfen
-   * (ein weiterer Edit wuerde sonst versuchen, eine bereits geloeschte Note anzusprechen), und
-   * den Nutzer informieren.
+   * Der Server hat den Notiz-Raum mit Close-Code 4404 beendet (ein ANDERER Client hat die Note
+   * geloescht). Rein technischer Abschluss: Sync stoppen und die NoteId-Zuordnung verwerfen (ein
+   * weiterer Edit wuerde sonst versuchen, eine bereits geloeschte Note anzusprechen).
+   *
+   * <p>Die lokale Datei wird hier NICHT angefasst - das erledigt {@link applyRemoteNoteDeleted}
+   * aus der vault-weiten Bestandsmeldung, die jedes Geraet erreicht (auch die, die die Notiz
+   * nicht offen haben). Frueher war diese Funktion der einzige Weg, ueber den eine Fremdloeschung
+   * ueberhaupt ankam, und sie musste deshalb selbst informieren.
    */
   private async handleRemoteNoteDeleted(path: string): Promise<void> {
     this.stopSync(path);
     delete this.settings.noteIds[path];
     await this.saveSettings();
-    new Notice(`StoneIntelligence: "${path}" wurde auf einem anderen Geraet geloescht und nicht mehr synchronisiert.`);
+    // Bewusst OHNE Nutzerhinweis: diese Nachricht beendet nur den Notiz-Raum dieser gejointen
+    // Verbindung. Das Sichtbare (Datei in den Papierkorb + Meldung) macht die vault-weite
+    // Bestandsmeldung in `applyRemoteNoteDeleted`, die JEDES Geraet erreicht - sonst saehe genau
+    // die Person, die die Notiz gerade offen hat, zwei Meldungen fuer dieselbe Loeschung.
   }
 
   /** Ein remote empfangenes Yjs-Update wurde bereits in den Y.Text gemerged - jetzt auf die Datei anwenden. */

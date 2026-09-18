@@ -65,6 +65,8 @@ class PlatformApiEndToEndIT {
     private static final byte MESSAGE_TYPE_AWARENESS = 1;
     private static final byte MESSAGE_TYPE_JOIN = 2;
     private static final byte MESSAGE_TYPE_NOTE_DELETED = 4;
+    private static final byte MESSAGE_TYPE_VAULT_NOTE_DELETED = 7;
+    private static final byte MESSAGE_TYPE_VAULT_NOTE_RENAMED = 8;
     /**
      * Server->Client: komplette Late-Joiner-Historie fuer diese Notiz wurde gesendet (s.
      * {@code SyncFrame.TYPE_CATCHUP_COMPLETE}). Reine Protokoll-Buchhaltung, kein fachlicher
@@ -296,6 +298,14 @@ class PlatformApiEndToEndIT {
         assertThat(renamed.get("path")).isEqualTo("Q3 Meeting Notes.md");
         assertThat(renamed.get("id")).isEqualTo(noteId);
 
+        //    Die Umbenennung geht zusaetzlich als vault-weite Bestandsankuendigung an JEDE
+        //    Verbindung des Vaults - damit erfahren auch Geraete davon, die die Notiz gar nicht
+        //    gejoint haben (s. VaultAnnouncementService). Client B ist hier zwar gejoint, bekommt
+        //    sie aber ueber denselben Weg.
+        var renameNotice = handlerB.awaitNextFrame();
+        assertThat(renameNotice.type()).isEqualTo(MESSAGE_TYPE_VAULT_NOTE_RENAMED);
+        assertThat(new String(renameNotice.payload(), StandardCharsets.UTF_8)).isEqualTo("Q3 Meeting Notes.md");
+
         // 9) Loeschen ueber REST - der noch verbundene Client B muss eine NOTE_DELETED-Nachricht
         //    fuer GENAU diese Notiz bekommen (Anforderungen.md: Loeschungen live synchronisieren).
         //    Die Verbindung selbst bleibt bestehen - seit der Multiplexing-Umstellung koennte
@@ -307,8 +317,13 @@ class PlatformApiEndToEndIT {
         var tombstone = json.readValue(deleteResponse.body(), Map.class);
         assertThat(tombstone.get("operationId")).isEqualTo("e2e-delete-op-1");
 
-        var deletionNotice = handlerB.awaitNextFrame();
-        assertThat(deletionNotice.type()).isEqualTo(MESSAGE_TYPE_NOTE_DELETED);
+        //    Zwei Nachrichten mit unterschiedlichem Zweck: NOTE_DELETED beendet den Notiz-Raum
+        //    dieser gejointen Verbindung, VAULT_NOTE_DELETED ist die vault-weite Bestandsmeldung,
+        //    die auch nicht gejointe Geraete erreicht. Die Reihenfolge zwischen beiden ist nicht
+        //    festgelegt, deshalb wird auf das Paar geprueft, nicht auf eine feste Abfolge.
+        var deletionNotices = List.of(handlerB.awaitNextFrame(), handlerB.awaitNextFrame());
+        assertThat(deletionNotices).extracting(ReceivedFrame::type)
+            .containsExactlyInAnyOrder(MESSAGE_TYPE_NOTE_DELETED, MESSAGE_TYPE_VAULT_NOTE_DELETED);
         assertThat(sessionB.isOpen()).as("Verbindung bleibt trotz Notiz-Loeschung offen").isTrue();
 
         // 10) Die Note ist wirklich weg.

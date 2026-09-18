@@ -150,8 +150,9 @@ class VaultSyncSimulationIT {
             Map.of("name", "gruppe-" + subject), Map.class);
         post("/api/v1/vaults/" + vaultId + "/groups/" + group.get("id") + "/members", owner,
             Map.of("subject", subject), Map.class);
-        post("/api/v1/vaults/" + vaultId + "/groups/" + group.get("id") + "/roles/" + role.get("id"),
-            owner, null, Map.class);
+        // Dieser Endpunkt antwortet ohne Body - `post(...)` wuerde beim Deserialisieren scheitern.
+        assertThat(postRaw("/api/v1/vaults/" + vaultId + "/groups/" + group.get("id") + "/roles/" + role.get("id"),
+            owner, null).statusCode()).isEqualTo(200);
         post("/api/v1/vaults/" + vaultId + "/path-rules", owner,
             Map.of("pathPrefix", "", "scopeSubject", subject, "effect", "DENY"), Map.class);
         post("/api/v1/vaults/" + vaultId + "/path-rules", owner,
