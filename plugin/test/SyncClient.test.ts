@@ -130,6 +130,38 @@ describe("SyncClient", () => {
       expect(remoteState?.cursor).toEqual({ pos: 42 });
     });
 
+    it("should_announceItsDeparture_toPeers_when_disconnecting", () => {
+      // Ohne explizite Abmeldung VOR dem Socket-Schluss bliebe der eigene Cursor beim Gegenueber
+      // als "Geist" stehen, bis das 30s-Awareness-Timeout greift - live sichtbar als Cursor einer
+      // Person, die die Notiz laengst verlassen hat (gleiches Muster wie im Vorgaengerprojekt
+      // `stonesync`, DocumentSession: "Announce our departure BEFORE the socket goes away").
+      const [socketA, socketB] = FakeWebSocket.pair();
+      const clientA = new SyncClient("wss://example.invalid/ws/sync", () => socketA);
+      const clientB = new SyncClient("wss://example.invalid/ws/sync", () => socketB);
+      clientA.connect();
+      clientB.connect();
+      clientA.awareness.setLocalStateField("user", { name: "Alice", color: "#e57373" });
+      expect(clientB.awareness.getStates().has(clientA.doc.clientID)).toBe(true);
+
+      clientA.disconnect();
+
+      expect(clientB.awareness.getStates().has(clientA.doc.clientID)).toBe(false);
+    });
+
+    it("should_keepItsOwnIdentity_after_disconnect_soAReconnectRepublishesIt", () => {
+      // Die Abmeldung darf die eigene Identitaet nicht dauerhaft loeschen: der Transport
+      // verbindet automatisch neu, und `resendLocalAwarenessAsRepair` sendet nach dem Catchup
+      // genau diesen lokalen Zustand erneut - waere er null, waere die Person danach unsichtbar.
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("wss://example.invalid/ws/sync", () => socket);
+      client.connect();
+      client.awareness.setLocalStateField("user", { name: "Alice", color: "#e57373" });
+
+      client.disconnect();
+
+      expect(client.awareness.getLocalState()?.user).toEqual({ name: "Alice", color: "#e57373" });
+    });
+
     it("should_notAffectDocContent_when_onlyAwarenessChanges", () => {
       const [socketA, socketB] = FakeWebSocket.pair();
       const clientA = new SyncClient("wss://example.invalid/ws/sync", () => socketA);

@@ -165,12 +165,32 @@ export class SyncClient {
   }
 
   disconnect(): void {
+    // Abmeldung MUSS raus, solange der Socket noch offen ist; die Wiederherstellung des eigenen
+    // Zustands MUSS danach passieren, sonst wuerde sie als weiteres Awareness-Update rausgehen
+    // und die Abmeldung beim Gegenueber sofort wieder rueckgaengig machen.
+    const localState = this.socket ? this.awareness.getLocalState() : null;
+    if (localState !== null) {
+      this.awareness.setLocalState(null);
+    }
     this.socket?.close();
     this.socket = null;
+    if (localState !== null) {
+      this.awareness.setLocalState(localState);
+    }
     this.clearRemoteAwarenessStates();
     this.setStatus("disconnected");
   }
 
+  /**
+   * Hintergrund zur Abmeldung in {@link disconnect}: ohne sie bliebe der eigene Cursor beim
+   * Gegenueber als "Geist" stehen, bis das 30s-Awareness-Timeout greift (Muster und Begruendung
+   * aus dem Vorgaengerprojekt `stonesync`, DocumentSession: "Announce our departure BEFORE the
+   * socket goes away"). Der lokale Zustand wird danach bewusst wiederhergestellt: `disconnect()`
+   * ist hier nicht zwingend endgueltig (der Transport verbindet automatisch neu, und eine Notiz
+   * wird beim Schliessen/Oeffnen eines Panes getrennt und wieder verbunden), und
+   * {@link resendLocalAwarenessAsRepair} braucht nach dem naechsten Catchup genau diesen Zustand -
+   * waere er dauerhaft null, waere diese Person danach fuer alle anderen unsichtbar.
+   */
   private setStatus(status: SyncStatus): void {
     this.status = status;
     this.onStatusChange?.(status);

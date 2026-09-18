@@ -1,6 +1,6 @@
 import { Compartment } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import { App, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
+import { App, MarkdownView, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
 import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
 import { type SessionSnapshot, StatusView, VIEW_TYPE_STATUS } from "./StatusView";
@@ -14,6 +14,7 @@ import {
 } from "./sync/mobileAuthRedirect";
 import { MultiplexedTransport } from "./sync/multiplexedTransport";
 import { NoteApiClient } from "./sync/NoteApiClient";
+import { planEditorBindings } from "./sync/editorBindingPlan";
 import { OperationJournal } from "./sync/OperationJournal";
 import { SyncClient } from "./sync/SyncClient";
 import { TicketClient } from "./sync/TicketClient";
@@ -36,8 +37,9 @@ type ConnectionConfig = Pick<
 /**
  * Architekturentscheidung 2026-09-18 (auf Toms ausdruecklichen Wunsch, nach Vorbild des
  * Vorgaenger-Projekts `stonesync`, das NIE das ganze Vault live hielt, sondern nur gerade
- * geoeffnete Notizen): die geteilte WebSocket-Verbindung traegt nur noch die AKTIVE Notiz live
- * (Zeichen-Sync + Cursor-Presence). Alle anderen bekannten Notizen werden periodisch per kurzem
+ * geoeffnete Notizen): die geteilte WebSocket-Verbindung traegt nur die tatsaechlich GEOEFFNETEN
+ * Notizen live (Zeichen-Sync + Cursor-Presence) - praktisch ein bis drei Panes, und weiterhin nur
+ * EINE physische Verbindung. Alle anderen bekannten Notizen werden periodisch per kurzem
  * Verbindungs-Connect-Catchup-Leave-Zyklus abgeglichen (`syncNoteInBackground`) - dieselbe
  * Yjs-Sync-Maschinerie wie die aktive Notiz, nur nicht dauerhaft gejoint. Kein Server-Umbau
  * noetig: der Server unterscheidet ohnehin nicht zwischen einem lang- und einem kurzlebigen Join.
@@ -45,6 +47,10 @@ type ConnectionConfig = Pick<
 const BACKGROUND_POLL_INTERVAL_MS = 90_000;
 /** Kurzer Timeout je Hintergrund-Notiz - ein einzelner haengender Versuch darf den gesamten Poll-Durchlauf nicht blockieren; naechster Versuch folgt beim naechsten Intervall-Tick. */
 const BACKGROUND_SYNC_TIMEOUT_MS = 8_000;
+/** Abstand zwischen zwei Bindungsversuchen, wenn Obsidians CM6-View noch nicht bereitsteht. */
+const BINDING_RETRY_DELAY_MS = 300;
+/** Obergrenze der Wiederholungen (≈ 6s), damit ein dauerhaft view-loses Pane nicht endlos pollt. */
+const BINDING_RETRY_LIMIT = 20;
 
 const DEFAULT_SETTINGS: StoneIntelligenceSettings = {
   platformApiUrl: "http://localhost:8080",
@@ -74,7 +80,7 @@ interface NoteSyncSession {
   client: SyncClient;
   unbindDocObserver: () => void;
   /**
-   * true, waehrend die aktive Notiz direkt per CodeMirror-6 (y-codemirror.next) an den Editor
+   * true, waehrend diese Notiz direkt per CodeMirror-6 (y-codemirror.next) an einen Editor
    * gebunden ist - dann uebernehmen yCollab + Obsidians eigenes Autosave die Persistenz
    * zeichengenau, und der grobe Volltext-Bruecken-Pfad (text.observe -> vault.modify /
    * vault.read -> Y.Text-Ersatz) wird fuer diesen Pfad ausgesetzt, um Doppelverarbeitung zu
@@ -84,7 +90,7 @@ interface NoteSyncSession {
 }
 
 /**
- * Haelt das GESAMTE Vault synchron, aber NUR die AKTIVE (gerade geoeffnete) Notiz dauerhaft ueber
+ * Haelt das GESAMTE Vault synchron, aber nur die gerade GEOEFFNETEN Notizen dauerhaft ueber
  * die geteilte WebSocket-Verbindung live - echtes CodeMirror-6-Zeichen-Binding via
  * y-codemirror.next (yCollab), inkl. Cursor-Presence ueber die geteilte Awareness-Instanz von
  * {@link SyncClient}. Alle anderen Notizen werden periodisch per kurzem Connect-Catchup-Leave-
@@ -135,14 +141,25 @@ export default class StoneIntelligencePlugin extends Plugin {
    */
   private readonly dedupeTokenRefresh = dedupeInFlight<StoredTokens>();
   private readonly liveBindingCompartment = new Compartment();
-  private liveBoundPath: string | null = null;
+  /**
+   * Pfad → die konkrete EditorView-Instanz, an die dieser Pfad gerade tatsaechlich live gebunden
+   * ist. Ersetzt das fruehere einzelne `liveBoundPath`: gebunden wird jedes offene Markdown-Pane,
+   * nicht nur "das aktive" (s. {@link openMarkdownEditors} fuer die Begruendung). Der Vergleich
+   * laeuft ueber Instanz-Identitaet, nicht nur ueber den Pfad - Obsidian verwendet beim Oeffnen
+   * einer anderen Datei im selben Pane dieselbe CM6-View weiter.
+   */
+  private readonly boundViews = new Map<string, EditorView>();
+  /** Gesetzt von {@link openMarkdownEditors}, wenn ein offenes Pane seine CM6-View noch nicht hatte. */
+  private editorViewPending = false;
+  private bindingRetries = 0;
+  private bindingRetryTimer: number | null = null;
   /**
    * Monoton wachsender Generation-Zaehler gegen den P1-Fund "Obsidian editor binding can target
-   * the wrong file/view" (s. docs/sync-comparison-review-2026-09-18.md): `file-open` feuert bei
-   * schnellem A-zu-B-Wechsel zwei ueberlappende, unsequenzierte `updateLiveEditorBinding`-Aufrufe
-   * - ohne dieses Gate konnte der spaeter GESTARTETE, aber wegen `startSync`s Await frueher
-   * FERTIGE Aufruf fuer A den View ueberschreiben, NACHDEM der Aufruf fuer B bereits korrekt
-   * gebunden hatte - der Editor zeigte dann Notiz B an, band aber tatsaechlich an Notiz As Y.Text.
+   * the wrong file/view" (s. docs/sync-comparison-review-2026-09-18.md): die Bindungs-Events
+   * feuern bei schnellem A-zu-B-Wechsel mehrfach ueberlappend und unsequenziert - ohne dieses
+   * Gate konnte der spaeter GESTARTETE, aber wegen `startSync`s Await frueher FERTIGE Durchlauf
+   * fuer A einen View ueberschreiben, NACHDEM der Durchlauf fuer B bereits korrekt gebunden hatte
+   * - der Editor zeigte dann Notiz B an, band aber tatsaechlich an Notiz As Y.Text.
    */
   private liveBindGeneration = 0;
   private statusBarItem!: HTMLElement;
@@ -269,11 +286,14 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.addSettingTab(new StoneIntelligenceSettingTab(this.app, this));
 
     this.registerEditorExtension([this.liveBindingCompartment.of([])]);
-    this.registerEvent(
-      this.app.workspace.on("file-open", (file) => {
-        void this.updateLiveEditorBinding(file instanceof TFile && file.extension === "md" ? file : null);
-      }),
-    );
+    // Drei Events statt nur `file-open`: `file-open` allein feuert nachweislich zu frueh (die
+    // Ziel-View existiert dann teils noch nicht bzw. zeigt noch die vorherige Datei),
+    // `active-leaf-change` deckt Pane-/Tab-Wechsel ab, `layout-change` das Oeffnen/Schliessen und
+    // Teilen von Panes. Alle drei muenden in denselben idempotenten Abgleich - mehrfaches
+    // Feuern fuer dasselbe Ergebnis ist folgenlos (s. `planEditorBindings`).
+    this.registerEvent(this.app.workspace.on("file-open", () => void this.syncOpenEditorBindings()));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => void this.syncOpenEditorBindings()));
+    this.registerEvent(this.app.workspace.on("layout-change", () => void this.syncOpenEditorBindings()));
 
     this.registerEvent(
       this.app.vault.on("create", (file) => {
@@ -342,9 +362,8 @@ export default class StoneIntelligencePlugin extends Plugin {
       id: "stoneintelligence-resync-all",
       name: "Alle Notizen neu synchronisieren",
       callback: async () => {
-        if (this.liveBoundPath) {
-          this.stopSync(this.liveBoundPath);
-          this.liveBoundPath = null;
+        for (const [path, view] of [...this.boundViews]) {
+          this.detachLiveBinding(path, view);
         }
         await this.syncAllNotes();
         await this.pollBackgroundNotes();
@@ -361,11 +380,13 @@ export default class StoneIntelligencePlugin extends Plugin {
           return isTrackableNote;
         }
         if (file) {
-          this.stopSync(file.path);
-          if (this.liveBoundPath === file.path) {
-            this.liveBoundPath = null;
+          const boundView = this.boundViews.get(file.path);
+          if (boundView) {
+            this.detachLiveBinding(file.path, boundView);
+          } else {
+            this.stopSync(file.path);
           }
-          void this.updateLiveEditorBinding(file);
+          void this.syncOpenEditorBindings();
           new Notice(`StoneIntelligence: "${file.path}" wird neu verbunden.`);
         }
         return true;
@@ -378,6 +399,8 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   onunload(): void {
+    window.clearTimeout(this.bindingRetryTimer ?? undefined);
+    this.bindingRetryTimer = null;
     for (const path of [...this.sessions.keys()]) {
       this.stopSync(path);
     }
@@ -446,14 +469,11 @@ export default class StoneIntelligencePlugin extends Plugin {
       // nicht verhindern, dass die aktive Notiz weiterhin synchronisiert wird.
       console.error("StoneIntelligence: Reconciliation fehlgeschlagen", error);
     }
-    const activeFile = this.app.workspace.getActiveFile();
-    if (activeFile instanceof TFile && activeFile.extension === "md") {
-      await this.updateLiveEditorBinding(activeFile);
-    }
+    await this.syncOpenEditorBindings();
   }
 
   /**
-   * Gleicht ALLE bekannten Notizen AUSSER der gerade live gebundenen ab - ein Durchlauf des
+   * Gleicht ALLE bekannten Notizen AUSSER den gerade live gebundenen ab - ein Durchlauf des
    * periodischen Hintergrund-Timers (`BACKGROUND_POLL_INTERVAL_MS`). Bewusst SEQUENTIELL (eine
    * Notiz nach der anderen fertig abgeglichen, bevor die naechste startet), analog zum bisherigen
    * `syncAllNotes`-Muster - vermeidet unkontrollierten Verbindungs-/Join-Burst auf der geteilten
@@ -466,7 +486,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.backgroundPollRunning = true;
     try {
       for (const path of Object.keys(this.settings.noteIds)) {
-        if (path === this.liveBoundPath) {
+        if (this.boundViews.has(path)) {
           continue;
         }
         try {
@@ -712,7 +732,10 @@ export default class StoneIntelligencePlugin extends Plugin {
     // schliesst stattdessen ueber `noteId`/`priority` auf den passenden virtuellen Kanal.
     const client = new SyncClient("", () => transport.createVirtualSocket(noteId, { priority }), doc);
     client.onNoteDeleted = () => this.handleRemoteNoteDeleted(file.path);
-    client.connect();
+    // Identitaet VOR dem Verbinden setzen (Muster aller drei untersuchten Obsidian-Yjs-Plugins:
+    // Provider erzeugen -> sofort `user` setzen -> dann verbinden). Andersherum gibt es ein
+    // Fenster, in dem bereits Awareness-Verkehr laeuft, waehrend der eigene Zustand noch keine
+    // Identitaet traegt - Gegenueber sehen dann einen namen- und farblosen Cursor.
     // Ohne dieses Feld haette y-codemirror.next fuer diesen Client keine Identitaet zum Anzeigen
     // (`state.user` blieb bisher komplett ungesetzt) - Remote-Cursor faellt in diesem Fall auf
     // eine generische, nicht unterscheidbare Standarddarstellung zurueck ("Anonymous", ein
@@ -722,6 +745,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     // jedem Geraet/in jeder Session dieselbe Cursor-Farbe hat.
     const actorName = actorDisplayNameFromAccessToken(this.settings.tokens?.accessToken);
     client.awareness.setLocalStateField("user", { name: actorName, color: pickUserColor(actorName) });
+    client.connect();
 
     const session: NoteSyncSession = {
       path: file.path,
@@ -798,60 +822,151 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   /**
-   * Bindet (oder loest) das echte CodeMirror-6-Live-Binding fuer die gerade geoeffnete Notiz.
-   * Hintergrund-Notes bleiben beim Volltext-Sync - nur der aktive Editor bekommt yCollab.
+   * Alle tatsaechlich offenen Markdown-Panes samt ihrer CodeMirror-6-`EditorView`.
+   *
+   * <p>Die fruehere Fassung nutzte `workspace.activeEditor?.editor.cm` und band nur die EINE
+   * aktive Notiz. Das war der Grund, warum fremde Cursor live nicht ankamen: beim `file-open`-
+   * Ereignis zeigt `activeEditor` haeufig noch nicht auf die gerade geoeffnete Datei, der Zugriff
+   * lieferte `undefined`, und die Bindung wurde stillschweigend uebersprungen - kein yCollab,
+   * also weder Zeichen-Sync noch Awareness-Cursor, ohne jede Fehlermeldung. Das Vorgaengerprojekt
+   * `stonesync` zaehlte stattdessen die offenen Panes auf (SyncManager.openMarkdownEditors) -
+   * dieses Muster ist hier uebernommen.
+   *
+   * <p>Obsidians `Editor`-Wrapper legt die zugrundeliegende `EditorView` nicht in der offiziellen
+   * API offen; `editor.cm` ist der in der Community etablierte, aber inoffizielle Zugriffspfad.
    */
-  private async updateLiveEditorBinding(file: TFile | null): Promise<void> {
-    const generation = ++this.liveBindGeneration;
-    const view = this.activeEditorView();
-
-    if (this.liveBoundPath && this.liveBoundPath !== file?.path) {
-      // Vollstaendiges Stoppen (nicht nur die CM6-Bindung loesen) - die zuvor aktive Notiz faellt
-      // zurueck in den periodischen Hintergrund-Poll-Pool (s. Klassendoc "Architekturentscheidung
-      // 2026-09-18"). Nur EINE Notiz darf gleichzeitig die geteilte Verbindung dauerhaft halten.
-      this.stopSync(this.liveBoundPath);
+  private openMarkdownEditors(): Array<{ file: TFile; view: EditorView }> {
+    const result: Array<{ file: TFile; view: EditorView }> = [];
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const markdownView = leaf.view;
+      if (!(markdownView instanceof MarkdownView)) {
+        continue;
+      }
+      const file = markdownView.file;
+      if (!file || file.extension !== "md") {
+        continue;
+      }
+      // Die Vault-Index-Pruefung ist kein Ueberfluss: nach dem Loeschen einer offenen Datei
+      // meldet das Leaf kurzzeitig noch eine Stale-TFile. Wuerde man die binden, schriebe der
+      // Catchup den alten Inhalt in den noch sichtbaren Editor und Obsidian persistierte ihn
+      // zurueck - die geloeschte Datei waere wieder da (im Vorgaengerprojekt live beobachtet).
+      if (!(this.app.vault.getAbstractFileByPath(file.path) instanceof TFile)) {
+        continue;
+      }
+      const view = (markdownView.editor as unknown as { cm?: EditorView }).cm;
+      if (!view) {
+        // Pane existiert, seine CM6-View aber noch nicht - Obsidian baut sie erst kurz NACH dem
+        // ausloesenden Workspace-Ereignis auf. Das ist kein Grund aufzugeben (genau daran
+        // scheiterte die Bindung bisher stillschweigend), sondern einer, es gleich erneut zu
+        // versuchen - s. `scheduleBindingRetry`.
+        this.editorViewPending = true;
+        continue;
+      }
+      result.push({ file, view });
     }
-    this.liveBoundPath = null;
-
-    if (!view) {
-      return;
-    }
-    if (!file) {
-      view.dispatch({ effects: this.liveBindingCompartment.reconfigure([]) });
-      return;
-    }
-
-    await this.startSync(file, true);
-    if (generation !== this.liveBindGeneration) {
-      // Ein neuerer Aufruf (ein weiterer Datei-/Ansichtswechsel waehrend dieses Awaits) hat die
-      // Zustaendigkeit fuer `liveBoundPath`/den Compartment bereits uebernommen oder wird das
-      // gleich tun - hier NICHTS mehr anfassen, sonst ueberschreibt dieser veraltete Aufruf dessen
-      // korrektes Ergebnis mit dem FALSCHEN Y.Text fuer den inzwischen angezeigten View.
-      return;
-    }
-    const session = this.sessions.get(file.path);
-    if (!session) {
-      view.dispatch({ effects: this.liveBindingCompartment.reconfigure([]) });
-      return;
-    }
-
-    session.hasLiveEditorBinding = true;
-    this.liveBoundPath = file.path;
-    view.dispatch({
-      effects: this.liveBindingCompartment.reconfigure(
-        yCollab(session.client.doc.getText("content"), session.client.awareness),
-      ),
-    });
+    return result;
   }
 
   /**
-   * Obsidians `Editor`-Wrapper legt die zugrundeliegende CodeMirror-6-`EditorView` nicht in der
-   * offiziellen API offen - `editor.cm` ist der in der Community etablierte, aber inoffizielle
-   * Zugriffspfad (ueblich bei Plugins, die CM6-Extensions anbinden).
+   * Gleicht die CodeMirror-6-Live-Bindungen mit den tatsaechlich offenen Panes ab: jede offene
+   * Notiz bekommt eine dauerhafte Session + yCollab (Zeichen-Sync UND Cursor-Presence), jede
+   * geschlossene faellt zurueck in den periodischen Hintergrund-Poll-Pool.
+   *
+   * <p>Das erweitert die Architekturentscheidung vom 2026-09-18 (s. Klassendoc) vom Sonderfall
+   * "genau eine aktive Notiz" auf "genau die offenen Notizen" - es bleibt bei EINER geteilten
+   * WebSocket-Verbindung (`MultiplexedTransport`), offene Panes sind nur zusaetzliche JOINs
+   * darauf, keine zusaetzlichen Verbindungen. In der Praxis sind das ein bis drei Panes.
    */
-  private activeEditorView(): EditorView | undefined {
-    const editor = this.app.workspace.activeEditor?.editor as unknown as { cm?: EditorView } | undefined;
-    return editor?.cm;
+  private async syncOpenEditorBindings(): Promise<void> {
+    const generation = ++this.liveBindGeneration;
+    this.editorViewPending = false;
+    const open = this.openMarkdownEditors();
+    if (this.editorViewPending) {
+      this.scheduleBindingRetry();
+    } else {
+      this.bindingRetries = 0;
+    }
+    const plan = planEditorBindings(
+      open.map((entry) => ({ path: entry.file.path, view: entry.view })),
+      this.boundViews,
+    );
+
+    for (const { path, view } of plan.unbind) {
+      this.detachLiveBinding(path, view);
+    }
+
+    for (const { path } of plan.bind) {
+      const entry = open.find((candidate) => candidate.file.path === path);
+      if (!entry) {
+        continue;
+      }
+      await this.startSync(entry.file, true);
+      if (generation !== this.liveBindGeneration) {
+        // Ein neuerer Durchlauf (weiterer Pane-/Dateiwechsel waehrend dieses Awaits) hat die
+        // Zustaendigkeit uebernommen - hier nichts mehr anfassen, sonst ueberschreibt dieser
+        // veraltete Durchlauf dessen korrektes Ergebnis mit dem FALSCHEN Y.Text.
+        return;
+      }
+      // Waehrend des Awaits kann das Pane geschlossen oder auf eine andere Datei umgestellt
+      // worden sein - dann zeigt diese View diesen Pfad nicht mehr und darf nicht gebunden werden.
+      const stillShown = this.openMarkdownEditors().some(
+        (candidate) => candidate.file.path === path && candidate.view === entry.view,
+      );
+      if (!stillShown) {
+        continue;
+      }
+      const session = this.sessions.get(path);
+      if (!session) {
+        continue;
+      }
+      session.hasLiveEditorBinding = true;
+      this.boundViews.set(path, entry.view);
+      // ZWEI getrennte Transaktionen, nicht eine: `ySync` aus y-codemirror.next ist ein
+      // modulweites ViewPlugin-Singleton. Konfiguriert man den Compartment direkt von einem
+      // yCollab auf ein anderes um, sieht CodeMirror dasselbe Plugin und erzeugt es NICHT neu -
+      // es behaelt den im Konstruktor erfassten alten Y.Text samt dessen Observer. Folge (im Test
+      // reproduziert): Aenderungen an der ZUVOR gebundenen Notiz wurden weiterhin in diesen
+      // Editor geschrieben, obwohl er laengst eine andere Notiz anzeigt. Der Zwischenschritt auf
+      // die leere Konfiguration nimmt das Plugin wirklich aus der Konfiguration und zerstoert es.
+      entry.view.dispatch({ effects: this.liveBindingCompartment.reconfigure([]) });
+      entry.view.dispatch({
+        effects: this.liveBindingCompartment.reconfigure(
+          yCollab(session.client.doc.getText("content"), session.client.awareness),
+        ),
+      });
+    }
+  }
+
+  /**
+   * Versucht den Bindungsabgleich kurz darauf erneut, wenn mindestens ein offenes Pane seine
+   * CM6-View noch nicht bereitgestellt hatte. Begrenzt auf {@link BINDING_RETRY_LIMIT} Versuche
+   * je Ereignis, damit ein dauerhaft view-loses Pane (z. B. eine Nicht-Editor-Ansicht) keine
+   * Endlosschleife ausloest; der Zaehler wird bei jedem erfolgreichen Durchlauf ohne offenen
+   * Rest zurueckgesetzt. Muster uebernommen aus dem Referenzplugin `obsidian-collab`, das dasselbe
+   * Timing-Problem mit einem gestaffelten Retry loest statt mit einem einmaligen Zugriff.
+   */
+  private scheduleBindingRetry(): void {
+    if (this.bindingRetries >= BINDING_RETRY_LIMIT) {
+      return;
+    }
+    this.bindingRetries++;
+    window.clearTimeout(this.bindingRetryTimer ?? undefined);
+    this.bindingRetryTimer = window.setTimeout(() => void this.syncOpenEditorBindings(), BINDING_RETRY_DELAY_MS);
+  }
+
+  /**
+   * Loest die CM6-Bindung eines Panes und beendet die zugehoerige Session - die Notiz faellt
+   * damit zurueck in den periodischen Hintergrund-Poll-Pool.
+   */
+  private detachLiveBinding(path: string, view: EditorView): void {
+    this.boundViews.delete(path);
+    try {
+      view.dispatch({ effects: this.liveBindingCompartment.reconfigure([]) });
+    } catch (error) {
+      // Die View kann zusammen mit ihrem geschlossenen Leaf bereits zerstoert sein - harmlos.
+      console.debug("StoneIntelligence: Editor-Bindung konnte nicht geloest werden", path, error);
+    }
+    this.stopSync(path);
   }
 
   private stopSync(path: string): void {
@@ -952,11 +1067,13 @@ export default class StoneIntelligencePlugin extends Plugin {
       // aendert sich - kein Re-Connect noetig, die NoteId ist stabil (Fehlerklasse 5).
       session.path = file.path;
       this.sessions.set(file.path, session);
-      if (this.liveBoundPath === oldPath) {
-        // Ohne das wuerde `updateLiveEditorBinding` beim naechsten Aufruf faelschlich versuchen,
+      const boundView = this.boundViews.get(oldPath);
+      if (boundView) {
+        // Ohne das wuerde `syncOpenEditorBindings` beim naechsten Durchlauf faelschlich versuchen,
         // eine Session unter dem inzwischen umbenannten (nicht mehr existenten) alten Pfad zu
-        // stoppen, statt die tatsaechlich aktive (jetzt umbenannte) Session zu erkennen.
-        this.liveBoundPath = file.path;
+        // stoppen, statt die tatsaechlich gebundene (jetzt umbenannte) Session zu erkennen.
+        this.boundViews.delete(oldPath);
+        this.boundViews.set(file.path, boundView);
       }
     }
 
