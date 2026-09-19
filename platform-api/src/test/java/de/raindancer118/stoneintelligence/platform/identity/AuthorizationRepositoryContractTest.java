@@ -19,6 +19,18 @@ public abstract class AuthorizationRepositoryContractTest {
      */
     protected abstract VaultId newVault();
 
+    @Test
+    void should_scopeGroupLookupToVault_andRejectUnknownGroups() {
+        var repository = repository();
+        var vaultId = newVault();
+        var otherVault = newVault();
+        var group = repository.createGroup(vaultId, "team");
+
+        assertThat(repository.groupBelongsToVault(group.id(), vaultId)).isTrue();
+        assertThat(repository.groupBelongsToVault(group.id(), otherVault)).isFalse();
+        assertThat(repository.groupBelongsToVault(java.util.UUID.randomUUID(), vaultId)).isFalse();
+    }
+
     @Nested
     class EffectivePermissions {
 

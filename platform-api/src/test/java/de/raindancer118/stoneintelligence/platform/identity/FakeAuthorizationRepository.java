@@ -47,8 +47,22 @@ public final class FakeAuthorizationRepository implements AuthorizationRepositor
     }
 
     @Override
+    public synchronized boolean groupBelongsToVault(UUID groupId, VaultId vaultId) {
+        var group = groups.get(groupId);
+        return group != null && group.vaultId().equals(vaultId);
+    }
+
+    @Override
     public synchronized Set<UUID> listRoleIdsForGroup(UUID groupId) {
         return Set.copyOf(groupRoles.getOrDefault(groupId, Set.of()));
+    }
+
+    @Override
+    public synchronized Map<UUID, Set<UUID>> listRoleIdsByGroup(VaultId vaultId) {
+        return groups.values().stream()
+            .filter(group -> group.vaultId().equals(vaultId))
+            .filter(group -> !groupRoles.getOrDefault(group.id(), Set.of()).isEmpty())
+            .collect(Collectors.toUnmodifiableMap(Group::id, group -> Set.copyOf(groupRoles.get(group.id()))));
     }
 
     @Override

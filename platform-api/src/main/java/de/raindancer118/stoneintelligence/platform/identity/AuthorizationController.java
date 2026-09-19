@@ -5,6 +5,7 @@ import java.util.Set;
 import java.util.UUID;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
 import de.raindancer118.stoneintelligence.platform.vault.VaultAccessGuard;
+import de.raindancer118.stoneintelligence.platform.vault.ForbiddenException;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -52,8 +53,9 @@ public class AuthorizationController {
     public List<GroupResponse> listGroups(@PathVariable String vaultId, Authentication authentication) {
         var vId = VaultId.of(vaultId);
         access.require(vId, authentication.getName(), Permission.READ);
+        var rolesByGroup = authorization.listRoleIdsByGroup(vId);
         return authorization.listGroups(vId).stream()
-            .map(group -> GroupResponse.from(group, authorization.listRoleIdsForGroup(group.id())))
+            .map(group -> GroupResponse.from(group, rolesByGroup.getOrDefault(group.id(), Set.of())))
             .toList();
     }
 
@@ -72,7 +74,7 @@ public class AuthorizationController {
         @PathVariable String vaultId, @PathVariable UUID groupId,
         @RequestBody MemberRequest request, Authentication authentication
     ) {
-        access.require(VaultId.of(vaultId), authentication.getName(), Permission.DELETE);
+        requireGroupAccess(VaultId.of(vaultId), groupId, authentication);
         authorization.addMember(groupId, request.subject());
     }
 
@@ -81,7 +83,7 @@ public class AuthorizationController {
         @PathVariable String vaultId, @PathVariable UUID groupId,
         @PathVariable String subject, Authentication authentication
     ) {
-        access.require(VaultId.of(vaultId), authentication.getName(), Permission.DELETE);
+        requireGroupAccess(VaultId.of(vaultId), groupId, authentication);
         authorization.removeMember(groupId, subject);
     }
 
@@ -90,7 +92,7 @@ public class AuthorizationController {
         @PathVariable String vaultId, @PathVariable UUID groupId,
         @PathVariable UUID roleId, Authentication authentication
     ) {
-        access.require(VaultId.of(vaultId), authentication.getName(), Permission.DELETE);
+        requireGroupAccess(VaultId.of(vaultId), groupId, authentication);
         authorization.assignRole(groupId, roleId);
     }
 
@@ -99,8 +101,15 @@ public class AuthorizationController {
         @PathVariable String vaultId, @PathVariable UUID groupId,
         @PathVariable UUID roleId, Authentication authentication
     ) {
-        access.require(VaultId.of(vaultId), authentication.getName(), Permission.DELETE);
+        requireGroupAccess(VaultId.of(vaultId), groupId, authentication);
         authorization.unassignRole(groupId, roleId);
+    }
+
+    private void requireGroupAccess(VaultId vaultId, UUID groupId, Authentication authentication) {
+        access.require(vaultId, authentication.getName(), Permission.DELETE);
+        if (!authorization.groupBelongsToVault(groupId, vaultId)) {
+            throw new ForbiddenException("group does not belong to this vault");
+        }
     }
 
     @GetMapping("/api/v1/vaults/{vaultId}/path-rules")

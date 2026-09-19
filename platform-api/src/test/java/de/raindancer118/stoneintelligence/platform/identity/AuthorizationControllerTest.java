@@ -5,6 +5,8 @@ import de.raindancer118.stoneintelligence.domain.id.VaultId;
 import de.raindancer118.stoneintelligence.platform.vault.ForbiddenException;
 import de.raindancer118.stoneintelligence.platform.vault.VaultAccessGuard;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -67,6 +69,32 @@ class AuthorizationControllerTest {
         var readers = groups.stream().filter(g -> g.name().equals("readers")).findFirst().orElseThrow();
         assertThat(readers.memberSubjects()).containsExactly("alice");
         assertThat(readers.roleIds()).containsExactly(role.id());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"addMember", "removeMember", "assignRole", "unassignRole"})
+    void should_rejectGroupMutation_when_groupBelongsToAnotherVault(String operation) {
+        var actorVault = ownerBootstrappedVault("mallory");
+        var victimVault = ownerBootstrappedVault("tom");
+        var victimGroup = authorization.listGroups(victimVault).getFirst();
+        var victimRole = authorization.listRoles(victimVault).getFirst();
+        var auth = new TestingAuthenticationToken("mallory", null);
+        var pathVault = actorVault.value().toString();
+
+        assertThatThrownBy(() -> {
+            switch (operation) {
+                case "addMember" -> controller.addMember(pathVault, victimGroup.id(),
+                    new AuthorizationController.MemberRequest("mallory"), auth);
+                case "removeMember" -> controller.removeMember(pathVault, victimGroup.id(), "tom", auth);
+                case "assignRole" -> controller.assignRole(pathVault, victimGroup.id(), victimRole.id(), auth);
+                case "unassignRole" -> controller.unassignRole(pathVault, victimGroup.id(), victimRole.id(), auth);
+                default -> throw new AssertionError(operation);
+            }
+        }).isInstanceOf(ForbiddenException.class);
+
+        assertThat(authorization.effectivePermissions(victimVault, "mallory")).isEmpty();
+        assertThat(authorization.effectivePermissions(victimVault, "tom"))
+            .containsExactlyInAnyOrderElementsOf(java.util.EnumSet.allOf(Permission.class));
     }
 
     @Test

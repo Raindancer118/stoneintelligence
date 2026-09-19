@@ -99,11 +99,37 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
     }
 
     @Override
+    public boolean groupBelongsToVault(UUID groupId, VaultId vaultId) {
+        return jdbcClient.sql("SELECT EXISTS (SELECT 1 FROM platform.groups WHERE id = :groupId AND vault_id = :vaultId)")
+            .param("groupId", groupId)
+            .param("vaultId", vaultId.value())
+            .query(Boolean.class)
+            .single();
+    }
+
+    @Override
     public Set<UUID> listRoleIdsForGroup(UUID groupId) {
         return Set.copyOf(jdbcClient.sql("SELECT role_id FROM platform.group_roles WHERE group_id = :groupId")
             .param("groupId", groupId)
             .query(UUID.class)
             .list());
+    }
+
+    @Override
+    public Map<UUID, Set<UUID>> listRoleIdsByGroup(VaultId vaultId) {
+        var rolesByGroup = new HashMap<UUID, Set<UUID>>();
+        jdbcClient.sql("""
+                SELECT gr.group_id, gr.role_id FROM platform.group_roles gr
+                JOIN platform.groups g ON g.id = gr.group_id
+                WHERE g.vault_id = :vaultId
+                """)
+            .param("vaultId", vaultId.value())
+            .query((rs, rowNum) -> Map.entry(
+                (UUID) rs.getObject("group_id"), (UUID) rs.getObject("role_id")))
+            .list()
+            .forEach(entry -> rolesByGroup
+                .computeIfAbsent(entry.getKey(), id -> new LinkedHashSet<>()).add(entry.getValue()));
+        return rolesByGroup;
     }
 
     @Override

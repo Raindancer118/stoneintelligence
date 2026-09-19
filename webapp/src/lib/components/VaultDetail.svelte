@@ -46,7 +46,8 @@
       await api.createRole(vault.id, newRoleName.trim(), [...newRolePermissions]);
       newRoleName = "";
       newRolePermissions = new Set();
-      await refresh();
+      error = null;
+      roles = await api.listRoles(vault.id);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -57,7 +58,8 @@
     try {
       await api.createGroup(vault.id, newGroupName.trim());
       newGroupName = "";
-      await refresh();
+      error = null;
+      groups = await api.listGroups(vault.id);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -69,7 +71,8 @@
     try {
       await api.addMember(vault.id, groupId, subject);
       newMemberByGroup = { ...newMemberByGroup, [groupId]: "" };
-      await refresh();
+      error = null;
+      groups = await api.listGroups(vault.id);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -78,7 +81,8 @@
   async function removeMember(groupId: string, subject: string) {
     try {
       await api.removeMember(vault.id, groupId, subject);
-      await refresh();
+      error = null;
+      groups = await api.listGroups(vault.id);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -88,7 +92,8 @@
     try {
       if (assigned) await api.unassignRole(vault.id, groupId, roleId);
       else await api.assignRole(vault.id, groupId, roleId);
-      await refresh();
+      error = null;
+      groups = await api.listGroups(vault.id);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -104,7 +109,8 @@
         newPathRule.effect,
       );
       newPathRule = { pathPrefix: "", scopeSubject: "", effect: "DENY" };
-      await refresh();
+      error = null;
+      pathRules = await api.listPathRules(vault.id);
     } catch (e) {
       error = (e as Error).message;
     }

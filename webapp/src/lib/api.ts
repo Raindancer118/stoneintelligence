@@ -43,7 +43,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (response.status === 204 || response.headers.get("Content-Length") === "0") {
     return undefined as T;
   }
-  return (await response.json()) as T;
+  const body = await response.text();
+  return (body.length === 0 ? undefined : JSON.parse(body)) as T;
 }
 
 export const api = {

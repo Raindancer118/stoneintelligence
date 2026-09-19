@@ -32,7 +32,8 @@ export async function completeLogin(): Promise<User> {
 /** Faellt bewusst auf "nicht angemeldet" zurueck statt die ganze App mit einem Fehler zu blockieren. */
 export async function getUser(): Promise<User | null> {
   try {
-    return await userManager.getUser();
+    const user = await userManager.getUser();
+    return user && !user.expired ? user : null;
   } catch {
     return null;
   }
