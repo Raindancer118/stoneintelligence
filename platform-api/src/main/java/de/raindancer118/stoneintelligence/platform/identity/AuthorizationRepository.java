@@ -1,6 +1,7 @@
 package de.raindancer118.stoneintelligence.platform.identity;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
@@ -19,8 +20,13 @@ public interface AuthorizationRepository {
 
     List<Group> listGroups(VaultId vaultId);
 
+    boolean groupBelongsToVault(UUID groupId, VaultId vaultId);
+
     /** Rollen-IDs, die dieser Gruppe zugewiesen sind (s. {@link #assignRole}). */
     Set<UUID> listRoleIdsForGroup(UUID groupId);
+
+    /** Zugewiesene Rollen aller Gruppen eines Vaults, ohne Einzelabfrage pro Gruppe. */
+    Map<UUID, Set<UUID>> listRoleIdsByGroup(VaultId vaultId);
 
     void addMember(UUID groupId, String subject);
 
