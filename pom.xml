@@ -6,7 +6,7 @@
 
   <groupId>de.raindancer118</groupId>
   <artifactId>stoneintelligence</artifactId>
-  <version>0.4.1-SNAPSHOT</version>
+  <version>0.5.0-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <name>StoneIntelligence</name>

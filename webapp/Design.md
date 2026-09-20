@@ -61,3 +61,22 @@ Utility-Dashboard mit einem Nutzer, würde nur Ladezeit/Komplexität kosten ohne
 (vgl. Skill-Referenz Abschnitt E: „nicht jede Seite braucht WebGL"). `prefers-reduced-motion`
 ist trotzdem respektiert, da die wenigen Übergänge (Hover, Panel-Wechsel) rein CSS-transition-
 basiert sind, keine JS-Animation-Library.
+
+## Kunden-Dashboard (19.09.2026)
+
+Das Dashboard wird vom internen Verwaltungswerkzeug zum täglichen Notiz-Arbeitsplatz.
+Die von Tom freigegebene selbstständige Erweiterung baut auf der bestehenden Richtung auf.
+Geprüfte Varianten: reine Tabellenverwaltung (zu wenig Platz fürs Schreiben), kartenbasierte
+Übersicht (zu wenig Informationsdichte), Notiz-Arbeitsplatz mit Liste und Dokument (gewählt).
+
+- Bestehende Public-Sans-Typografie, Waldgrün und warme Oberflächen bleiben erhalten.
+- Vault-Auswahl links; im Vault die Bereiche „Notizen“ und „Verwaltung“.
+- Notizen: kompakte durchsuchbare Pfadliste mit Ordnerfilter, daneben ein großes Dokument.
+  Auf schmalen Displays wechselt man zwischen Liste und Dokument. Linksbündige Formulare,
+  beschriftete Eingaben, sichtbarer Fokus, mindestens 48px hohe Hauptaktionen.
+- Dokument: Titel/Pfad, Lesen/Bearbeiten, ausdrücklicher Speicherknopf, Status und
+  verständliche Konfliktauflösung. Aufgeräumte Markdown-Vorschau, exportierbare Entwürfe.
+- Keine dekorativen Statistikkarten oder erfundenen Inhalte. Leerzustände erklären den
+  nächsten Schritt. Berechtigungen bestimmen sichtbare Aktionen; der Server prüft erneut.
+- Editor/Vorschau werden bei Bedarf geladen, Listen seitenweise. Kein Download sämtlicher
+  Notizinhalte für eine Suche: die Suche bezieht sich ausdrücklich auf Titel und Pfad.

@@ -54,6 +54,7 @@ public class NoteController {
     ) {
         var actor = authentication.getName();
         var vId = VaultId.of(vaultId);
+        validatePath(request.path());
         access.require(vId, actor, Permission.CREATE, request.path());
         var note = notes.create(vId, request.path(), NoteLevel.of(request.noteLevel()), actor);
         audit.record(vId, note.id(), actor, "note.created", java.util.Map.of("path", note.path()));
@@ -69,7 +70,14 @@ public class NoteController {
     ) {
         var vId = VaultId.of(vaultId);
         access.require(vId, authentication.getName(), Permission.READ);
-        return audit.listForNote(vId, NoteId.of(noteId)).stream()
+        notes.findById(vId, NoteId.of(noteId)).ifPresent(note ->
+            access.require(vId, authentication.getName(), Permission.READ, note.path()));
+        var events = audit.listForNote(vId, NoteId.of(noteId));
+        // Auch nach Loeschung bleibt der Verlauf abrufbar, aber nie fuer gesperrte historische Pfade.
+        var historicalPaths = events.stream().flatMap(event -> java.util.stream.Stream.of("path", "from", "to")
+            .map(event.payload()::get).filter(String.class::isInstance).map(String.class::cast)).distinct().toList();
+        access.requireReadablePaths(vId, authentication.getName(), historicalPaths);
+        return events.stream()
             .map(AuditEventResponse::from)
             .toList();
     }
@@ -81,7 +89,10 @@ public class NoteController {
         var vId = VaultId.of(vaultId);
         access.require(vId, authentication.getName(), Permission.READ);
         return notes.findById(vId, NoteId.of(noteId))
-            .map(NoteResponse::from)
+            .map(note -> {
+                access.require(vId, authentication.getName(), Permission.READ, note.path());
+                return NoteResponse.from(note);
+            })
             .map(ResponseEntity::ok)
             .orElseGet(() -> ResponseEntity.notFound().build());
     }
@@ -91,10 +102,8 @@ public class NoteController {
      * {@code epochId} und ein {@code complete}-Flag - der Client darf eine unvollstaendige
      * Antwort NIE als Grundlage fuer lokale Loeschungen verwenden.
      *
-     * <p>Die Berechtigungspruefung greift hier nur auf Vault-Ebene (READ) - eine Filterung
-     * einzelner Notes nach {@code PathRules} innerhalb der Seite ist NICHT umgesetzt (waere
-     * zusaetzlich noetig, sobald einzelne Ordner fuer ein Subject per Regel gesperrt werden
-     * sollen, s. {@code VaultAccessGuard}).
+     * <p>Pfadregeln filtern den Inhalt jeder Seite. Cursor und complete beziehen sich weiterhin
+     * auf den serverseitigen Durchlauf; eine gefilterte leere Seite kann deshalb unvollstaendig sein.
      */
     @GetMapping("/api/v1/vaults/{vaultId}/notes")
     public ReconciliationResponse reconcile(
@@ -108,7 +117,7 @@ public class NoteController {
         var page = notes.list(vId, cursor, pageSize);
         return new ReconciliationResponse(
             page.epochId(), page.complete(), page.nextCursor().orElse(null),
-            page.notes().stream().map(NoteResponse::from).toList());
+            access.readableNotes(vId, authentication.getName(), page.notes()).stream().map(NoteResponse::from).toList());
     }
 
     @PatchMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
@@ -122,8 +131,10 @@ public class NoteController {
         var actor = authentication.getName();
         var vId = VaultId.of(vaultId);
         var nId = NoteId.of(noteId);
+        validatePath(request.path());
         var before = notes.findById(vId, nId).map(Note::path).orElse(null);
         access.require(vId, actor, Permission.WRITE, before != null ? before : request.path());
+        access.require(vId, actor, Permission.WRITE, request.path());
         var note = notes.rename(vId, nId, request.path());
         audit.record(vId, nId, actor, "note.renamed", java.util.Map.of("from", String.valueOf(before), "to", note.path()));
         announcements.announceNoteRenamed(vId, nId, note.path());
@@ -161,6 +172,21 @@ public class NoteController {
             announcements.announceNoteDeleted(vId, nId, path);
         }
         return TombstoneResponse.from(tombstone);
+    }
+
+    private static void validatePath(String path) {
+        if (path == null || path.isBlank() || path.length() > 1024 || !path.equals(path.strip())
+                || !path.toLowerCase(java.util.Locale.ROOT).endsWith(".md")
+                || path.chars().anyMatch(c -> Character.isISOControl(c) || "\\:*?\"<>|".indexOf(c) >= 0)
+                || java.util.Arrays.stream(path.split("/", -1)).anyMatch(part -> part.isBlank() || part.startsWith("."))) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                "Invalid Markdown path");
+        }
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(org.springframework.dao.DuplicateKeyException.class)
+    public ResponseEntity<Void> duplicatePath() {
+        return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT).build();
     }
 
     public record CreateNoteRequest(String path, int noteLevel) {

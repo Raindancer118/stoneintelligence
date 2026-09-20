@@ -19,6 +19,14 @@ public final class FakeSnapshotStore implements SnapshotStore {
     }
 
     @Override
+    public synchronized java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload) {
+        if (updatesByNote.getOrDefault(noteId, List.of()).size() != expectedRevision) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(append(noteId, payload, false));
+    }
+
+    @Override
     public synchronized List<UpdateRecord> listSince(NoteId noteId, long afterServerSequence) {
         return updatesByNote.getOrDefault(noteId, List.of()).stream()
             .filter(record -> record.serverSequence() > afterServerSequence)

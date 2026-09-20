@@ -28,6 +28,18 @@ public class VaultAccessGuard {
         }
     }
 
+    public void requireReadablePaths(VaultId vaultId, String actor, java.util.List<String> paths) {
+        var rules = authorization.listPathRules(vaultId);
+        if (paths.stream().anyMatch(path -> PathRules.resolve(rules, path, actor) == RuleEffect.DENY)) {
+            throw new ForbiddenException("audit contains a denied path");
+        }
+    }
+
+    public java.util.List<Note> readableNotes(VaultId vaultId, String actor, java.util.List<Note> notes) {
+        var rules = authorization.listPathRules(vaultId);
+        return notes.stream().filter(note -> PathRules.resolve(rules, note.path(), actor) != RuleEffect.DENY).toList();
+    }
+
     public void require(VaultId vaultId, String actor, Permission permission, String path) {
         require(vaultId, actor, permission);
         if (PathRules.resolve(authorization.listPathRules(vaultId), path, actor) == RuleEffect.DENY) {

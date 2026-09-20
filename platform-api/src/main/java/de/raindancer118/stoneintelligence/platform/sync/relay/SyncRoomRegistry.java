@@ -39,7 +39,7 @@ public class SyncRoomRegistry {
      */
     public void broadcastExcept(NoteId noteId, SyncSession sender, java.util.function.Consumer<SyncSession> action) {
         for (var session : rooms.getOrDefault(noteId, Set.of())) {
-            if (session.id().equals(sender.id())) {
+            if (sender != null && session.id().equals(sender.id())) {
                 continue;
             }
             try {

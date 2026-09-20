@@ -4,213 +4,88 @@
   import { completeLogin, getUser, login as startLogin, logout as startLogout, preferredUsername } from "./lib/auth";
   import { api, type Vault } from "./lib/api";
   import Sidebar from "./lib/components/Sidebar.svelte";
-  import VaultDetail from "./lib/components/VaultDetail.svelte";
 
   let user = $state<User | null>(null);
   let loading = $state(true);
-  let error = $state<string | null>(null);
+  let error = $state("");
   let vaults = $state<Vault[]>([]);
   let selected = $state<Vault | null>(null);
+  let section = $state<"notes" | "manage">("notes");
+  let dirty = $state(false);
+  let canManage = $state(false);
+  let authBusy = $state(false);
+  let alive = true;
 
-  async function refreshVaults() {
-    vaults = await api.listVaults();
-    if (selected) {
-      selected = vaults.find((v) => v.id === selected!.id) ?? null;
-    }
+  function mayLeave() { return !dirty || window.confirm("Ungespeicherte Änderungen verwerfen? Speichere oder exportiere deinen Entwurf, wenn du ihn behalten möchtest."); }
+  function choose(vault: Vault) {
+    if (selected?.id === vault.id || !mayLeave()) return;
+    selected = vault; section = "notes"; dirty = false; canManage = false;
   }
-
-  onMount(async () => {
-    try {
-      if (window.location.pathname === "/callback") {
-        await completeLogin();
-        window.history.replaceState({}, "", "/");
-      }
-    } catch (e) {
-      error = `Login fehlgeschlagen: ${(e as Error).message}`;
-    }
-
-    user = await getUser();
-    if (user) {
+  function navigate(next: "notes" | "manage") { if (next !== section && mayLeave()) { section = next; dirty = false; } }
+  async function refreshVaults(created?: Vault) {
+    const loaded = await api.listVaults();
+    if (!alive) return;
+    vaults = loaded;
+    if (created) { selected = created; section = "notes"; dirty = false; canManage = false; }
+    else selected = loaded.find(v => v.id === selected?.id) ?? loaded[0] ?? null;
+  }
+  async function authenticate(logout = false) {
+    if (authBusy || (logout && !mayLeave())) return;
+    authBusy = true; error = "";
+    try { if (logout) await startLogout(); else await startLogin(); }
+    catch (e) { error = e instanceof Error ? e.message : "Die Anmeldung ist gerade nicht erreichbar."; }
+    finally { authBusy = false; }
+  }
+  onMount(() => {
+    void (async () => {
       try {
-        await refreshVaults();
-      } catch (e) {
-        error = `Vaults konnten nicht geladen werden: ${(e as Error).message}`;
-      }
-    }
-    loading = false;
+        if (window.location.pathname === "/callback") {
+          await completeLogin(); window.history.replaceState({}, "", "/");
+        }
+        const signedIn = await getUser();
+        if (!alive) return;
+        user = signedIn;
+        if (user) await refreshVaults();
+      } catch (e) { if (alive) error = e instanceof Error ? e.message : "Das Dashboard konnte nicht geladen werden."; }
+      finally { if (alive) loading = false; }
+    })();
+    return () => { alive = false; };
   });
 </script>
 
-{#if loading}
-  <p class="status">Laden…</p>
+<svelte:head><title>{selected ? `${selected.name} · ` : ""}StoneIntelligence</title><meta name="description" content="Deine Notizen lesen, bearbeiten und gemeinsam organisieren." /></svelte:head>
+{#if loading}<div class="boot" role="status"><img src="/logo.png" alt="" width="48" height="48" /><p>Dein Arbeitsplatz wird geladen…</p></div>
 {:else if !user}
-  <section class="gate">
-    <img class="gate-logo" src="/logo.png" alt="" width="72" height="72" />
-    <h1>StoneIntelligence</h1>
-    <p>Anmeldung über Authentik, um deine Vaults zu verwalten.</p>
-    {#if error}
-      <p class="status error">{error}</p>
-    {/if}
-    <button onclick={() => startLogin()}>Mit Authentik anmelden</button>
-  </section>
+  <main class="gate"><div class="gate-brand"><img src="/logo.png" alt="" width="48" height="48" /><span>StoneIntelligence</span></div><h1>Ein Platz für dein Wissen.</h1><p>Lies und bearbeite deine Obsidian-Notizen im Browser. Deine Vaults und ihre Zugriffsrechte bleiben an einem Ort.</p>{#if error}<p class="feedback error" role="alert">{error}</p>{/if}<button class="primary" disabled={authBusy} onclick={() => authenticate()}>{authBusy ? "Anmeldung wird geöffnet…" : "Mit Authentik anmelden"}</button><p class="hint">Melde dich mit deinem bestehenden Konto an.</p></main>
 {:else}
   <div class="shell">
-    <header>
-      <img class="brand-logo" src="/logo.png" alt="" width="24" height="24" />
-      <span class="brand">StoneIntelligence</span>
-      <span class="greeting">Willkommen, {preferredUsername(user)}.</span>
-      <button class="logout" onclick={() => startLogout()}>Abmelden</button>
-    </header>
-    {#if error}
-      <p class="status error">{error}</p>
-    {/if}
-    <div class="body">
-      <aside>
-        <Sidebar {vaults} selectedId={selected?.id ?? null} onSelect={(v) => (selected = v)} onCreated={refreshVaults} />
-      </aside>
-      <main>
+    <header class="app-header"><div class="brand"><img src="/logo.png" alt="" width="30" height="30" /><span>StoneIntelligence</span></div><div class="account"><span>{preferredUsername(user)}</span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></header>
+    {#if error}<div class="app-error feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={() => { error = ""; void refreshVaults().catch(e => error = e.message); }}>Erneut versuchen</button></div>{/if}
+    <div class="body"><aside><Sidebar {vaults} selectedId={selected?.id ?? null} onSelect={choose} onCreated={refreshVaults} canCreate={() => mayLeave()} /></aside>
+      <main id="workspace">
         {#if selected}
+          <div class="workspace-heading"><div><p class="workspace-label">Arbeitsbereich</p><h1>{selected.name}</h1></div><nav aria-label="Vault-Bereiche"><button class:active={section === "notes"} aria-pressed={section === "notes"} onclick={() => navigate("notes")}>Notizen</button>{#if canManage}<button class:active={section === "manage"} aria-pressed={section === "manage"} onclick={() => navigate("manage")}>Verwaltung</button>{/if}</nav></div>
           {#key selected.id}
-            <VaultDetail vault={selected} />
+            {#if section === "notes"}
+              {#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("DELETE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
+            {:else}
+              {#await import("./lib/components/VaultDetail.svelte")}<p role="status">Verwaltung wird geladen…</p>{:then module}<div class="management"><module.default vault={selected} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
+            {/if}
           {/key}
-        {:else}
-          <p class="status">Wähle links einen Vault, oder leg einen neuen an.</p>
-        {/if}
+        {:else}<section class="first-vault"><h1>Willkommen in deinem Arbeitsplatz.</h1><p>Lege links deinen ersten Vault an. Ein Vault bündelt deine Notizen und legt fest, mit wem du sie teilst.</p><p class="hint">Du kannst anschließend neue Notizen schreiben oder deinen Obsidian-Vault über die Verwaltung verbinden.</p></section>{/if}
       </main>
     </div>
   </div>
 {/if}
-
 <style>
-  .status {
-    padding: 3rem;
-    color: var(--ink-dim);
-  }
-
-  .status.error {
-    color: var(--rust);
-  }
-
-  .gate {
-    max-width: 28rem;
-    margin: 6rem auto 0;
-    text-align: center;
-  }
-
-  .gate-logo {
-    margin-bottom: 1rem;
-  }
-
-  .gate h1 {
-    font-size: 2rem;
-  }
-
-  .gate p {
-    color: var(--ink-dim);
-    margin-bottom: 1.5rem;
-  }
-
-  .gate button {
-    background: var(--forest);
-    color: var(--surface);
-    border: none;
-    padding: 0.7rem 1.6rem;
-    border-radius: var(--radius);
-    font-weight: 700;
-  }
-
-  .gate button:hover {
-    background: var(--forest-hover);
-  }
-
-  .shell {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
-
-  header {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.85rem 1.5rem;
-    border-bottom: 1px solid var(--line);
-    background: var(--surface);
-  }
-
-  .brand-logo {
-    display: block;
-  }
-
-  .brand {
-    font-weight: 700;
-  }
-
-  .greeting {
-    color: var(--ink-dim);
-    flex: 1;
-  }
-
-  .logout {
-    background: none;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: 0.4rem 0.9rem;
-    color: var(--ink);
-  }
-
-  .logout:hover {
-    border-color: var(--ink-dim);
-  }
-
-  .body {
-    flex: 1;
-    display: grid;
-    grid-template-columns: 15rem 1fr;
-    min-width: 0;
-  }
-
-  aside {
-    border-right: 1px solid var(--line);
-    background: var(--surface);
-    min-width: 0;
-  }
-
-  main {
-    padding: 2rem 2.5rem 4rem;
-    max-width: 56rem;
-    min-width: 0;
-  }
-
-  /* Unter ~640px reicht kein Platz mehr fuer zwei nebeneinanderliegende Spalten - die feste
-     15rem-Sidebar allein fuellte auf einem Handy-Viewport fast den Bildschirm und quetschte den
-     Inhalt auf ein paar Zeichen Breite pro Zeile. Sidebar wird zur horizontal scrollbaren Leiste
-     ueber dem Inhalt statt ihn zu verdraengen. */
-  @media (max-width: 640px) {
-    header {
-      flex-wrap: wrap;
-      row-gap: 0.5rem;
-    }
-
-    .greeting {
-      flex-basis: 100%;
-      order: 3;
-    }
-
-    .body {
-      grid-template-columns: 1fr;
-      grid-template-rows: auto 1fr;
-    }
-
-    aside {
-      border-right: none;
-      border-bottom: 1px solid var(--line);
-      overflow-x: auto;
-    }
-
-    main {
-      padding: 1.25rem 1.25rem 3rem;
-      max-width: none;
-    }
-  }
+  .boot { min-height: 70vh; display: grid; place-content: center; justify-items: center; color: var(--ink-dim); }
+  .gate { max-width: 42rem; margin: clamp(4rem, 13vh, 10rem) auto; padding: 2rem; } .gate-brand { display: flex; gap: .8rem; align-items: center; font-weight: 700; margin-bottom: 4rem; } .gate h1 { font-size: clamp(2.4rem, 6vw, 3.8rem); letter-spacing: -.04em; line-height: 1.1; max-width: 14ch; } .gate > p { max-width: 47ch; color: var(--ink-dim); margin: 1.5rem 0; } .gate .primary { padding: .85rem 1.5rem; }
+  .app-header { min-height: 76px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; padding: .75rem 2rem; background: var(--surface); border-bottom: 1px solid var(--line); }
+  .brand, .account { display: flex; align-items: center; gap: .7rem; } .brand { font-weight: 700; letter-spacing: -.02em; } .account { color: var(--ink-dim); font-size: .85rem; }
+  .body { display: grid; grid-template-columns: 14rem minmax(0, 1fr); min-height: calc(100vh - 76px); } aside { background: var(--surface); border-right: 1px solid var(--line); min-width: 0; }
+  #workspace { min-width: 0; padding: 2rem clamp(1rem, 3vw, 3rem) 4rem; } .workspace-heading { display: flex; justify-content: space-between; align-items: end; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem; } .workspace-heading h1 { font-size: 1.9rem; margin: .25rem 0 0; overflow-wrap: anywhere; } .workspace-label { color: var(--ink-dim); font-size: .8rem; margin: 0; }
+  nav { display: flex; gap: .4rem; border-bottom: 1px solid var(--line); } nav button { border: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink-dim); padding: .6rem 1rem; } nav button.active { color: var(--forest); border-color: var(--forest); font-weight: 700; }
+  .management { max-width: 62rem; } .app-error { margin: 1rem 2rem; } .first-vault { padding: 4rem 0; max-width: 44rem; } .first-vault h1 { font-size: 2.5rem; } .first-vault p { max-width: 58ch; color: var(--ink-dim); }
+  @media (max-width: 1100px) { .body { grid-template-columns: 11.5rem minmax(0, 1fr); } }
+  @media (max-width: 850px) { .body { display: block; } aside { border-right: 0; border-bottom: 1px solid var(--line); } #workspace { padding-top: 1.5rem; } .app-header { padding: .6rem 1rem; } }
 </style>

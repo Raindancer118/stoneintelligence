@@ -53,6 +53,21 @@ public class JdbcSnapshotStore implements SnapshotStore {
         throw new IllegalStateException("unreachable");
     }
 
+    /** Ein CAS ueber den vorhandenen Unique-Key; konkurrierende WS-Appends gewinnen oder verlieren atomar. */
+    @Override
+    public java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload) {
+        return jdbcClient.sql("""
+                INSERT INTO platform.note_snapshots (note_id, server_sequence, state, is_ciphertext)
+                SELECT :noteId, :expected + 1, :state, false
+                WHERE :expected = (SELECT COALESCE(MAX(server_sequence), 0)
+                    FROM platform.note_snapshots WHERE note_id = :noteId)
+                ON CONFLICT (note_id, server_sequence) DO NOTHING
+                RETURNING server_sequence
+                """)
+            .param("noteId", noteId.value()).param("expected", expectedRevision).param("state", payload)
+            .query(Long.class).optional().map(sequence -> new UpdateRecord(sequence, payload, false));
+    }
+
     @Override
     public List<UpdateRecord> listSince(NoteId noteId, long afterServerSequence) {
         return jdbcClient.sql("""

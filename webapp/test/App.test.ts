@@ -7,7 +7,7 @@ vi.mock("../src/lib/auth", () => ({
   getUser: vi.fn(), completeLogin: vi.fn(), login: vi.fn(), logout: vi.fn(),
   preferredUsername: () => "Tom",
 }));
-vi.mock("../src/lib/api", () => ({ api: { listVaults: vi.fn() } }));
+vi.mock("../src/lib/api", () => ({ api: { listVaults: vi.fn(), permissions: vi.fn(), listNotes: vi.fn() } }));
 beforeEach(() => { vi.resetAllMocks(); });
 afterEach(cleanup);
 describe("dashboard startup", () => {
@@ -20,8 +20,10 @@ describe("dashboard startup", () => {
   it("mounts the dashboard and loads the vault list", async () => {
     vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
     vi.mocked(api.listVaults).mockResolvedValue([{ id: "vault", name: "My notes", createdAt: "" }]);
+    vi.mocked(api.permissions).mockResolvedValue(["READ"]);
+    vi.mocked(api.listNotes).mockResolvedValue({ epochId: "epoch", notes: [], complete: true, nextCursor: null });
     render(App);
-    await screen.findByText("My notes");
+    await screen.findByRole("heading", { name: "My notes", level: 1 });
     expect(api.listVaults).toHaveBeenCalledTimes(1);
   });
 });

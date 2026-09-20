@@ -84,6 +84,16 @@ public class SyncRelayService {
         }
     }
 
+    /** HTTP-Editor und WebSocket benutzen dieselbe Update-Historie und denselben Raum. */
+    public java.util.Optional<UpdateRecord> saveIfCurrent(NoteId noteId, long expectedRevision, byte[] payload) {
+        synchronized (lockFor(noteId)) {
+            var appended = snapshotStore.appendIfCurrent(noteId, expectedRevision, payload);
+            appended.ifPresent(update -> registry.broadcastExcept(noteId, null,
+                session -> session.sendDocUpdate(noteId, update.payload())));
+            return appended;
+        }
+    }
+
     /**
      * Eingehende Awareness-/Cursor-Nachricht (Anforderungen.md: "Über Websocket-Verbindungen
      * sollen die Cursor anderer Nutzer live sichtbar sein"): NUR weiterleiten, NIE persistieren
