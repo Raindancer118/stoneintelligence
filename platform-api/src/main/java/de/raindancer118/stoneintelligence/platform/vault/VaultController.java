@@ -51,6 +51,13 @@ public class VaultController {
             .toList();
     }
 
+    @GetMapping("/api/v1/vaults/{vaultId}/permissions")
+    public java.util.Set<Permission> permissions(@org.springframework.web.bind.annotation.PathVariable String vaultId,
+                                                 Authentication authentication) {
+        return authorization.effectivePermissions(de.raindancer118.stoneintelligence.domain.id.VaultId.of(vaultId),
+            authentication.getName());
+    }
+
     public record CreateVaultRequest(String name) {
     }
 

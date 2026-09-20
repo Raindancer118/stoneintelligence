@@ -12,5 +12,7 @@ public interface SnapshotStore {
 
     UpdateRecord append(NoteId noteId, byte[] payload, boolean ciphertext);
 
+    java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload);
+
     List<UpdateRecord> listSince(NoteId noteId, long afterServerSequence);
 }

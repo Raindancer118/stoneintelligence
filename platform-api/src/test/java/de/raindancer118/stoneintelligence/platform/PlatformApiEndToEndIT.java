@@ -154,6 +154,7 @@ class PlatformApiEndToEndIT {
     private static final class CapturingHandler extends BinaryWebSocketHandler {
         final BlockingQueue<ReceivedFrame> received = new LinkedBlockingQueue<>();
         final CountDownLatch closedLatch = new CountDownLatch(1);
+        final CountDownLatch caughtUp = new CountDownLatch(1);
         volatile CloseStatus closeStatus;
 
         @Override
@@ -161,6 +162,7 @@ class PlatformApiEndToEndIT {
             var raw = new byte[message.getPayloadLength()];
             message.getPayload().get(raw);
             if (raw[0] == MESSAGE_TYPE_CATCHUP_COMPLETE) {
+                caughtUp.countDown();
                 return;
             }
             // NoteId-Praefix (36 Byte) wird fuer die Testassertions ignoriert - dieser Test
@@ -179,6 +181,99 @@ class PlatformApiEndToEndIT {
             assertThat(frame).as("expected a WebSocket frame within 5s").isNotNull();
             return frame;
         }
+    }
+
+    @Test
+    void should_allowOnlyOneConcurrentCompareAndAppend_acrossRepositoryInstances() throws Exception {
+        var auth = bearerAuth("concurrent-editor");
+        var vault = post("/api/v1/vaults", auth, Map.of("name", "Concurrent"), Map.class);
+        var note = post("/api/v1/vaults/" + vault.get("id") + "/notes", auth,
+            Map.of("path", "concurrent.md", "noteLevel", 1), Map.class);
+        var noteId = de.raindancer118.stoneintelligence.domain.id.NoteId.of(note.get("id").toString());
+        var one = new de.raindancer118.stoneintelligence.platform.sync.relay.JdbcSnapshotStore(JdbcClient.create(dataSource));
+        var two = new de.raindancer118.stoneintelligence.platform.sync.relay.JdbcSnapshotStore(JdbcClient.create(dataSource));
+        var start = new java.util.concurrent.CyclicBarrier(2);
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var a = executor.submit(() -> { start.await(5, TimeUnit.SECONDS); return one.appendIfCurrent(noteId, 0, new byte[] {1, 2}); });
+            var b = executor.submit(() -> { start.await(5, TimeUnit.SECONDS); return two.appendIfCurrent(noteId, 0, new byte[] {3, 4}); });
+            assertThat(List.of(a.get(10, TimeUnit.SECONDS), b.get(10, TimeUnit.SECONDS)))
+                .filteredOn(java.util.Optional::isPresent).hasSize(1);
+        }
+        assertThat(one.listSince(noteId, 0)).hasSize(1);
+    }
+
+    @Test
+    void should_rejectUnsafePathsDuplicateNames_andMovesIntoDeniedFolders() throws Exception {
+        var auth = bearerAuth("path-editor");
+        var vault = post("/api/v1/vaults", auth, Map.of("name", "Safe paths"), Map.class);
+        var base = "/api/v1/vaults/" + vault.get("id");
+        for (var path : List.of("../outside.md", "/absolute.md", ".obsidian/settings.md", "a//b.md", "not-markdown.txt")) {
+            assertThat(postRaw(base + "/notes", auth, Map.of("path", path, "noteLevel", 1)).statusCode())
+                .as(path).isEqualTo(400);
+        }
+        var note = post(base + "/notes", auth, Map.of("path", "visible.md", "noteLevel", 1), Map.class);
+        assertThat(postRaw(base + "/notes", auth, Map.of("path", "visible.md", "noteLevel", 1)).statusCode()).isEqualTo(409);
+        post(base + "/path-rules", auth, Map.of("pathPrefix", "private/", "scopeSubject", "path-editor", "effect", "DENY"), Map.class);
+        assertThat(patch(base + "/notes/" + note.get("id"), auth, Map.of("path", "private/hidden.md")).statusCode()).isEqualTo(403);
+    }
+
+    @Test
+    void should_readAndConditionallySaveBrowserContent_withoutLosingConcurrentEdits() throws Exception {
+        var auth = bearerAuth("browser-editor");
+        var vault = post("/api/v1/vaults", auth, Map.of("name", "Browser notes"), Map.class);
+        var path = "/api/v1/vaults/" + vault.get("id") + "/notes";
+        var note = post(path, auth, Map.of("path", "welcome.md", "noteLevel", 1), Map.class);
+        var contentPath = path + "/" + note.get("id") + "/content";
+
+        var empty = get(contentPath, auth);
+        assertThat(empty.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(empty.body()).get("revision").asLong()).isZero();
+        var ticket = post("/api/v1/vaults/" + vault.get("id") + "/sync-tickets", auth, null, Map.class);
+        var handler = new CapturingHandler();
+        var session = new StandardWebSocketClient().execute(handler, wsUrl(ticket)).get(5, TimeUnit.SECONDS);
+        try {
+        joinNote(session, note.get("id").toString());
+        assertThat(handler.caughtUp.await(5, TimeUnit.SECONDS)).isTrue();
+        var payload = Map.of("expectedRevision", 0, "update", "AQID");
+        var saved = postRaw(contentPath, auth, payload);
+        assertThat(saved.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(saved.body()).get("revision").asLong()).isEqualTo(1);
+        assertThat(handler.awaitNextFrame().payload()).containsExactly((byte) 1, (byte) 2, (byte) 3);
+        assertThat(postRaw(contentPath, auth, payload).statusCode()).isEqualTo(409);
+        var loaded = json.readTree(get(contentPath, auth).body());
+        assertThat(loaded.get("updates").get(0).asText()).isEqualTo("AQID");
+        assertThat(loaded.get("updates").size()).isEqualTo(1);
+        assertThat(postRaw(contentPath, auth, Map.of("expectedRevision", 1, "update", "")).statusCode())
+            .isEqualTo(400);
+        assertThat(get(contentPath, bearerAuth("stranger")).statusCode()).isEqualTo(403);
+        } finally { session.close(); }
+
+        var base = "/api/v1/vaults/" + vault.get("id");
+        var role = post(base + "/roles", auth, Map.of("name", "reader", "permissions", List.of("READ")), Map.class);
+        var group = post(base + "/groups", auth, Map.of("name", "readers"), Map.class);
+        assertThat(postRaw(base + "/groups/" + group.get("id") + "/members", auth, Map.of("subject", "reader")).statusCode()).isEqualTo(200);
+        assertThat(postRaw(base + "/groups/" + group.get("id") + "/roles/" + role.get("id"), auth, null).statusCode()).isEqualTo(200);
+        assertThat(get(contentPath, bearerAuth("reader")).statusCode()).isEqualTo(200);
+        assertThat(postRaw(contentPath, bearerAuth("reader"), Map.of("expectedRevision", 1, "update", "AQID")).statusCode()).isEqualTo(403);
+        var encrypted = post(base + "/notes", auth, Map.of("path", "encrypted.md", "noteLevel", 101), Map.class);
+        assertThat(get(base + "/notes/" + encrypted.get("id") + "/content", auth).statusCode()).isEqualTo(409);
+    }
+
+    @Test
+    void should_hideDeniedPaths_fromBrowserListsContentAndAudit() throws Exception {
+        var auth = bearerAuth("path-reader");
+        var vault = post("/api/v1/vaults", auth, Map.of("name", "Path rules"), Map.class);
+        var base = "/api/v1/vaults/" + vault.get("id");
+        var note = post(base + "/notes", auth, Map.of("path", "private/secret.md", "noteLevel", 1), Map.class);
+        post(base + "/path-rules", auth,
+            Map.of("pathPrefix", "private/", "scopeSubject", "path-reader", "effect", "DENY"), Map.class);
+
+        var list = json.readTree(get(base + "/notes", auth).body());
+        assertThat(list.get("notes").size()).isZero();
+        assertThat(list.get("complete").asBoolean()).isTrue();
+        assertThat(get(base + "/notes/" + note.get("id"), auth).statusCode()).isEqualTo(403);
+        assertThat(get(base + "/notes/" + note.get("id") + "/audit", auth).statusCode()).isEqualTo(403);
+        assertThat(get(base + "/notes/" + note.get("id") + "/content", auth).statusCode()).isEqualTo(403);
     }
 
     @Test

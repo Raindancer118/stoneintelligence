@@ -1,0 +1,115 @@
+import { test, expect } from "@playwright/test";
+import * as Y from "yjs";
+
+const vaultId = "a0000000-0000-4000-8000-000000000001";
+const noteId = "b0000000-0000-4000-8000-000000000001";
+const initial = "# Kundenportal\n\nHier sammeln wir Entscheidungen und nächste Schritte für unser gemeinsames Projekt.\n\n## Nächste Schritte\n\n- Inhalte mit dem Team abstimmen\n- Rückmeldungen aus dem Kundengespräch ergänzen\n- Den nächsten Entwurf gemeinsam prüfen\n\n## Entscheidungen\n\n| Bereich | Stand |\n| --- | --- |\n| Navigation | Freigegeben |\n| Inhalte | In Bearbeitung |\n\n> Gute Dokumentation macht Entscheidungen nachvollziehbar.";
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("oidc.user:https://identity.example.test:dashboard-test", JSON.stringify({
+    access_token: "test-only-token", token_type: "Bearer", scope: "openid profile", expires_at: Math.floor(Date.now() / 1000) + 3600,
+    profile: { sub: "test-user", preferred_username: "Tom", name: "Tom" },
+  })));
+  const doc = new Y.Doc(); doc.getText("content").insert(0, initial);
+  const documents = new Map([[noteId, doc]]);
+  const revisions = new Map([[noteId, 1]]);
+  const notes = [{ id: noteId, vaultId, path: "Projekte/Kundenportal.md", noteLevel: 1, createdBy: "Tom", createdAt: "2026-09-19T09:00:00Z" }];
+  await page.route("**/api/v1/**", async route => {
+    const request = route.request(); const path = new URL(request.url()).pathname;
+    const json = (body: unknown, status = 200) => route.fulfill({ status, json: body });
+    if (path.endsWith("/vaults")) return json([{ id: vaultId, name: "Team-Wissen", createdAt: "2026-09-19T09:00:00Z" }]);
+    if (path.endsWith("/permissions")) return json(["READ", "WRITE", "CREATE", "DELETE"]);
+    if (path.endsWith("/content")) {
+      const id = path.split("/").at(-2)!;
+      const currentDoc = documents.get(id)!;
+      const revision = revisions.get(id)!;
+      if (request.method() === "POST") {
+        const body = request.postDataJSON();
+        if (body.expectedRevision !== revision) return json({}, 409);
+        Y.applyUpdate(currentDoc, Buffer.from(body.update, "base64")); revisions.set(id, revision + 1);
+        return json({ revision: revision + 1 });
+      }
+      return json({ revision, updates: revision ? [Buffer.from(Y.encodeStateAsUpdate(currentDoc)).toString("base64")] : [] });
+    }
+    if (path.endsWith("/notes")) {
+      if (request.method() === "POST") { const note = { ...notes[0]!, id: "b0000000-0000-4000-8000-000000000002", path: request.postDataJSON().path }; notes.push(note); documents.set(note.id, new Y.Doc()); revisions.set(note.id, 0); return json(note); }
+      return json({ epochId: "test-epoch", complete: true, nextCursor: null, notes });
+    }
+    if (path.endsWith("/audit")) return json([{ actor: "Tom", action: "note.created", payload: {}, occurredAt: "2026-09-19T09:00:00Z" }]);
+    if (request.method() === "PATCH") { notes[0]!.path = request.postDataJSON().path; return json(notes[0]); }
+    if (request.method() === "DELETE") { notes.splice(0, 1); return json({}); }
+    if (/\/(roles|groups|path-rules)$/.test(path)) return json([]);
+    return json({ error: "Unexpected test request" }, 500);
+  });
+});
+
+async function openNote(page: import("@playwright/test").Page) {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Kundenportal Projekte" }).click();
+  await expect(page.getByText("Hier sammeln wir Entscheidungen", { exact: false })).toBeVisible();
+}
+
+test("read, edit, save and reopen a note", async ({ page }, testInfo) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  await openNote(page);
+  await page.screenshot({ path: testInfo.outputPath("dashboard-desktop.png"), fullPage: true });
+  await page.getByRole("button", { name: "Bearbeiten", exact: true }).click();
+  await page.getByRole("textbox", { name: "Markdown-Inhalt" }).fill("# Überarbeitet\n\nIm Browser gespeichert.");
+  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect(page.getByText(/Gespeichert um/)).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Kundenportal Projekte" }).click();
+  await expect(page.getByText("Im Browser gespeichert.")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("preserves draft when the server rejects a stale revision", async ({ page }) => {
+  await openNote(page);
+  await page.route("**/content", route => route.request().method() === "POST" ? route.fulfill({ status: 409, json: {} }) : route.fallback());
+  await page.getByRole("button", { name: "Bearbeiten", exact: true }).click();
+  const editor = page.getByRole("textbox", { name: "Markdown-Inhalt" });
+  await editor.fill("Mein Entwurf bleibt erhalten");
+  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Zwischenzeitlich geändert");
+  await expect(editor).toHaveValue("Mein Entwurf bleibt erhalten");
+  page.once("dialog", dialog => dialog.dismiss());
+  await page.getByRole("button", { name: "Verwaltung", exact: true }).click();
+  await expect(editor).toHaveValue("Mein Entwurf bleibt erhalten");
+});
+
+test("mobile reading has no horizontal overflow and returns to the list", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openNote(page);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("dashboard-mobile.png"), fullPage: true });
+  await page.getByRole("button", { name: "Zur Notizliste" }).click();
+  await expect(page.getByRole("searchbox")).toBeVisible();
+});
+
+test("rename and confirmed deletion update the note list", async ({ page }) => {
+  await openNote(page);
+  await page.getByText("Details und Aktionen", { exact: true }).click();
+  await page.getByRole("button", { name: "Umbenennen / verschieben" }).click();
+  await page.getByLabel("Neuer Pfad", { exact: true }).fill("Archiv/Abschluss.md");
+  await page.getByRole("button", { name: "Pfad speichern" }).click();
+  await expect(page.getByRole("button", { name: "Abschluss Archiv" })).toBeVisible();
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Notiz löschen" }).click();
+  await expect(page.getByText("Noch keine Notizen vorhanden.")).toBeVisible();
+});
+
+
+test("create a note in a folder and save its first content", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Neue Notiz", exact: true }).click();
+  await page.getByLabel("Titel oder Pfad der neuen Notiz").fill("Ideen/Neue Notiz");
+  await page.getByRole("button", { name: "Notiz anlegen", exact: true }).click();
+  await expect(page.getByText("Hier ist Platz für deine Gedanken.")).toBeVisible();
+  await page.getByRole("button", { name: "Bearbeiten", exact: true }).click();
+  await page.getByRole("textbox", { name: "Markdown-Inhalt" }).fill("Meine erste Notiz");
+  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect(page.getByText(/Gespeichert um/)).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Neue Notiz Ideen" }).click();
+  await expect(page.getByText("Meine erste Notiz", { exact: true })).toBeVisible();
+});

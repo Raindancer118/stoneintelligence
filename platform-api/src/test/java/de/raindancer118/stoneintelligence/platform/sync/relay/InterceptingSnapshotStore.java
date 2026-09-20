@@ -28,6 +28,11 @@ final class InterceptingSnapshotStore implements SnapshotStore {
     }
 
     @Override
+    public java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload) {
+        return delegate.appendIfCurrent(noteId, expectedRevision, payload);
+    }
+
+    @Override
     public List<UpdateRecord> listSince(NoteId noteId, long afterServerSequence) {
         entered.countDown();
         await(proceed);

@@ -14,7 +14,7 @@ describe("API responses", () => {
   });
   it("does not hide HTTP failures with empty bodies", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 403 })));
-    await expect(api.addMember("vault", "group", "tom")).rejects.toThrow("HTTP 403");
+    await expect(api.addMember("vault", "group", "tom")).rejects.toMatchObject({ status: 403 });
   });
   it("does not hide malformed JSON", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("broken")));
