@@ -22,7 +22,8 @@ import {
 } from "./sync/multiplexedTransport";
 import { HttpError, NoteApiClient, type VaultSummary } from "./sync/NoteApiClient";
 import {
-  type ContentSyncPorts, type ContentSyncResult, conflictCopyPath, prepareNoteDoc, resolveFirstContact, syncNoteContent,
+  type ContentSyncPorts, type ContentSyncResult, conflictCopyPath, hasUnsyncedLocalEdits, prepareNoteDoc, resolveFirstContact,
+  syncNoteContent, textOfState,
 } from "./sync/noteContentSync";
 import { NoteStateStore } from "./sync/NoteStateStore";
 import { OperationJournal } from "./sync/OperationJournal";
@@ -158,6 +159,8 @@ export default class StoneIntelligencePlugin extends Plugin {
    * postwendend als eigene Aenderung zurueckgemeldet.
    */
   private readonly serverDrivenPaths = new Set<string>();
+  /** Pfade, deren Notiz gerade auf dem Server angelegt wird - deren eigene Anlage-Ankuendigung ist kein fremdes Ereignis. */
+  private readonly uploadingPaths = new Set<string>();
   private readonly localChangeTimers = new Map<string, number>();
   private readonly remoteChangeTimers = new Map<string, number>();
   private readonly noteLocks = new Map<string, Promise<unknown>>();
@@ -811,7 +814,7 @@ export default class StoneIntelligencePlugin extends Plugin {
           await this.applyRemoteRename(action.noteId, action.from, action.to);
           break;
         case "checkMissing":
-          await this.resolveMissingNote(action.noteId, action.path, action.locallyChanged);
+          await this.resolveMissingNote(action.noteId, action.path);
           break;
       }
     } catch (error) {
@@ -902,6 +905,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     }
     let noteId: string;
     let adopted = false;
+    this.uploadingPaths.add(path);
     try {
       noteId = await this.noteApiClient.createNote(this.settings.vaultId, path, 1);
     } catch (error) {
@@ -921,6 +925,8 @@ export default class StoneIntelligencePlugin extends Plugin {
       } else {
         throw error;
       }
+    } finally {
+      this.uploadingPaths.delete(path);
     }
     this.mapNote(path, noteId);
     const result = await this.syncContent(noteId, path, null, adopted ? "adopt" : "upload");
@@ -943,6 +949,9 @@ export default class StoneIntelligencePlugin extends Plugin {
       }
       const result = await syncNoteContent(this.contentPorts(), noteId, path);
       if (result.outcome === "offline") {
+        if (result.pendingLocalChanges) {
+          this.markDirty(noteId, path);
+        }
         return result;
       }
       this.recordMeta(noteId, path, serverRevision);
@@ -965,6 +974,17 @@ export default class StoneIntelligencePlugin extends Plugin {
         + `Die Server-Fassung ist jetzt aktiv, deine lokale liegt in „${basename(conflictPath)}“.`,
       10_000,
     );
+  }
+
+  /** Offline erfasste Aenderung merken - eine Loeschung von anderswo darf sie nicht wegraeumen. */
+  private markDirty(noteId: string, path: string): void {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    const state = this.vaultState();
+    const meta = state.noteMeta[noteId];
+    state.noteMeta[noteId] = meta
+      ? { ...meta, dirty: true }
+      : { revision: -1, mtime: file instanceof TFile ? file.stat.mtime : 0, size: file instanceof TFile ? file.stat.size : 0, dirty: true };
+    this.requestSettingsSave();
   }
 
   private recordMeta(noteId: string, path: string, serverRevision: number | null): void {
@@ -1051,10 +1071,10 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   /** Zugeordnete Notiz fehlt in der Server-Liste: geloescht oder nur nicht mehr sichtbar? */
-  private async resolveMissingNote(noteId: string, path: string, locallyChanged: boolean): Promise<void> {
+  private async resolveMissingNote(noteId: string, path: string): Promise<void> {
     const status = await this.noteApiClient.noteStatus(this.settings.vaultId, noteId);
     if (status === "deleted") {
-      await this.applyRemoteDeletion(noteId, path, locallyChanged);
+      await this.applyRemoteDeletion(noteId, path, await this.hasUnsyncedEdits(noteId, path));
     } else if (status === "forbidden") {
       this.detachLive(path);
       this.unmapNote(noteId);
@@ -1076,7 +1096,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     if (locallyChanged) {
-      this.activity.log("kept", path, "Anderswo gelöscht – lokale Änderungen behalten, wird neu hochgeladen");
+      this.activity.log("kept", path, "Anderswo gelöscht, hier aber noch nicht übertragene Änderungen – behalten und neu hochgeladen");
       this.requestPass();
       return;
     }
@@ -1089,11 +1109,24 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.activity.log("deleted", path, "Auf einem anderen Gerät gelöscht, im Papierkorb");
   }
 
-  private locallyChangedSinceSync(noteId: string, path: string): boolean {
+  /**
+   * Belegte, nie uebertragene lokale Aenderungen? (s. {@link hasUnsyncedLocalEdits}). Eine
+   * geoeffnete, live gebundene Notiz ist per Definition synchron - jede Eingabe ging sofort raus.
+   */
+  private async hasUnsyncedEdits(noteId: string, path: string): Promise<boolean> {
     const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile) || (this.live.has(path) && this.transport?.state === "online")) {
+      return false;
+    }
     const meta = this.vaultState().noteMeta[noteId];
-    return !(file instanceof TFile) || !meta || meta.mtime !== file.stat.mtime || meta.size !== file.stat.size;
+    return hasUnsyncedLocalEdits({
+      dirty: meta?.dirty === true,
+      statUnchanged: meta !== undefined && meta.mtime === file.stat.mtime && meta.size === file.stat.size,
+      lastSyncedText: textOfState(await this.stateStore.load(this.settings.vaultId, noteId)),
+      currentText: await this.app.vault.read(file),
+    });
   }
+
 
   /**
    * Uebertraegt offline gemerkte Loeschungen/Umbenennungen in Reihenfolge. Netzwerkfehler: Rest
@@ -1159,7 +1192,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         return;
       }
       if (messageType === VAULT_NOTE_CREATED) {
-        if (localPath) {
+        if (localPath || this.uploadingPaths.has(path)) {
           return;
         }
         const existing = this.app.vault.getAbstractFileByPath(path);
@@ -1178,7 +1211,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         }
       } else if (messageType === VAULT_NOTE_DELETED) {
         if (localPath) {
-          await this.applyRemoteDeletion(noteId, localPath, this.locallyChangedSinceSync(noteId, localPath));
+          await this.applyRemoteDeletion(noteId, localPath, await this.hasUnsyncedEdits(noteId, localPath));
         }
       }
       await this.saveSettings();
