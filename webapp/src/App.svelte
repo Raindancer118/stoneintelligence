@@ -67,7 +67,7 @@
           <div class="workspace-heading"><div><p class="workspace-label">Arbeitsbereich</p><h1>{selected.name}</h1></div><nav aria-label="Vault-Bereiche"><button class:active={section === "notes"} aria-pressed={section === "notes"} onclick={() => navigate("notes")}>Notizen</button>{#if canManage}<button class:active={section === "manage"} aria-pressed={section === "manage"} onclick={() => navigate("manage")}>Verwaltung</button>{/if}</nav></div>
           {#key selected.id}
             {#if section === "notes"}
-              {#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("DELETE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
+              {#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
             {:else}
               {#await import("./lib/components/VaultDetail.svelte")}<p role="status">Verwaltung wird geladen…</p>{:then module}<div class="management"><module.default vault={selected} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
             {/if}

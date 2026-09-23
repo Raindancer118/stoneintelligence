@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const json = (body: unknown, status = 200) => route.fulfill({ status, json: body });
     if (path.endsWith("/vaults")) return json([{ id: vaultId, name: "Team-Wissen", createdAt: "2026-09-19T09:00:00Z" }]);
-    if (path.endsWith("/permissions")) return json(["READ", "WRITE", "CREATE", "DELETE"]);
+    if (path.endsWith("/permissions")) return json(["READ", "WRITE", "CREATE", "DELETE", "MANAGE"]);
     if (path.endsWith("/content")) {
       const id = path.split("/").at(-2)!;
       const currentDoc = documents.get(id)!;

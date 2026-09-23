@@ -71,6 +71,29 @@ class AuthorizationControllerTest {
         assertThat(readers.roleIds()).containsExactly(role.id());
     }
 
+    /**
+     * Notizen loeschen und Mitglieder verwalten waren bisher dasselbe Recht (DELETE) - damit
+     * haette jede Person, die man zum Mitarbeiten einlaedt, selbst weitere einladen und die
+     * Rechte aller anderen aendern koennen.
+     */
+    @Test
+    void should_rejectMemberManagement_forCollaboratorsWhoMayOnlyDeleteNotes() {
+        var vaultId = ownerBootstrappedVault("tom");
+        var editorRole = authorization.createRole(vaultId, "Mitbearbeiter",
+            java.util.EnumSet.of(Permission.READ, Permission.WRITE, Permission.CREATE, Permission.DELETE));
+        var editors = authorization.createGroup(vaultId, "Mitbearbeiter");
+        authorization.assignRole(editors.id(), editorRole.id());
+        authorization.addMember(editors.id(), "carol");
+        var carol = new TestingAuthenticationToken("carol", null);
+
+        assertThatThrownBy(() -> controller.addMember(vaultId.value().toString(), editors.id(),
+            new AuthorizationController.MemberRequest("mallory"), carol))
+            .isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> controller.createRole(vaultId.value().toString(),
+            new AuthorizationController.CreateRoleRequest("x", List.of(Permission.READ)), carol))
+            .isInstanceOf(ForbiddenException.class);
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"addMember", "removeMember", "assignRole", "unassignRole"})
     void should_rejectGroupMutation_when_groupBelongsToAnotherVault(String operation) {

@@ -22,7 +22,7 @@ class VaultControllerTest {
         assertThat(response.name()).isEqualTo("my-vault");
         var vaultId = de.raindancer118.stoneintelligence.domain.id.VaultId.of(response.id());
         assertThat(authorization.effectivePermissions(vaultId, "tom"))
-            .containsExactlyInAnyOrder(Permission.READ, Permission.WRITE, Permission.DELETE, Permission.CREATE);
+            .containsExactlyInAnyOrder(Permission.READ, Permission.WRITE, Permission.DELETE, Permission.CREATE, Permission.MANAGE);
     }
 
     @Test
