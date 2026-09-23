@@ -237,4 +237,36 @@ class VaultAnnouncementServiceTest {
             assertThat(subscriber.received).isEmpty();
         }
     }
+
+    // Ordner sind eigene Objekte: ein auf Geraet A geloeschter oder leer angelegter Ordner muss
+    // die anderen Geraete genauso sofort erreichen wie eine Notiz.
+    @Nested
+    class Folders {
+
+        @Test
+        void should_announceFolderChanges_onlyToConnectionsThatUnderstandThem() {
+            var modern = new RecordingVaultSubscriber("modern");
+            var older = new RecordingVaultSubscriber("older");
+            older.folderEvents = false;
+            announcements.subscribe(vaultId, modern);
+            announcements.subscribe(vaultId, older);
+
+            announcements.announceFoldersChanged(vaultId, "Projekte/Alt");
+
+            assertThat(modern.received).extracting(RecordingVaultSubscriber.Received::messageType, RecordingVaultSubscriber.Received::path)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(SyncFrame.TYPE_VAULT_FOLDERS_CHANGED, "Projekte/Alt"));
+            assertThat(older.received).isEmpty();
+        }
+
+        @Test
+        void should_notRevealFolders_theReaderMayNotSee() {
+            var restricted = RecordingVaultSubscriber.readingOnly("restricted", "Offen");
+            announcements.subscribe(vaultId, restricted);
+
+            announcements.announceFoldersChanged(vaultId, "Geheim");
+            announcements.announceFoldersChanged(vaultId, "Offen");
+
+            assertThat(restricted.received).extracting(RecordingVaultSubscriber.Received::path).containsExactly("Offen");
+        }
+    }
 }

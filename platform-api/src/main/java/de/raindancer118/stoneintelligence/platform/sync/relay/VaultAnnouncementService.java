@@ -67,6 +67,11 @@ public class VaultAnnouncementService {
         announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_RENAMED, noteId, newPath);
     }
 
+    /** Ordner angelegt, geloescht oder verschoben - nur an Verbindungen, die Ordner verstehen. */
+    public void announceFoldersChanged(VaultId vaultId, String path) {
+        announce(vaultId, SyncFrame.TYPE_VAULT_FOLDERS_CHANGED, SyncFrame.NO_NOTE, path);
+    }
+
     /**
      * Zustellung je Empfaenger einzeln abgesichert - dieselbe Lehre wie bei
      * {@link SyncRoomRegistry#broadcastExcept}: eine bereits tote, aber noch nicht abgeraeumte
@@ -121,6 +126,9 @@ public class VaultAnnouncementService {
             try {
                 if (messageType == SyncFrame.TYPE_VAULT_NOTE_UPDATED
                         && (!subscriber.wantsContentUpdates() || subscriber.hasJoined(noteId))) {
+                    continue;
+                }
+                if (messageType == SyncFrame.TYPE_VAULT_FOLDERS_CHANGED && !subscriber.wantsFolderEvents()) {
                     continue;
                 }
                 if (!subscriber.mayRead(path)) {

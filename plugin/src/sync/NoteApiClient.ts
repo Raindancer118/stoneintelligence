@@ -134,6 +134,44 @@ export class NoteApiClient {
     }
   }
 
+  /** Ordner des Vaults; `null`, wenn der Server noch keine Ordner-Synchronisation kennt. */
+  async listFolders(vaultId: string): Promise<string[] | null> {
+    const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/folders`, {
+      headers: { Authorization: `Bearer ${await this.getAccessToken()}` },
+    });
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      throw new HttpError(response.status, "failed to list folders");
+    }
+    return (await response.json()) as string[];
+  }
+
+  async createFolder(vaultId: string, path: string): Promise<void> {
+    await this.folderRequest(`${this.baseUrl}/api/v1/vaults/${vaultId}/folders`, "POST", { path }, "create folder");
+  }
+
+  async renameFolder(vaultId: string, from: string, to: string): Promise<void> {
+    await this.folderRequest(`${this.baseUrl}/api/v1/vaults/${vaultId}/folders/rename`, "POST", { from, to }, "rename folder");
+  }
+
+  async deleteFolder(vaultId: string, path: string): Promise<void> {
+    const query = new URLSearchParams({ path }).toString();
+    await this.folderRequest(`${this.baseUrl}/api/v1/vaults/${vaultId}/folders?${query}`, "DELETE", undefined, "delete folder");
+  }
+
+  private async folderRequest(url: string, method: string, body: unknown, action: string): Promise<void> {
+    const headers: Record<string, string> = { Authorization: `Bearer ${await this.getAccessToken()}` };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
+    const response = await this.fetchImpl(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    if (!response.ok) {
+      throw new HttpError(response.status, `failed to ${action}`);
+    }
+  }
+
   async deleteNote(vaultId: string, noteId: string, operationId: string): Promise<void> {
     const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/notes/${noteId}`, {
       method: "DELETE",

@@ -20,11 +20,15 @@ export const VAULT_NOTE_RENAMED = 8;
 export const VAULT_NOTE_UPDATED = 9;
 /** Client->Server: "ich verstehe VAULT_NOTE_UPDATED" - aeltere Plugins bekommen Typ 9 so nie. */
 const TYPE_SUBSCRIBE_CONTENT_UPDATES = 10;
+/** Client->Server: "ich verstehe VAULT_FOLDERS_CHANGED" - aus demselben Grund opt-in wie Typ 10. */
+const TYPE_SUBSCRIBE_FOLDER_EVENTS = 11;
+/** Ordner unter diesem Pfad angelegt/geloescht/verschoben - Anlass, die Ordnerliste zu holen. */
+export const VAULT_FOLDERS_CHANGED = 12;
 const NIL_NOTE_ID = "00000000-0000-0000-0000-000000000000";
 const TYPE_VAULT_NOTE_CREATED = VAULT_NOTE_CREATED;
 const TYPE_VAULT_NOTE_DELETED = VAULT_NOTE_DELETED;
 const TYPE_VAULT_NOTE_RENAMED = VAULT_NOTE_RENAMED;
-const VAULT_EVENT_TYPES = new Set([TYPE_VAULT_NOTE_CREATED, TYPE_VAULT_NOTE_DELETED, TYPE_VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED]);
+const VAULT_EVENT_TYPES = new Set([TYPE_VAULT_NOTE_CREATED, TYPE_VAULT_NOTE_DELETED, TYPE_VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED, VAULT_FOLDERS_CHANGED]);
 
 export type VaultEventHandler = (messageType: number, noteId: string, path: string) => void;
 /** Muss zu {@code SyncClient.CLOSE_CODE_NOTE_DELETED} passen - SyncClient reagiert bereits darauf, bleibt unveraendert. */
@@ -98,6 +102,8 @@ export interface MultiplexedTransportOptions {
   onStateChange?: (state: TransportState) => void;
   /** Inhalts-Ankuendigungen geschlossener Notizen abonnieren (nach jedem Connect erneut). */
   subscribeContentUpdates?: boolean;
+  /** Ordner-Ankuendigungen abonnieren (nach jedem Connect erneut). */
+  subscribeFolderEvents?: boolean;
   /** Nach JEDEM erfolgreichen (Re-)Connect - Anlass, verpasste Vault-Ereignisse per Abgleich nachzuholen. */
   onConnected?: () => void;
   sleep?: (ms: number) => Promise<void>;
@@ -158,6 +164,7 @@ export class MultiplexedTransport {
   private readonly onStateChange: ((state: TransportState) => void) | null;
   private readonly onConnected: (() => void) | null;
   private readonly subscribeContentUpdates: boolean;
+  private readonly subscribeFolderEvents: boolean;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly onVaultEvent: VaultEventHandler | null;
 
@@ -173,6 +180,7 @@ export class MultiplexedTransport {
     this.onStateChange = options.onStateChange ?? null;
     this.onConnected = options.onConnected ?? null;
     this.subscribeContentUpdates = options.subscribeContentUpdates ?? false;
+    this.subscribeFolderEvents = options.subscribeFolderEvents ?? false;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.onVaultEvent = options.onVaultEvent ?? null;
   }
@@ -254,6 +262,9 @@ export class MultiplexedTransport {
         this.setState("online");
         if (this.subscribeContentUpdates) {
           this.sendFramed(TYPE_SUBSCRIBE_CONTENT_UPDATES, NIL_NOTE_ID, new Uint8Array(0));
+        }
+        if (this.subscribeFolderEvents) {
+          this.sendFramed(TYPE_SUBSCRIBE_FOLDER_EVENTS, NIL_NOTE_ID, new Uint8Array(0));
         }
         if (this.everConnected) {
           // RECONNECT (nicht der allererste Connect): der Server kennt keine alten Joins einer
