@@ -20,6 +20,9 @@ public interface NoteRepository {
      */
     Optional<Note> findById(VaultId vaultId, NoteId id);
 
+    /** Alle Notes unter genau diesem Pfad (der Pfad ist nicht eindeutig erzwungen). Vault-gescopt. */
+    java.util.List<Note> findByPath(VaultId vaultId, String path);
+
     /**
      * Umbenennen/Verschieben aendert nur den Pfad - die {@link NoteId} bleibt stabil
      * (Fehlerklasse 5). Wirft {@link NoteNotFoundException}, wenn die Note nicht in

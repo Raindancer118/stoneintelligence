@@ -31,6 +31,11 @@ public final class FakeNoteRepository implements NoteRepository {
     }
 
     @Override
+    public synchronized java.util.List<Note> findByPath(VaultId vaultId, String path) {
+        return notes.values().stream().filter(n -> n.vaultId().equals(vaultId) && n.path().equals(path)).toList();
+    }
+
+    @Override
     public synchronized Optional<Note> findById(VaultId vaultId, NoteId id) {
         return Optional.ofNullable(notes.get(id)).filter(note -> note.vaultId().equals(vaultId));
     }

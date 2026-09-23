@@ -73,6 +73,15 @@ public class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
+    public List<Note> findByPath(VaultId vaultId, String path) {
+        return jdbcClient.sql("SELECT * FROM platform.notes WHERE vault_id = :vaultId AND path = :path ORDER BY sequence")
+            .param("vaultId", vaultId.value())
+            .param("path", path)
+            .query(NOTE_MAPPER)
+            .list();
+    }
+
+    @Override
     @Transactional
     public Note rename(VaultId vaultId, NoteId noteId, String newPath) {
         findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId));
