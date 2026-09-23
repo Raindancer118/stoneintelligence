@@ -1,0 +1,25 @@
+{
+  "name": "stoneintelligence-yjs-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Yjs fuer die Java-API (GraalJS): Notiztext lesen und als minimales Yjs-Update aendern - mit derselben Diff-Logik wie das Plugin.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "build": "esbuild src/bridge.ts --bundle --format=iife --platform=neutral --main-fields=module,main --minify --outfile=../platform-api/src/main/resources/yjs/yjs-bridge.js"
+  },
+  "dependencies": {
+    "fast-diff": "^1.3.0",
+    "yjs": "^13.6.27"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.4.3",
+    "vitest": "^5.0.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true
+  }
+}
