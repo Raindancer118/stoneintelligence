@@ -42,14 +42,15 @@ public final class TopicPlanner {
     public Result plan(SourceDocument document, List<Chunk> chunks, List<String> existingTitles) {
         String system = Prompts.planSystem(config.llm().language());
         String user = Prompts.planUser(document.title(), relevant(existingTitles, document), excerpt(chunks));
+        boolean complete = chunks.stream().mapToInt(chunk -> chunk.text().length()).sum() <= TEXT_BUDGET;
         LlmAnswer answer = llm.complete(Tier.SMART, system, user);
         try {
-            return new Result(parse(answer.text()), answer.tokensUsed());
+            return new Result(parse(answer.text(), complete), answer.tokensUsed());
         } catch (ExtractionException first) {
             LlmAnswer repaired = llm.complete(Tier.SMART, system, Prompts.repairUser(answer.text(), first.getMessage()));
             int used = answer.tokensUsed() + repaired.tokensUsed();
             try {
-                return new Result(parse(repaired.text()), used);
+                return new Result(parse(repaired.text(), complete), used);
             } catch (ExtractionException second) {
                 return new Result(TopicPlan.single(document.title()), used);
             }
@@ -59,7 +60,7 @@ public final class TopicPlanner {
     public record Result(TopicPlan plan, int tokensUsed) {
     }
 
-    private TopicPlan parse(String answer) {
+    private TopicPlan parse(String answer, boolean complete) {
         JsonNode topics = ConceptJson.tree(answer == null ? "" : answer).get("topics");
         if (topics == null || !topics.isArray()) {
             throw new ExtractionException("the answer has no \"topics\" array");
@@ -67,7 +68,7 @@ public final class TopicPlanner {
         List<TopicPlan.Topic> planned = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (JsonNode node : topics) {
-            String title = TextSimilarity.plain(node.path("title").asText(""));
+            String title = TopicPlan.withoutKind(TextSimilarity.plain(node.path("title").asText("")));
             if (title.isEmpty() || !seen.add(TextSimilarity.normalise(title))) {
                 continue;
             }
@@ -85,7 +86,7 @@ public final class TopicPlanner {
             throw new ExtractionException("the plan names no topic");
         }
         int limit = Math.max(1, config.notes().maxNotesPerDocument());
-        return new TopicPlan(planned.size() > limit ? planned.subList(0, limit) : planned);
+        return new TopicPlan(planned.size() > limit ? planned.subList(0, limit) : planned, complete);
     }
 
     /** The document, or - when it is long - the beginning of every chunk, so no part is unseen. */

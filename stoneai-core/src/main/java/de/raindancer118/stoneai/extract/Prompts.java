@@ -38,7 +38,9 @@ final class Prompts {
                   diese Notiz.
                 - Titel sind eindeutig und auch ohne das Dokument verständlich:
                   "Verkehrsunfall am 05.06.2026" statt "Unfall", Personen mit vollem Namen. Kein
-                  Satz, keine Frage, keine Dateiendung.
+                  Satz, keine Frage, keine Dateiendung, nicht die Art ("kind") in Klammern. Nimm in
+                  den Titel nur Angaben, die der Text ausdrücklich so nennt (z. B. den Unfallort
+                  nur, wenn er als Ort des Geschehens genannt wird, nicht aus einer Anschrift).
                 - "scope" sagt in einem Satz, was in die Notiz gehört.
                 - "kind" ist eines von: ereignis, vorgang, person, organisation, ort, figur,
                   begriff, thema.
@@ -77,8 +79,8 @@ final class Prompts {
 
                 Regeln:
                 - Schreibe zu jedem Thema der Liste, zu dem dieser Abschnitt etwas enthält, genau
-                  EINE Notiz und übernimm den Titel exakt. Themen, zu denen der Abschnitt nichts
-                  enthält, lässt du weg.%s
+                  EINE Notiz und übernimm den Titel exakt - nur den Text zwischen „ und “, ohne
+                  die Art. Themen, zu denen der Abschnitt nichts enthält, lässt du weg.%s
                 - Alle Einzelheiten gehören in die Notiz ihres Themas: Nummern, Aktenzeichen,
                   Adressen, Telefonnummern, Daten, Beträge, Nebenpersonen, Gegenstände,
                   Abbildungen. Nichts davon wird eine eigene Notiz.
@@ -112,8 +114,8 @@ final class Prompts {
         String topics = plan.isEmpty()
                 ? "(keine Vorgabe - wähle wenige, tragfähige Themen: Vorgänge, Beteiligte, zentrale Begriffe)"
                 : plan.topics().stream()
-                        .map(topic -> "- " + topic.title() + " (" + topic.kind() + ")"
-                                + (topic.scope().isBlank() ? "" : ": " + topic.scope()))
+                        .map(topic -> "- „" + topic.title() + "“ – Art: " + topic.kind()
+                                + (topic.scope().isBlank() ? "" : "; gehört hinein: " + topic.scope()))
                         .collect(Collectors.joining("\n"));
         return """
                 Themen:
