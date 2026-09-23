@@ -64,6 +64,17 @@ public abstract class FolderRepositoryContractTest {
     }
 
     @Test
+    void should_rememberWhoCreatedAFolder() {
+        folders.ensure(vaultId, "A", "tom");
+        folders.ensure(vaultId, "A/B", "ki:Gemini");
+
+        assertThat(folders.creator(vaultId, "A")).contains("tom");
+        assertThat(folders.creator(vaultId, "A/B")).contains("ki:Gemini");
+        assertThat(folders.creator(vaultId, "C")).isEmpty();
+        assertThat(folders.creator(newVault(), "A")).isEmpty();
+    }
+
+    @Test
     void should_keepFoldersOfOtherVaultsUntouched() {
         var other = newVault();
         folders.ensure(other, "A/B", "tom");

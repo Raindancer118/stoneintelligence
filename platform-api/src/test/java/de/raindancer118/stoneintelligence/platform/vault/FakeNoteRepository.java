@@ -31,6 +31,11 @@ public final class FakeNoteRepository implements NoteRepository {
     }
 
     @Override
+    public synchronized boolean hasEntriesUnder(VaultId vaultId, String folder) {
+        return notes.values().stream().anyMatch(n -> n.vaultId().equals(vaultId) && n.path().startsWith(folder + "/"));
+    }
+
+    @Override
     public synchronized java.util.List<Note> findByPath(VaultId vaultId, String path) {
         return notes.values().stream().filter(n -> n.vaultId().equals(vaultId) && n.path().equals(path)).toList();
     }

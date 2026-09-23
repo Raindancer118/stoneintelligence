@@ -123,11 +123,13 @@ public class AiWriteService {
      * wird als Konflikt gemeldet.
      */
     public AiRevertReport revert(VaultId vaultId, UUID changeSetId, String actor) {
-        openChangeSet(vaultId, changeSetId);
+        var changeSet = openChangeSet(vaultId, changeSetId);
         if (!changeSets.markReverted(changeSetId, clock.get())) {
             throw new AiWriteRefusedException("Diese KI-Änderung wurde bereits rückgängig gemacht");
         }
         var conflicts = new ArrayList<AiRevertConflict>();
+        var removedFrom = new java.util.TreeSet<String>(java.util.Comparator.comparingInt((String path) -> -path.length())
+            .thenComparing(java.util.Comparator.naturalOrder()));
         var reverted = 0;
         for (var change : changeSets.changes(changeSetId).reversed()) {
             var note = notes.findById(vaultId, change.noteId());
@@ -146,10 +148,15 @@ public class AiWriteService {
             }
             if (change.kind() == AiChange.Kind.CREATED) {
                 remove(note.get(), actor);
+                removedFrom.addAll(de.raindancer118.stoneintelligence.platform.vault.FolderPaths.parentsOf(note.get().path()));
             } else {
                 writeText(note.get(), change.textBefore(), actor);
             }
             reverted++;
+        }
+        // Von der KI angelegte Ordner, die jetzt leer sind, gehen mit - tiefste zuerst.
+        for (var folder : removedFrom) {
+            folders.deleteIfEmptyAndCreatedBy(vaultId, folder, changeSet.agent(), notes.hasEntriesUnder(vaultId, folder));
         }
         return new AiRevertReport(reverted, List.copyOf(conflicts));
     }

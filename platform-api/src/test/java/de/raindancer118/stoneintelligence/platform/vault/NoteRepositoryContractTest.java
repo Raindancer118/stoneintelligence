@@ -59,6 +59,21 @@ public abstract class NoteRepositoryContractTest {
         }
 
         @Test
+        void should_tellWhetherAnythingLiesBelowAFolder() {
+            var repository = repository();
+            var vaultId = newVault();
+            repository.create(vaultId, "A/B/x.md", NoteLevel.of(1), "tom");
+            repository.create(vaultId, "C_D/y.pdf", NoteLevel.of(1), "tom", NoteKind.FILE);
+
+            assertThat(repository.hasEntriesUnder(vaultId, "A")).isTrue();
+            assertThat(repository.hasEntriesUnder(vaultId, "A/B")).isTrue();
+            assertThat(repository.hasEntriesUnder(vaultId, "C_D")).isTrue();
+            assertThat(repository.hasEntriesUnder(vaultId, "C%D")).isFalse();
+            assertThat(repository.hasEntriesUnder(vaultId, "A/B/x.md")).isFalse();
+            assertThat(repository.hasEntriesUnder(newVault(), "A")).isFalse();
+        }
+
+        @Test
         void should_findByExactPath_onlyInTheOwnVault() {
             var repository = repository();
             var vaultId = newVault();

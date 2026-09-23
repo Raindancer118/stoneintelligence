@@ -16,6 +16,9 @@ public interface FolderRepository {
     /** Legt den Ordner samt fehlender Elternordner an; liefert nur die tatsaechlich neuen. */
     List<String> ensure(VaultId vaultId, String path, String actor);
 
+    /** Wer den Ordner angelegt hat (Mensch oder {@code ki:<Name>}). */
+    java.util.Optional<String> creator(VaultId vaultId, String path);
+
     /** Loescht den Ordner und alles darunter; liefert die Anzahl. */
     int deleteTree(VaultId vaultId, String path);
 
