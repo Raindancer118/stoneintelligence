@@ -75,6 +75,19 @@ public class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
+    public boolean hasEntriesUnder(VaultId vaultId, String folder) {
+        // Praefixvergleich ohne LIKE, damit _ und % im Ordnernamen nichts bedeuten.
+        return jdbcClient.sql("""
+                SELECT EXISTS (SELECT 1 FROM platform.notes
+                               WHERE vault_id = :vaultId AND left(path, length(:folder) + 1) = :folder || '/')
+                """)
+            .param("vaultId", vaultId.value())
+            .param("folder", folder)
+            .query(Boolean.class)
+            .single();
+    }
+
+    @Override
     public List<Note> findByPath(VaultId vaultId, String path) {
         return jdbcClient.sql("SELECT * FROM platform.notes WHERE vault_id = :vaultId AND path = :path ORDER BY sequence")
             .param("vaultId", vaultId.value())

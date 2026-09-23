@@ -42,6 +42,21 @@ public class FolderRegistry {
         announcements.announceFoldersChanged(vaultId, to);
     }
 
+    /**
+     * Entfernt einen Ordner, den {@code creator} angelegt hat, wenn nichts mehr darin liegt - keine
+     * Eintraege ({@code hasEntries}) und keine Unterordner. Liefert, ob er entfernt wurde.
+     */
+    public boolean deleteIfEmptyAndCreatedBy(VaultId vaultId, String path, String creator, boolean hasEntries) {
+        if (hasEntries || !folders.creator(vaultId, path).map(creator::equals).orElse(false)) {
+            return false;
+        }
+        if (folders.list(vaultId).stream().anyMatch(other -> other.startsWith(path + "/"))) {
+            return false;
+        }
+        delete(vaultId, path);
+        return true;
+    }
+
     public void delete(VaultId vaultId, String path) {
         if (folders.deleteTree(vaultId, path) > 0) {
             announcements.announceFoldersChanged(vaultId, path);

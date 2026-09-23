@@ -47,6 +47,15 @@ public class JdbcFolderRepository implements FolderRepository {
     }
 
     @Override
+    public java.util.Optional<String> creator(VaultId vaultId, String path) {
+        return jdbcClient.sql("SELECT created_by FROM platform.folders WHERE vault_id = :vaultId AND path = :path")
+            .param("vaultId", vaultId.value())
+            .param("path", path)
+            .query(String.class)
+            .optional();
+    }
+
+    @Override
     public int deleteTree(VaultId vaultId, String path) {
         return jdbcClient.sql("DELETE FROM platform.folders WHERE vault_id = :vaultId AND " + INSIDE)
             .param("vaultId", vaultId.value())

@@ -188,6 +188,23 @@ class AiWriteServiceTest {
     @Nested
     class Rueckgaengig {
 
+        // Rueckgaengig raeumt auch die Ordner weg, die die KI angelegt hat - aber nur, wenn sie leer
+        // sind; Ordner eines Menschen oder mit anderem Inhalt bleiben.
+        @Test
+        void should_removeTheFoldersTheAiCreated_whenTheyAreEmptyAfterwards() {
+            folders.ensure(vaultId, "Mensch", "tom");
+            humanNote("Gemischt/Von Tom.md", "Tom\n");
+            folders.ensure(vaultId, "Gemischt", "tom");
+            var changeSet = newChangeSet();
+            service.createNote(vaultId, changeSet.id(), "Wissen/Tief/A.md", "a\n", NoteLevel.of(1));
+            service.createNote(vaultId, changeSet.id(), "Mensch/B.md", "b\n", NoteLevel.of(1));
+            service.createNote(vaultId, changeSet.id(), "Gemischt/Neu/C.md", "c\n", NoteLevel.of(1));
+
+            service.revert(vaultId, changeSet.id(), "tom");
+
+            assertThat(folders.list(vaultId)).containsExactly("Gemischt", "Mensch");
+        }
+
         @Test
         void should_deleteCreatedNotes_andRestoreUpdatedOnes() {
             var own = service.startChangeSet(vaultId, EXTERN, "tom", "Vorher");

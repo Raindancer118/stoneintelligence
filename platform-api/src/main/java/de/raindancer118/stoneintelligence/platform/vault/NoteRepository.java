@@ -24,6 +24,9 @@ public interface NoteRepository {
      */
     Optional<Note> findById(VaultId vaultId, NoteId id);
 
+    /** Liegt irgendeine Notiz oder Datei unterhalb dieses Ordners? */
+    boolean hasEntriesUnder(VaultId vaultId, String folder);
+
     /** Alle Notes unter genau diesem Pfad (der Pfad ist nicht eindeutig erzwungen). Vault-gescopt. */
     java.util.List<Note> findByPath(VaultId vaultId, String path);
 
