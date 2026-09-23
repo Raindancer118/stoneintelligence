@@ -59,6 +59,39 @@ jobs:
       - name: Build bundle
         run: node esbuild.config.mjs --production
 
+  # Das Yjs-Bundle fuer die Java-API ist eingecheckt (platform-api/src/main/resources/yjs); dieser
+  # Job stellt sicher, dass es exakt aus dem Quellcode (inkl. plugin/src/sync/textDiff.ts) entsteht.
+  yjs-bridge-build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            yjs-bridge/package-lock.json
+            plugin/package-lock.json
+
+      - name: Install dependencies (bridge imports the plugin's diff code)
+        run: |
+          (cd plugin && npm ci)
+          (cd yjs-bridge && npm ci)
+
+      - name: Typecheck and test
+        working-directory: yjs-bridge
+        run: |
+          npx tsc --noEmit -p .
+          npx vitest run
+
+      - name: Bundle is up to date
+        working-directory: yjs-bridge
+        run: |
+          npm run build
+          git diff --exit-code -- ../platform-api/src/main/resources/yjs/yjs-bridge.js
+
   webapp-build-and-test:
     runs-on: ubuntu-latest
     defaults:
