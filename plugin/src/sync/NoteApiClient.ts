@@ -8,6 +8,28 @@ export interface NoteListItem {
   vaultId: string;
   path: string;
   noteLevel: number;
+  /** Hoechste gespeicherte Update-Sequenz - fehlt bei Servern vor dieser Erweiterung. */
+  revision?: number;
+}
+
+export interface VaultSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+/** Ob eine (in der Liste fehlende) Notiz geloescht ist oder nur nicht mehr sichtbar. */
+export type NoteStatus = "exists" | "deleted" | "forbidden";
+
+/** Fehlgeschlagene Anfrage MIT Statuscode - der Abgleich reagiert auf 403/404/409 unterschiedlich. */
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    action: string,
+  ) {
+    super(`${action}: HTTP ${status}`);
+    this.name = "HttpError";
+  }
 }
 
 export interface ReconciliationPage {
@@ -39,7 +61,7 @@ export class NoteApiClient {
       body: JSON.stringify({ name }),
     });
     if (!response.ok) {
-      throw new Error(`failed to create vault: HTTP ${response.status}`);
+      throw new HttpError(response.status, "failed to create vault");
     }
     const created = (await response.json()) as { id: string };
     return created.id;
@@ -52,7 +74,7 @@ export class NoteApiClient {
       body: JSON.stringify({ path, noteLevel }),
     });
     if (!response.ok) {
-      throw new Error(`failed to create note: HTTP ${response.status}`);
+      throw new HttpError(response.status, "failed to create note");
     }
     const created = (await response.json()) as { id: string };
     return created.id;
@@ -72,7 +94,7 @@ export class NoteApiClient {
       headers: { Authorization: `Bearer ${await this.getAccessToken()}` },
     });
     if (!response.ok) {
-      throw new Error(`failed to list notes: HTTP ${response.status}`);
+      throw new HttpError(response.status, "failed to list notes");
     }
     return (await response.json()) as ReconciliationPage;
   }
@@ -101,7 +123,7 @@ export class NoteApiClient {
       body: JSON.stringify({ path: newPath }),
     });
     if (!response.ok) {
-      throw new Error(`failed to rename note: HTTP ${response.status}`);
+      throw new HttpError(response.status, "failed to rename note");
     }
   }
 
@@ -110,8 +132,35 @@ export class NoteApiClient {
       method: "DELETE",
       headers: { "X-Operation-Id": operationId, Authorization: `Bearer ${await this.getAccessToken()}` },
     });
-    if (!response.ok) {
-      throw new Error(`failed to delete note: HTTP ${response.status}`);
+    // 404: bereits geloescht (z. B. Wiederholung einer offline gemerkten Loeschung) - Ziel erreicht.
+    if (!response.ok && response.status !== 404) {
+      throw new HttpError(response.status, "failed to delete note");
     }
+  }
+
+  async listVaults(): Promise<VaultSummary[]> {
+    const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults`, {
+      headers: { Authorization: `Bearer ${await this.getAccessToken()}` },
+    });
+    if (!response.ok) {
+      throw new HttpError(response.status, "failed to list vaults");
+    }
+    return (await response.json()) as VaultSummary[];
+  }
+
+  async noteStatus(vaultId: string, noteId: string): Promise<NoteStatus> {
+    const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/notes/${noteId}`, {
+      headers: { Authorization: `Bearer ${await this.getAccessToken()}` },
+    });
+    if (response.ok) {
+      return "exists";
+    }
+    if (response.status === 404) {
+      return "deleted";
+    }
+    if (response.status === 403) {
+      return "forbidden";
+    }
+    throw new HttpError(response.status, "failed to read note");
   }
 }

@@ -43,6 +43,8 @@ export class SyncClient {
   readonly doc: Y.Doc;
   readonly awareness: Awareness;
   private socket: WebSocketLike | null = null;
+  /** Server-Historie dieses Joins bis CATCHUP_COMPLETE - daraus ergibt sich, was dem Server fehlt. */
+  private catchupUpdates: Uint8Array[] | null = null;
 
   /** Wird aufgerufen, wenn der Server die Verbindung mit {@link CLOSE_CODE_NOTE_DELETED} trennt. */
   onNoteDeleted: (() => void) | null = null;
@@ -90,6 +92,7 @@ export class SyncClient {
 
   connect(): void {
     this.setStatus("connecting");
+    this.catchupUpdates = [];
     this.socket = this.wsFactory(this.wsUrl);
     this.socket.binaryType = "arraybuffer";
     this.socket.onopen = () => this.setStatus("connected");
@@ -107,6 +110,7 @@ export class SyncClient {
         this.resendFullStateAsRepair();
         this.onCatchupComplete?.();
       } else {
+        this.catchupUpdates?.push(payload.slice());
         Y.applyUpdate(this.doc, payload, this);
       }
     };
@@ -133,8 +137,35 @@ export class SyncClient {
    * Server bleibt "dumm" (ADR 0002) und sieht nur ein weiteres opakes Update-Blob.
    */
   private resendFullStateAsRepair(): void {
-    this.send(MESSAGE_TYPE_DOC_UPDATE, Y.encodeStateAsUpdate(this.doc));
+    const missing = this.updateMissingOnServer();
+    if (missing) {
+      this.send(MESSAGE_TYPE_DOC_UPDATE, missing);
+    }
     this.resendLocalAwarenessAsRepair();
+  }
+
+  /**
+   * Nur das, was der Server nach seiner eigenen Historie noch nicht hat - `null`, wenn nichts.
+   * Ein pauschaler Voll-Resend wurde serverseitig jedes Mal als neues Update angehaengt: die
+   * Revision stieg bei jedem Abgleich, und zwei Geraete stiessen sich so gegenseitig endlos an.
+   * Der Vergleich laeuft ueber Snapshots (Zustandsvektor UND Loeschmenge) - eine reine
+   * Offline-Loeschung erzeugt keine neuen Structs und waere per Zustandsvektor allein unsichtbar.
+   */
+  private updateMissingOnServer(): Uint8Array | null {
+    const received = this.catchupUpdates ?? [];
+    this.catchupUpdates = null;
+    const server = new Y.Doc();
+    for (const update of received) {
+      Y.applyUpdate(server, update);
+    }
+    try {
+      if (Y.equalSnapshots(Y.snapshot(server), Y.snapshot(this.doc))) {
+        return null;
+      }
+      return Y.encodeStateAsUpdate(this.doc, Y.encodeStateVector(server));
+    } finally {
+      server.destroy();
+    }
   }
 
   /**

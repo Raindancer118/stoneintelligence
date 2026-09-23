@@ -1,80 +1,77 @@
 import { Compartment } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import { App, MarkdownView, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
-import { yCollab } from "y-codemirror.next";
+import { MarkdownView, Notice, Platform, Plugin, setIcon, TAbstractFile, TFile, TFolder } from "obsidian";
 import * as Y from "yjs";
-import { type SessionSnapshot, StatusView, VIEW_TYPE_STATUS } from "./StatusView";
+import {
+  isExcluded, migrateSettings, queueDelete, queueRename, type StoneIntelligenceSettings, type VaultSyncState, emptyVaultState,
+  wsUrlFor,
+} from "./settings";
 import { actorDisplayNameFromAccessToken, displayNameFromClaims, pickUserColor } from "./sync/actorIdentity";
 import { AuthentikAuthClient, TokenRefreshRejectedError, type StoredTokens } from "./sync/AuthentikAuthClient";
 import { dedupeInFlight } from "./sync/dedupeInFlight";
 import { awaitDesktopRedirectCode, DESKTOP_REDIRECT_URI, openAuthorizationUrlDesktop } from "./sync/desktopAuthRedirect";
+import { awaitCatchupComplete, awaitConnected, connectForCatchup } from "./sync/catchupConnection";
+import { bindEditorToText, unbindEditor } from "./sync/editorBinding";
+import { planEditorBindings } from "./sync/editorBindingPlan";
 import {
   handleMobileRedirectCallback, MOBILE_REDIRECT_ACTION, MOBILE_REDIRECT_URI,
   openAuthorizationUrlMobile, type PendingAuthCallback,
 } from "./sync/mobileAuthRedirect";
 import {
-  MultiplexedTransport, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED,
+  MultiplexedTransport, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED,
 } from "./sync/multiplexedTransport";
-import { NoteApiClient } from "./sync/NoteApiClient";
-import { planEditorBindings } from "./sync/editorBindingPlan";
+import { HttpError, NoteApiClient, type VaultSummary } from "./sync/NoteApiClient";
+import {
+  type ContentSyncPorts, type ContentSyncResult, conflictCopyPath, prepareNoteDoc, resolveFirstContact, syncNoteContent,
+} from "./sync/noteContentSync";
+import { NoteStateStore } from "./sync/NoteStateStore";
 import { OperationJournal } from "./sync/OperationJournal";
+import { isSyncablePath, planReconciliation, type ReconcileAction } from "./sync/reconcilePlan";
+import { SyncActivity } from "./sync/SyncActivity";
 import { SyncClient } from "./sync/SyncClient";
 import { TicketClient } from "./sync/TicketClient";
-
-interface StoneIntelligenceSettings {
-  platformApiUrl: string;
-  platformWsUrl: string;
-  vaultId: string;
-  oidcIssuerUrl: string;
-  oidcClientId: string;
-  tokens: StoredTokens | null;
-  noteIds: Record<string, string>;
-  /**
-   * Zwischengespeicherter Anzeigename aus Authentiks `userinfo` - Label des eigenen Cursors bei
-   * allen anderen. Bewusst persistiert: er wird einmal nach dem Login aufgeloest, damit das
-   * Anlegen einer Sync-Session keinen Netzwerkaufruf braucht und auch dann einen Namen hat, wenn
-   * das Access-Token gerade abgelaufen/erneuert wird (genau dann stand vorher "Unbekannt").
-   */
-  displayName: string | null;
-}
-
-/** Felder, die eine "Verbindungskonfiguration" ausmachen - alles ausser Tokens/NoteId-Cache. */
-type ConnectionConfig = Pick<
-  StoneIntelligenceSettings, "platformApiUrl" | "platformWsUrl" | "vaultId" | "oidcIssuerUrl" | "oidcClientId"
->;
+import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
+import { presentStatus, type StatusPresentation } from "./ui/statusPresentation";
+import { type Collaborator, type LiveNote, StatusView, VIEW_TYPE_STATUS } from "./ui/StatusView";
 
 /**
- * Architekturentscheidung 2026-09-18 (auf Toms ausdruecklichen Wunsch, nach Vorbild des
- * Vorgaenger-Projekts `stonesync`, das NIE das ganze Vault live hielt, sondern nur gerade
- * geoeffnete Notizen): die geteilte WebSocket-Verbindung traegt nur die tatsaechlich GEOEFFNETEN
- * Notizen live (Zeichen-Sync + Cursor-Presence) - praktisch ein bis drei Panes, und weiterhin nur
- * EINE physische Verbindung. Alle anderen bekannten Notizen werden periodisch per kurzem
- * Verbindungs-Connect-Catchup-Leave-Zyklus abgeglichen (`syncNoteInBackground`) - dieselbe
- * Yjs-Sync-Maschinerie wie die aktive Notiz, nur nicht dauerhaft gejoint. Kein Server-Umbau
- * noetig: der Server unterscheidet ohnehin nicht zwischen einem lang- und einem kurzlebigen Join.
+ * Sicherheitsnetz-Takt fuer den Abgleich. Anlage/Umbenennung/Loeschung UND Inhaltsaenderungen
+ * geschlossener Notizen kommen sofort per Vault-Ankuendigung; dieser Takt faengt nur ab, was
+ * trotzdem durchrutscht (z. B. aeltere Server ohne Inhalts-Ankuendigung). Dank Server-Revisionen
+ * kostet ein Durchlauf ohne Aenderungen genau eine Listen-Anfrage - frueher wurde alle 90s JEDE
+ * Notiz einzeln gejoint.
  */
-const BACKGROUND_POLL_INTERVAL_MS = 90_000;
-/** Kurzer Timeout je Hintergrund-Notiz - ein einzelner haengender Versuch darf den gesamten Poll-Durchlauf nicht blockieren; naechster Versuch folgt beim naechsten Intervall-Tick. */
-const BACKGROUND_SYNC_TIMEOUT_MS = 8_000;
-/** Abstand zwischen zwei Bindungsversuchen, wenn Obsidians CM6-View noch nicht bereitsteht. */
+const RECONCILE_INTERVAL_MS = 30_000;
+/**
+ * Wartezeit nach einer Inhalts-Ankuendigung. Der Server kuendigt hoechstens einmal pro Sekunde
+ * und Notiz an; laenger zu warten stellt sicher, dass auch das letzte Update eines Tipp-Schwalls
+ * dabei ist - und buendelt den Schwall zu einem einzigen Abgleich.
+ */
+const REMOTE_CHANGE_DEBOUNCE_MS = 2_500;
+/** Nach einer angekuendigten Neuanlage: der Inhalt folgt beim anlegenden Geraet kurz danach. */
+const CREATED_FOLLOW_UP_MS = 3_000;
+/**
+ * Aeltere Server liefern keine Revisionen - dann liesse sich ohne Join nicht erkennen, ob sich
+ * eine Notiz geaendert hat. Damit nicht alle 30s JEDE Notiz gejoint wird, laeuft der volle
+ * Inhaltsabgleich in dem Fall nur in diesem (dem frueheren) Takt.
+ */
+const LEGACY_FULL_CONTENT_INTERVAL_MS = 90_000;
+/** Frist fuer Verbindung + Catchup einer einzelnen Notiz im Hintergrund. */
+const CONTENT_SYNC_TIMEOUT_MS = 10_000;
+/** Wie lange eine geoeffnete Notiz auf den Server-Stand wartet, bevor sie offline weiterarbeitet. */
+const LIVE_CATCHUP_WAIT_MS = 6_000;
+/** Lokale Aenderungen (Tippen ohne Live-Bindung, externe Tools) werden gebuendelt uebertragen. */
+const LOCAL_CHANGE_DEBOUNCE_MS = 2_000;
+const STATE_SAVE_DEBOUNCE_MS = 1_500;
+const SETTINGS_SAVE_DEBOUNCE_MS = 1_000;
+/** Parallel abgeglichene Notizen je Durchlauf - genug fuer Tempo, wenig genug fuer Mobile. */
+const PASS_CONCURRENCY = 3;
 const BINDING_RETRY_DELAY_MS = 300;
-/** Obergrenze der Wiederholungen (≈ 6s), damit ein dauerhaft view-loses Pane nicht endlos pollt. */
 const BINDING_RETRY_LIMIT = 20;
 
-const DEFAULT_SETTINGS: StoneIntelligenceSettings = {
-  platformApiUrl: "http://localhost:8080",
-  platformWsUrl: "ws://localhost:8080",
-  vaultId: "",
-  oidcIssuerUrl: "",
-  oidcClientId: "",
-  tokens: null,
-  noteIds: {},
-  displayName: null,
-};
-
 /**
- * Deterministischer djb2-Hash ohne externe Abhaengigkeit - reicht als Content-Fingerprint fuer
- * das {@link OperationJournal} (Fehlerklasse 1), muss kryptografisch nicht stark sein.
+ * Deterministischer djb2-Hash - reicht als Content-Fingerprint fuer das {@link OperationJournal}
+ * (Fehlerklasse 1), muss kryptografisch nicht stark sein.
  */
 function hashContent(content: string): string {
   let hash = 5381;
@@ -84,121 +81,236 @@ function hashContent(content: string): string {
   return (hash >>> 0).toString(16);
 }
 
-interface NoteSyncSession {
+function basename(path: string): string {
+  return (path.split("/").pop() ?? path).replace(/\.md$/i, "");
+}
+
+function parentFolder(path: string): string {
+  return path.split("/").slice(0, -1).join("/");
+}
+
+/** Eine im Editor geoeffnete Notiz: dauerhaft gejoint, zeichengenau per yCollab gebunden. */
+interface LiveSession {
   path: string;
   noteId: string;
   client: SyncClient;
-  unbindDocObserver: () => void;
-  /**
-   * true, waehrend diese Notiz direkt per CodeMirror-6 (y-codemirror.next) an einen Editor
-   * gebunden ist - dann uebernehmen yCollab + Obsidians eigenes Autosave die Persistenz
-   * zeichengenau, und der grobe Volltext-Bruecken-Pfad (text.observe -> vault.modify /
-   * vault.read -> Y.Text-Ersatz) wird fuer diesen Pfad ausgesetzt, um Doppelverarbeitung zu
-   * vermeiden.
-   */
-  hasLiveEditorBinding: boolean;
+  view: EditorView;
+  saveTimer: number | null;
+  stopStateSaves: () => void;
+}
+
+async function runWithConcurrency<T>(items: T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const item = items[next++];
+      await task(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
 /**
- * Haelt das GESAMTE Vault synchron, aber nur die gerade GEOEFFNETEN Notizen dauerhaft ueber
- * die geteilte WebSocket-Verbindung live - echtes CodeMirror-6-Zeichen-Binding via
- * y-codemirror.next (yCollab), inkl. Cursor-Presence ueber die geteilte Awareness-Instanz von
- * {@link SyncClient}. Alle anderen Notizen werden periodisch per kurzem Connect-Catchup-Leave-
- * Zyklus abgeglichen, s. {@link BACKGROUND_POLL_INTERVAL_MS} und `syncNoteInBackground` (Project.md
- * fuer die volle Historie dieser Entscheidung - Vorgaengerversion hielt das gesamte Vault
- * dauerhaft gejoint).
+ * StoneIntelligence-Sync fuer Obsidian.
+ *
+ * <p>Zwei Pfade teilen sich EINE WebSocket-Verbindung (Toms Vorgabe, s. `multiplexedTransport.ts`):
+ * <ul>
+ *   <li><b>Geoeffnete Notizen</b> sind dauerhaft gejoint und zeichengenau an ihren Editor gebunden
+ *   (yCollab, inkl. Cursor anderer Personen).</li>
+ *   <li><b>Alle anderen</b> gleicht ein Abgleich-Durchlauf ab ({@link planReconciliation}): eine
+ *   Server-Liste mit Revisionen bestimmt, was sich geaendert hat; nur diese Notizen werden kurz
+ *   gejoint. Jede Notiz hat einen lokal gespeicherten Yjs-Zustand ({@link NoteStateStore}) - damit
+ *   lassen sich auch Aenderungen, die offline oder bei beendetem Obsidian passiert sind, sauber
+ *   mergen statt "Server gewinnt".</li>
+ * </ul>
+ * Lokale Loeschungen/Umbenennungen landen zuerst in einer dauerhaften Warteschlange und werden
+ * uebertragen, sobald der Server erreichbar ist - frueher gingen sie offline schlicht verloren und
+ * der naechste Abgleich machte sie rueckgaengig.
  */
 export default class StoneIntelligencePlugin extends Plugin {
-  settings: StoneIntelligenceSettings = DEFAULT_SETTINGS;
+  settings: StoneIntelligenceSettings = migrateSettings(null);
+  readonly activity = new SyncActivity();
   private readonly journal = new OperationJournal();
-  private readonly sessions = new Map<string, NoteSyncSession>();
-  /**
-   * Pfade, fuer die `startSync` gerade laeuft, aber noch keine Session in `sessions` eingetragen
-   * hat (das passiert erst ganz am Ende). Ohne diesen Guard kann derselbe Pfad zweimal parallel
-   * gestartet werden - z. B. wenn `reconcileMissingNotesFromServer()` eine Platzhalterdatei
-   * anlegt UND der dadurch ausgeloeste `create`-Vault-Event beide `startSync` fuer denselben
-   * Pfad aufrufen, bevor der erste Aufruf ueberhaupt bei `sessions.set(...)` angekommen ist.
-   */
-  private readonly startingPaths = new Set<string>();
-  /**
-   * Pfade, die `reconcileMissingNotesFromServer()` gerade selbst per `vault.create()` anlegt -
-   * der globale `create`-Event-Handler ueberspringt sie (s. `onload`), damit NICHT zusaetzlich
-   * zum expliziten, sequentiellen Aufruf dort ein zweiter, unkontrollierter `startSync`-Versuch
-   * lostritt (das wuerde die absichtliche Serialisierung wieder aufheben, s. Klassendoc dort).
-   */
-  private readonly reconcilingPaths = new Set<string>();
-  /**
-   * Pfade, an denen gerade eine vom SERVER angestossene Aenderung ausgefuehrt wird (Loeschen in
-   * den Papierkorb, Umbenennen). Obsidian feuert dafuer dieselben Vault-Events wie fuer eine
-   * echte Nutzeraktion - ohne diesen Guard wuerde das Plugin die gerade empfangene Aenderung
-   * postwendend als eigene Aenderung an den Server zurueckmelden (bei einer Loeschung waere das
-   * ein zweiter DELETE auf eine bereits geloeschte Notiz, beim Umbenennen ein Rueck-Rename).
-   */
-  private readonly serverDrivenPaths = new Set<string>();
-  /**
-   * Verhindert ueberlappende `pollBackgroundNotes`-Durchlaeufe: bei einem groesseren Vault (oder
-   * einer gerade langsamen Verbindung) kann ein einzelner Durchlauf laenger dauern als
-   * `BACKGROUND_POLL_INTERVAL_MS`, `window.setInterval` wartet das aber nicht ab - ohne dieses
-   * Flag koennten zwei parallele Durchlaeufe fuer DIESELBE Notiz gleichzeitig
-   * `MultiplexedTransport.createVirtualSocket` mit derselben `noteId` aufrufen und sich
-   * gegenseitig den virtuellen Kanal wegnehmen.
-   */
-  private backgroundPollRunning = false;
+  private stateStore!: NoteStateStore;
   private noteApiClient!: NoteApiClient;
   private authClient!: AuthentikAuthClient;
   private tokenEndpoint: string | null = null;
   /**
-   * Dedupliziert gleichzeitige Refresh-Versuche - ohne das riefen mehrere parallele Aufrufer
-   * (Reconciliation, Ticket-Ausstellung, ... - der Multiplex-Transport stoesst oft mehrere
-   * gleichzeitig an) alle unabhaengig `refreshAccessToken` mit demselben, noch gueltig
-   * aussehenden Refresh-Token auf. Authentik rotiert Refresh-Tokens (macht den alten nach
-   * erfolgreicher Einloesung ungueltig) - der zweite, quasi zeitgleiche Versuch scheiterte
-   * dadurch garantiert mit HTTP 400, und weil KEIN neuer Token gespeichert wurde, wiederholte
-   * sich das bei jedem weiteren Zugriff endlos (live beobachtet: WS blieb dauerhaft auf
-   * "verbindet", `POST .../token/` scheiterte alle paar Sekunden mit 400).
+   * Dedupliziert gleichzeitige Refresh-Versuche: Authentik rotiert Refresh-Tokens, ein zweiter,
+   * quasi zeitgleicher Versuch mit demselben Token scheitert garantiert mit HTTP 400 (live
+   * beobachtet: WS blieb dauerhaft auf "verbindet").
    */
   private readonly dedupeTokenRefresh = dedupeInFlight<StoredTokens>();
+  private transport: MultiplexedTransport | null = null;
+  private pendingAuthCallback: PendingAuthCallback | null = null;
+
+  private readonly live = new Map<string, LiveSession>();
+  private readonly liveStarting = new Set<string>();
   private readonly liveBindingCompartment = new Compartment();
-  /**
-   * Pfad → die konkrete EditorView-Instanz, an die dieser Pfad gerade tatsaechlich live gebunden
-   * ist. Ersetzt das fruehere einzelne `liveBoundPath`: gebunden wird jedes offene Markdown-Pane,
-   * nicht nur "das aktive" (s. {@link openMarkdownEditors} fuer die Begruendung). Der Vergleich
-   * laeuft ueber Instanz-Identitaet, nicht nur ueber den Pfad - Obsidian verwendet beim Oeffnen
-   * einer anderen Datei im selben Pane dieselbe CM6-View weiter.
-   */
-  private readonly boundViews = new Map<string, EditorView>();
-  /** Gesetzt von {@link openMarkdownEditors}, wenn ein offenes Pane seine CM6-View noch nicht hatte. */
+  private liveBindGeneration = 0;
   private editorViewPending = false;
   private bindingRetries = 0;
   private bindingRetryTimer: number | null = null;
-  /**
-   * Monoton wachsender Generation-Zaehler gegen den P1-Fund "Obsidian editor binding can target
-   * the wrong file/view" (s. docs/sync-comparison-review-2026-09-18.md): die Bindungs-Events
-   * feuern bei schnellem A-zu-B-Wechsel mehrfach ueberlappend und unsequenziert - ohne dieses
-   * Gate konnte der spaeter GESTARTETE, aber wegen `startSync`s Await frueher FERTIGE Durchlauf
-   * fuer A einen View ueberschreiben, NACHDEM der Durchlauf fuer B bereits korrekt gebunden hatte
-   * - der Editor zeigte dann Notiz B an, band aber tatsaechlich an Notiz As Y.Text.
-   */
-  private liveBindGeneration = 0;
-  private statusBarItem!: HTMLElement;
-  private pendingAuthCallback: PendingAuthCallback | null = null;
-  /**
-   * EINE geteilte Sync-Verbindung fuer alle Notizen (Toms ausdruecklicher Wunsch: "maximal drei
-   * Verbindungen... am liebsten eine durch die alles geht", s. `multiplexedTransport.ts`) -
-   * statt frueher einer eigenen WebSocket-Verbindung PRO Notiz.
-   */
-  private transport: MultiplexedTransport | null = null;
 
   /**
-   * Liefert ein gueltiges Access-Token, refresht bei Bedarf still im Hintergrund (Phase 3: OIDC
-   * ist seit dem Server-seitigen Rollout der einzige Auth-Pfad, s. platform-api SecurityConfig).
-   * Als Arrow-Function-Feld deklariert, damit `this` beim Durchreichen an NoteApiClient/
-   * TicketClient als Callback erhalten bleibt.
+   * Pfade, an denen gerade eine vom SERVER angestossene Aenderung ausgefuehrt wird. Obsidian feuert
+   * dafuer dieselben Vault-Events wie fuer eine Nutzeraktion - ohne diesen Guard wuerde sie
+   * postwendend als eigene Aenderung zurueckgemeldet.
+   */
+  private readonly serverDrivenPaths = new Set<string>();
+  private readonly localChangeTimers = new Map<string, number>();
+  private readonly remoteChangeTimers = new Map<string, number>();
+  private readonly noteLocks = new Map<string, Promise<unknown>>();
+  private lastLegacyContentPass = 0;
+  private passRunning = false;
+  private passRequested = false;
+  private flushingOps = false;
+  private settingsSaveTimer: number | null = null;
+
+  private statusBarEl!: HTMLElement;
+  private presenceBarEl!: HTMLElement;
+
+  // ---------------------------------------------------------------------------------------------
+  // Lebenszyklus
+
+  async onload(): Promise<void> {
+    this.settings = migrateSettings(await this.loadData());
+    await this.saveData(this.settings);
+    this.stateStore = new NoteStateStore(this.app.vault.adapter, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/sync-state`);
+    this.rebuildClients();
+    this.refreshActivityFlags();
+
+    this.registerObsidianProtocolHandler(MOBILE_REDIRECT_ACTION, (params) => {
+      const pending = this.pendingAuthCallback;
+      this.pendingAuthCallback = null;
+      handleMobileRedirectCallback(pending, params as unknown as Record<string, string>);
+    });
+    this.addSettingTab(new StoneIntelligenceSettingTab(this.app, this, this));
+    this.registerView(VIEW_TYPE_STATUS, (leaf) => new StatusView(leaf, this));
+    this.addRibbonIcon("refresh-cw", "StoneIntelligence-Sync", () => void this.activateStatusView());
+    this.setupStatusBar();
+    this.registerCommands();
+    this.registerFileMenu();
+
+    this.registerEditorExtension([this.liveBindingCompartment.of([])]);
+    // `file-open` allein feuert zu frueh (Ziel-View existiert teils noch nicht), `active-leaf-change`
+    // deckt Pane-/Tab-Wechsel ab, `layout-change` Oeffnen/Schliessen/Teilen - alle drei muenden in
+    // denselben idempotenten Abgleich.
+    this.registerEvent(this.app.workspace.on("file-open", () => void this.syncOpenEditorBindings()));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      void this.syncOpenEditorBindings();
+      this.updatePresenceBar();
+    }));
+    this.registerEvent(this.app.workspace.on("layout-change", () => void this.syncOpenEditorBindings()));
+
+    this.registerEvent(this.app.vault.on("create", (file) => this.handleLocalCreate(file)));
+    this.registerEvent(this.app.vault.on("modify", (file) => void this.handleLocalModify(file)));
+    this.registerEvent(this.app.vault.on("delete", (file) => void this.handleLocalDelete(file)));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => void this.handleLocalRename(file, oldPath)));
+
+    this.registerInterval(window.setInterval(() => this.journal.evictOlderThan(5 * 60_000), 60_000));
+    this.registerInterval(window.setInterval(() => this.requestPass(), RECONCILE_INTERVAL_MS));
+    // Das Betriebssystem meldet, dass das Netz wieder da ist - nicht erst den Backoff abwarten.
+    this.registerDomEvent(window, "online", () => this.transport?.reconnectNow());
+
+    this.app.workspace.onLayoutReady(() => {
+      if (this.isLoggedIn() && !this.settings.displayName) {
+        void this.refreshDisplayName();
+      }
+      this.startSyncEngine();
+    });
+  }
+
+  onunload(): void {
+    window.clearTimeout(this.bindingRetryTimer ?? undefined);
+    for (const timer of [...this.localChangeTimers.values(), ...this.remoteChangeTimers.values()]) {
+      window.clearTimeout(timer);
+    }
+    this.stopSyncEngine();
+    if (this.settingsSaveTimer !== null) {
+      window.clearTimeout(this.settingsSaveTimer);
+      void this.saveData(this.settings);
+    }
+  }
+
+  private isReady(): boolean {
+    return Boolean(this.settings.vaultId) && this.isLoggedIn() && !this.settings.paused;
+  }
+
+  private refreshActivityFlags(): void {
+    this.activity.update({
+      configured: Boolean(this.settings.vaultId),
+      signedIn: this.isLoggedIn(),
+      paused: this.settings.paused,
+    });
+  }
+
+  /** Verbindung aufbauen und halten, ersten Abgleich anstossen, offene Notizen binden. */
+  private startSyncEngine(): void {
+    this.refreshActivityFlags();
+    if (!this.isReady()) {
+      return;
+    }
+    this.ensureTransport().start();
+    this.requestPass();
+    void this.syncOpenEditorBindings();
+    void this.refreshVaultName();
+  }
+
+  private stopSyncEngine(): void {
+    for (const path of [...this.live.keys()]) {
+      this.detachLive(path);
+    }
+    this.transport?.destroy();
+    this.transport = null;
+    this.activity.update({ connection: "offline" });
+    this.refreshActivityFlags();
+  }
+
+  private rebuildClients(): void {
+    this.authClient = new AuthentikAuthClient({
+      issuerUrl: this.settings.oidcIssuerUrl, clientId: this.settings.oidcClientId,
+    });
+    this.tokenEndpoint = null;
+    this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl.replace(/\/+$/, ""), this.getAccessToken);
+  }
+
+  private vaultState(): VaultSyncState {
+    const vaultId = this.settings.vaultId;
+    this.settings.vaults[vaultId] ??= emptyVaultState();
+    return this.settings.vaults[vaultId];
+  }
+
+  async saveSettings(): Promise<void> {
+    if (this.settingsSaveTimer !== null) {
+      window.clearTimeout(this.settingsSaveTimer);
+      this.settingsSaveTimer = null;
+    }
+    await this.saveData(this.settings);
+  }
+
+  /** Viele kleine Meta-Aenderungen in einem Durchlauf -> ein Schreibvorgang. */
+  private requestSettingsSave(): void {
+    if (this.settingsSaveTimer !== null) {
+      return;
+    }
+    this.settingsSaveTimer = window.setTimeout(() => {
+      this.settingsSaveTimer = null;
+      void this.saveData(this.settings);
+    }, SETTINGS_SAVE_DEBOUNCE_MS);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Anmeldung
+
+  /**
+   * Liefert ein gueltiges Access-Token, refresht bei Bedarf still im Hintergrund. Arrow-Function,
+   * damit `this` beim Durchreichen an NoteApiClient/TicketClient erhalten bleibt.
    */
   private getAccessToken = async (): Promise<string> => {
     const tokens = this.settings.tokens;
     if (!tokens) {
-      throw new Error("Nicht angemeldet - bitte in den StoneIntelligence-Einstellungen einloggen.");
+      throw new Error("Nicht angemeldet.");
     }
     if (Date.now() < tokens.expiresAt) {
       return tokens.accessToken;
@@ -208,15 +320,9 @@ export default class StoneIntelligencePlugin extends Plugin {
   };
 
   /**
-   * Loescht die gespeicherten Tokens NUR, wenn Authentik den Refresh-Token per HTTP 400/401
-   * definitiv ablehnt (bereits andernorts verbraucht/rotiert, widerrufen, abgelaufen) - das ist
-   * `TokenRefreshRejectedError`, s. AuthentikAuthClient.refreshAccessToken. Jeder andere Fehler
-   * (5xx, Timeout, noch kein Netzwerk beim Obsidian-Start) laesst die Tokens unveraendert und
-   * wirft weiter - sonst loggte ein rein voruebergehender Ausfall den Nutzer bei jedem Neustart
-   * aus (live beobachtet: Obsidian startet, das Plugin versucht den Refresh bevor das
-   * Betriebssystem das Netzwerk bereitgestellt hat, `discover()`/`refreshAccessToken()` schlagen
-   * mit einem Netzwerkfehler fehl, und die alte, undifferenzierte catch-Klausel wertete das
-   * faelschlich als "Refresh-Token ungueltig").
+   * Loescht die Tokens NUR, wenn Authentik den Refresh-Token definitiv ablehnt
+   * (`TokenRefreshRejectedError`). Netzwerkfehler beim Obsidian-Start (noch kein Netz) lassen die
+   * Anmeldung unangetastet - sonst war man nach jedem Neustart ohne Netz abgemeldet.
    */
   private async refreshTokens(refreshToken: string): Promise<StoredTokens> {
     try {
@@ -225,67 +331,36 @@ export default class StoneIntelligencePlugin extends Plugin {
       }
       const refreshed = await this.authClient.refreshAccessToken(this.tokenEndpoint, refreshToken);
       this.settings.tokens = refreshed;
-      await this.saveData(this.settings);
+      await this.saveSettings();
       return refreshed;
     } catch (error) {
       if (error instanceof TokenRefreshRejectedError) {
         this.settings.tokens = null;
-        await this.saveData(this.settings);
-        this.stopAllSyncDueToAuthLoss();
-        // Aktiv melden, nicht nur die Statusleiste von "angemeldet" auf "nicht angemeldet"
-        // umspringen lassen: der Sync steht ab hier vollstaendig still, und ohne Hinweis war der
-        // einzige Beleg dafuer eine Fehlermeldung in der Entwicklerkonsole (live so passiert).
-        // 0 = bleibt stehen, bis sie weggeklickt wird - eine nach 5s verschwindende Meldung
-        // wuerde genau dann uebersehen, wenn sie auftritt (beim Start, vor dem ersten Blick).
-        new Notice(
-          "StoneIntelligence: Anmeldung abgelaufen, Sync gestoppt. Bitte ueber den Befehl "
-            + "\"StoneIntelligence: Anmelden\" (oder die Plugin-Einstellungen) neu anmelden.",
-          0,
-        );
+        await this.saveSettings();
+        this.stopSyncEngine();
+        // Bleibt stehen, bis sie weggeklickt wird - der Sync steht ab hier still.
+        new Notice("StoneIntelligence: Anmeldung abgelaufen, Sync angehalten. Bitte erneut anmelden (Statusleiste anklicken).", 0);
       }
       throw error;
     }
   }
 
-  /**
-   * Reisst die geteilte Verbindung und alle Notiz-Sessions ab, sobald feststeht, dass die
-   * Anmeldung weg ist (Logout ODER eine definitive Refresh-Ablehnung) - ehemals ein P1-Bug (s.
-   * docs/sync-comparison-review-2026-09-18.md "Logout/terminal auth failure leaves the
-   * authorized socket alive"): weder `logout()` noch eine terminale Token-Ablehnung ruehrten
-   * bisher den bereits per Ticket authentifizierten physischen Socket an - der lief unveraendert
-   * weiter (inkl. seines 2-Sekunden-Reconnect-Loops gegen einen inzwischen ungueltigen
-   * Ticket-Endpunkt), bis der Nutzer sich zufaellig erneut anmeldete. `this.transport` wird auf
-   * `null` gesetzt statt nur zerstoert - eine zerstoerte Instanz ist nicht wiederverwendbar, s.
-   * deren `destroy()`-Doc; `ensureTransport()` erzeugt bei Bedarf (z. B. nach erneutem Login)
-   * automatisch eine frische.
-   */
-  private stopAllSyncDueToAuthLoss(): void {
-    for (const path of [...this.sessions.keys()]) {
-      this.stopSync(path);
-    }
-    this.transport?.destroy();
-    this.transport = null;
+  isLoggedIn(): boolean {
+    return this.settings.tokens !== null;
   }
 
-  /**
-   * Anzeigename fuer den eigenen Cursor: bevorzugt der zwischengespeicherte Wert aus Authentiks
-   * `userinfo` (voller Name), sonst der Claim aus dem Access-Token.
-   *
-   * <p>Der Token-Pfad allein reichte nicht: er wurde beim Anlegen JEDER Session synchron aus
-   * `settings.tokens` gelesen - war dort in dem Moment kein Token (z. B. direkt nach einer
-   * abgelehnten Token-Erneuerung, oder bevor der erste Login durch war), stand am Cursor
-   * dauerhaft "Unbekannt", und zwar bis zum Neuaufbau genau dieser Session.
-   */
+  accountName(): string | null {
+    if (!this.isLoggedIn()) {
+      return null;
+    }
+    return this.settings.displayName ?? actorDisplayNameFromAccessToken(this.settings.tokens?.accessToken);
+  }
+
   private actorDisplayName(): string {
     return this.settings.displayName ?? actorDisplayNameFromAccessToken(this.settings.tokens?.accessToken);
   }
 
-  /**
-   * Loest den Anzeigenamen ueber Authentiks `userinfo` auf, speichert ihn und zieht ihn bei
-   * bereits laufenden Sessions nach - sonst behielten Sessions, die vor der Aufloesung angelegt
-   * wurden, ihr altes Label bis zum naechsten Neuaufbau. Scheitert bewusst leise: ohne Namen
-   * greift {@link actorDisplayName} auf den Token-Claim zurueck, der Sync laeuft unveraendert.
-   */
+  /** Voller Name aus Authentiks `userinfo`; scheitert bewusst leise (Fallback: Token-Claim). */
   private async refreshDisplayName(): Promise<void> {
     try {
       const discovery = await this.authClient.discover();
@@ -298,20 +373,16 @@ export default class StoneIntelligencePlugin extends Plugin {
         return;
       }
       this.settings.displayName = name;
-      await this.saveData(this.settings);
-      for (const session of this.sessions.values()) {
+      await this.saveSettings();
+      for (const session of this.live.values()) {
         session.client.awareness.setLocalStateField("user", { name, color: pickUserColor(name) });
       }
+      this.activity.touch();
     } catch (error) {
       console.debug("StoneIntelligence: Anzeigename konnte nicht aufgeloest werden", error);
     }
   }
 
-  /**
-   * Redirect-Strategie ist plattformabhaengig: Desktop nutzt einen lokalen Loopback-HTTP-Server
-   * (Node `http` gibt es nur dort), Mobile nutzt Obsidians eigenes `obsidian://`-URI-Schema ueber
-   * `registerObsidianProtocolHandler` (in `onload()` registriert, s. dort).
-   */
   async login(): Promise<void> {
     const redirect = Platform.isDesktopApp
       ? { redirectUri: DESKTOP_REDIRECT_URI, openAuthorizationUrl: openAuthorizationUrlDesktop, awaitCode: awaitDesktopRedirectCode }
@@ -320,172 +391,171 @@ export default class StoneIntelligencePlugin extends Plugin {
           openAuthorizationUrl: openAuthorizationUrlMobile,
           awaitCode: (state: string) => this.awaitMobileRedirectCode(state),
         };
-
     const tokens = await this.authClient.login(redirect);
     this.settings.tokens = tokens;
-    await this.saveData(this.settings);
+    await this.saveSettings();
     await this.refreshDisplayName();
-    new Notice("StoneIntelligence: Login erfolgreich.");
+    new Notice(this.settings.vaultId
+      ? "StoneIntelligence: Angemeldet, Sync läuft."
+      : "StoneIntelligence: Angemeldet. Wähle jetzt in den Einstellungen deinen Vault.");
+    this.startSyncEngine();
   }
 
   async logout(): Promise<void> {
     this.settings.tokens = null;
     this.settings.displayName = null;
-    await this.saveData(this.settings);
-    this.stopAllSyncDueToAuthLoss();
+    await this.saveSettings();
+    this.stopSyncEngine();
   }
 
-  /** Wartet auf den `obsidian://`-Redirect (Mobile) - der Protokoll-Handler ist in {@link onload} registriert. */
   private awaitMobileRedirectCode(expectedState: string): Promise<string> {
     return new Promise((resolve, reject) => {
       this.pendingAuthCallback = { state: expectedState, resolve, reject };
     });
   }
 
-  async onload(): Promise<void> {
-    await this.loadSettings();
-    this.authClient = new AuthentikAuthClient({
-      issuerUrl: this.settings.oidcIssuerUrl, clientId: this.settings.oidcClientId,
-    });
-    this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl, this.getAccessToken);
-    this.registerObsidianProtocolHandler(MOBILE_REDIRECT_ACTION, (params) => {
-      const pending = this.pendingAuthCallback;
-      this.pendingAuthCallback = null;
-      handleMobileRedirectCallback(pending, params as unknown as Record<string, string>);
-    });
-    this.addSettingTab(new StoneIntelligenceSettingTab(this.app, this));
+  // ---------------------------------------------------------------------------------------------
+  // Vault-Auswahl & Verbindungsdaten (fuer die Einstellungen)
 
-    this.registerEditorExtension([this.liveBindingCompartment.of([])]);
-    // Drei Events statt nur `file-open`: `file-open` allein feuert nachweislich zu frueh (die
-    // Ziel-View existiert dann teils noch nicht bzw. zeigt noch die vorherige Datei),
-    // `active-leaf-change` deckt Pane-/Tab-Wechsel ab, `layout-change` das Oeffnen/Schliessen und
-    // Teilen von Panes. Alle drei muenden in denselben idempotenten Abgleich - mehrfaches
-    // Feuern fuer dasselbe Ergebnis ist folgenlos (s. `planEditorBindings`).
-    this.registerEvent(this.app.workspace.on("file-open", () => void this.syncOpenEditorBindings()));
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => void this.syncOpenEditorBindings()));
-    this.registerEvent(this.app.workspace.on("layout-change", () => void this.syncOpenEditorBindings()));
-
-    this.registerEvent(
-      this.app.vault.on("create", (file) => {
-        if (file instanceof TFile && file.extension === "md" && !this.reconcilingPaths.has(file.path)) {
-          // Einmaliger sofortiger Abgleich (Initial-Push, falls schon lokaler Inhalt vorhanden
-          // ist) statt dauerhaftem Live-Join - wird die Datei direkt danach auch geoeffnet
-          // (Obsidians ueblicher "Neue Notiz"-Ablauf), uebernimmt der separate `file-open`-Handler
-          // die eigentliche Live-Bindung.
-          void this.syncNoteInBackground(file.path, { preferLocal: true });
-        }
-      }),
-    );
-    this.registerEvent(
-      this.app.vault.on("modify", (file) => {
-        if (file instanceof TFile) {
-          void this.handleLocalModify(file);
-        }
-      }),
-    );
-    this.registerEvent(
-      this.app.vault.on("delete", (file) => {
-        if (file instanceof TFile) {
-          void this.handleLocalDelete(file);
-        }
-      }),
-    );
-    this.registerEvent(
-      this.app.vault.on("rename", (file, oldPath) => {
-        if (file instanceof TFile) {
-          void this.handleLocalRename(file, oldPath);
-        }
-      }),
-    );
-
-    this.registerInterval(
-      window.setInterval(() => this.journal.evictOlderThan(5 * 60_000), 60_000) as unknown as number,
-    );
-    this.registerInterval(
-      window.setInterval(() => void this.pollBackgroundNotes(), BACKGROUND_POLL_INTERVAL_MS) as unknown as number,
-    );
-
-    this.registerView(VIEW_TYPE_STATUS, (leaf) => new StatusView(leaf, this));
-    this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem.addClass("stoneintelligence-status-bar");
-    this.statusBarItem.onclick = () => void this.activateStatusView();
-    this.updateStatusBar();
-    this.registerInterval(window.setInterval(() => this.updateStatusBar(), 2000) as unknown as number);
-
-    this.addCommand({
-      id: "stoneintelligence-show-status",
-      name: "Status anzeigen",
-      callback: () => void this.activateStatusView(),
-    });
-    this.addCommand({
-      id: "stoneintelligence-login",
-      name: "Jetzt einloggen",
-      callback: async () => {
-        try {
-          await this.login();
-        } catch (error) {
-          new Notice(`StoneIntelligence: Login fehlgeschlagen - ${(error as Error).message}`);
-        }
-      },
-    });
-    this.addCommand({
-      id: "stoneintelligence-resync-all",
-      name: "Alle Notizen neu synchronisieren",
-      callback: async () => {
-        for (const [path, view] of [...this.boundViews]) {
-          this.detachLiveBinding(path, view);
-        }
-        await this.syncAllNotes();
-        await this.pollBackgroundNotes();
-        new Notice("StoneIntelligence: Neu synchronisiert.");
-      },
-    });
-    this.addCommand({
-      id: "stoneintelligence-resync-active",
-      name: "Aktuelle Notiz neu verbinden",
-      checkCallback: (checking) => {
-        const file = this.app.workspace.getActiveFile();
-        const isTrackableNote = file instanceof TFile && file.extension === "md";
-        if (checking) {
-          return isTrackableNote;
-        }
-        if (file) {
-          const boundView = this.boundViews.get(file.path);
-          if (boundView) {
-            this.detachLiveBinding(file.path, boundView);
-          } else {
-            this.stopSync(file.path);
-          }
-          void this.syncOpenEditorBindings();
-          new Notice(`StoneIntelligence: "${file.path}" wird neu verbunden.`);
-        }
-        return true;
-      },
-    });
-
-    this.app.workspace.onLayoutReady(() => {
-      // Nachtraeglich fuer bestehende Anmeldungen: wer schon eingeloggt war, als es den
-      // zwischengespeicherten Anzeigenamen noch nicht gab, soll ihn bekommen, ohne sich dafuer
-      // neu anmelden zu muessen.
-      if (this.isLoggedIn() && !this.settings.displayName) {
-        void this.refreshDisplayName();
-      }
-      void this.syncAllNotes();
-    });
+  listVaults(): Promise<VaultSummary[]> {
+    return this.noteApiClient.listVaults();
   }
 
-  onunload(): void {
-    window.clearTimeout(this.bindingRetryTimer ?? undefined);
-    this.bindingRetryTimer = null;
-    for (const path of [...this.sessions.keys()]) {
-      this.stopSync(path);
+  async selectVault(vault: VaultSummary): Promise<void> {
+    if (vault.id === this.settings.vaultId) {
+      return;
     }
-    // OHNE das blieb der physische Socket offen, wenn beim Unload gerade null Notizen aktiv
-    // gejoint waren (`leave()` schliesst ihn nur, wenn `virtualSockets` dadurch leer wird UND
-    // ueberhaupt eine Notiz aktiv war - der Transport selbst kannte "Plugin wird entladen" nicht,
-    // s. Codex-Verifikationsreview des Auth-Teardown-Fixes).
-    this.transport?.destroy();
-    this.transport = null;
+    this.stopSyncEngine();
+    this.settings.vaultId = vault.id;
+    this.settings.vaultName = vault.name;
+    this.vaultState();
+    await this.saveSettings();
+    this.startSyncEngine();
+  }
+
+  async createVault(name: string): Promise<void> {
+    const vaultId = await this.noteApiClient.createVault(name);
+    await this.selectVault({ id: vaultId, name, createdAt: new Date().toISOString() });
+  }
+
+  private async refreshVaultName(): Promise<void> {
+    try {
+      const vault = (await this.listVaults()).find((candidate) => candidate.id === this.settings.vaultId);
+      if (vault && vault.name !== this.settings.vaultName) {
+        this.settings.vaultName = vault.name;
+        await this.saveSettings();
+        this.activity.touch();
+      }
+    } catch {
+      // Nur Anzeige - der Sync haengt nicht davon ab.
+    }
+  }
+
+  async saveConnectionSettings(): Promise<void> {
+    await this.saveSettings();
+    this.stopSyncEngine();
+    this.rebuildClients();
+    this.startSyncEngine();
+  }
+
+  setPaused(paused: boolean): void {
+    this.settings.paused = paused;
+    void this.saveSettings();
+    if (paused) {
+      this.stopSyncEngine();
+    } else {
+      this.startSyncEngine();
+    }
+  }
+
+  isPaused(): boolean {
+    return this.settings.paused;
+  }
+
+  /** Serialisiert die reine Verbindungskonfiguration (KEINE Tokens) als JSON. */
+  connectionConfigJson(): string {
+    const { platformApiUrl, platformWsUrl, vaultId, vaultName, oidcIssuerUrl, oidcClientId } = this.settings;
+    return JSON.stringify({ platformApiUrl, platformWsUrl, vaultId, vaultName, oidcIssuerUrl, oidcClientId }, null, 2);
+  }
+
+  async applyConnectionConfig(json: string): Promise<void> {
+    const parsed = JSON.parse(json) as Partial<StoneIntelligenceSettings>;
+    for (const key of ["platformApiUrl", "platformWsUrl", "vaultId", "vaultName", "oidcIssuerUrl", "oidcClientId"] as const) {
+      if (typeof parsed[key] === "string") {
+        this.settings[key] = parsed[key] as string;
+      }
+    }
+    if (this.settings.vaultId) {
+      this.vaultState();
+    }
+    await this.saveConnectionSettings();
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // UI: Statusleiste, Seitenleiste, Befehle
+
+  private setupStatusBar(): void {
+    this.statusBarEl = this.addStatusBarItem();
+    this.statusBarEl.addClass("stoneintelligence-status-bar", "mod-clickable");
+    this.statusBarEl.onclick = () => this.runStatusAction(presentStatus(this.activity, { pending: this.pendingCount() }).action);
+    this.presenceBarEl = this.addStatusBarItem();
+    this.presenceBarEl.addClass("stoneintelligence-presence-bar", "mod-clickable");
+    this.presenceBarEl.onclick = () => void this.activateStatusView();
+    this.register(this.activity.subscribe(() => this.updateStatusBar()));
+    this.registerInterval(window.setInterval(() => this.updateStatusBar(), 30_000));
+    this.updateStatusBar();
+    this.updatePresenceBar();
+  }
+
+  private updateStatusBar(): void {
+    const status = presentStatus(this.activity, { pending: this.pendingCount() });
+    this.statusBarEl.empty();
+    this.statusBarEl.className = `status-bar-item plugin-stoneintelligence stoneintelligence-status-bar mod-clickable is-${status.tone}`;
+    const icon = this.statusBarEl.createSpan({ cls: "stoneintelligence-status-icon" });
+    setIcon(icon, status.icon);
+    icon.toggleClass("is-spinning", status.spinning);
+    this.statusBarEl.createSpan({ text: status.label });
+    this.statusBarEl.setAttr("aria-label", status.tooltip);
+    this.statusBarEl.setAttr("data-tooltip-position", "top");
+  }
+
+  /** Wer gerade in der aktiven Notiz mitarbeitet - direkt sichtbar, ohne die Seitenleiste zu oeffnen. */
+  private updatePresenceBar(): void {
+    const path = this.app.workspace.getActiveFile()?.path;
+    const session = path ? this.live.get(path) : undefined;
+    const others = session ? this.collaboratorsOf(session) : [];
+    this.presenceBarEl.empty();
+    this.presenceBarEl.toggle(others.length > 0);
+    if (others.length === 0) {
+      return;
+    }
+    setIcon(this.presenceBarEl.createSpan({ cls: "stoneintelligence-status-icon" }), "users");
+    this.presenceBarEl.createSpan({ text: others.length === 1 ? others[0].name : `${others.length} Personen` });
+    this.presenceBarEl.setAttr("aria-label", `Gerade in dieser Notiz: ${others.map((person) => person.name).join(", ")}`);
+    this.presenceBarEl.setAttr("data-tooltip-position", "top");
+  }
+
+  runStatusAction(action: StatusPresentation["action"]): void {
+    if (action === "settings") {
+      this.openSettings();
+    } else if (action === "login") {
+      this.login().catch((error: Error) => new Notice(`StoneIntelligence: Anmeldung fehlgeschlagen – ${error.message}`));
+    } else {
+      void this.activateStatusView();
+    }
+  }
+
+  openSettings(): void {
+    const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
+    setting?.open();
+    setting?.openTabById(this.manifest.id);
+  }
+
+  openFile(path: string): void {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (file instanceof TFile) {
+      void this.app.workspace.getLeaf(false).openFile(file);
+    }
   }
 
   async activateStatusView(): Promise<void> {
@@ -495,252 +565,296 @@ export default class StoneIntelligencePlugin extends Plugin {
       leaf = workspace.getRightLeaf(false) ?? workspace.getLeaf(true);
       await leaf.setViewState({ type: VIEW_TYPE_STATUS, active: true });
     }
-    workspace.revealLeaf(leaf);
+    void workspace.revealLeaf(leaf);
   }
 
-  isLoggedIn(): boolean {
-    return this.settings.tokens !== null;
+  pendingCount(): number {
+    return this.settings.vaultId ? this.vaultState().pendingOps.length : 0;
   }
 
-  getVaultId(): string {
-    return this.settings.vaultId;
+  linkedCount(): number {
+    return this.settings.vaultId ? Object.keys(this.vaultState().noteIds).length : 0;
   }
 
-  getSyncSessions(): SessionSnapshot[] {
-    return [...this.sessions.values()].map((session) => ({ path: session.path, status: session.client.status }));
+  vaultName(): string | null {
+    return this.settings.vaultId ? (this.settings.vaultName || this.settings.vaultId) : null;
   }
 
-  private updateStatusBar(): void {
-    const sessions = [...this.sessions.values()];
-    const connected = sessions.filter((s) => s.client.status === "connected").length;
-    const errored = sessions.filter((s) => s.client.status === "error").length;
-
-    let text: string;
-    if (!this.isLoggedIn()) {
-      text = "○ StoneIntelligence: nicht angemeldet";
-    } else if (errored > 0) {
-      text = `⚠ StoneIntelligence: ${errored} Fehler`;
-    } else if (sessions.length === 0) {
-      text = "○ StoneIntelligence: keine Notizen";
-    } else {
-      text = `● StoneIntelligence: ${connected}/${sessions.length}`;
-    }
-    this.statusBarItem.setText(text);
+  liveNotes(): LiveNote[] {
+    return [...this.live.values()]
+      .map((session) => ({ path: session.path, collaborators: this.collaboratorsOf(session) }))
+      .sort((a, b) => a.path.localeCompare(b.path));
   }
 
-  /**
-   * Laeuft beim Plugin-Start einmal durch: laedt fehlende Notizen vom Server herunter und bindet
-   * eine bereits offene aktive Notiz sofort live, statt auf den naechsten Poll-Tick zu warten.
-   * Der eigentliche Hintergrundabgleich ALLER Notizen laeuft separat und dauerhaft ueber den in
-   * `onload` registrierten Intervall-Timer (`pollBackgroundNotes`), s. Klassendoc.
-   */
-  private async syncAllNotes(): Promise<void> {
-    if (!this.settings.vaultId) {
+  private collaboratorsOf(session: LiveSession): Collaborator[] {
+    const people: Collaborator[] = [];
+    const seen = new Set<string>();
+    session.client.awareness.getStates().forEach((state, clientId) => {
+      const user = (state as { user?: { name?: string; color?: string } }).user;
+      if (clientId === session.client.doc.clientID || !user?.name || seen.has(user.name)) {
+        return;
+      }
+      seen.add(user.name);
+      people.push({ name: user.name, color: user.color ?? "var(--interactive-accent)" });
+    });
+    return people;
+  }
+
+  syncNow(): void {
+    if (!this.isReady()) {
+      this.runStatusAction(presentStatus(this.activity, { pending: this.pendingCount() }).action);
       return;
     }
-    try {
-      await this.reconcileMissingNotesFromServer();
-    } catch (error) {
-      // Reconciliation ist ein Download-Bonus, kein Muss - ein Fehler hier (z. B. Netzwerk) soll
-      // nicht verhindern, dass die aktive Notiz weiterhin synchronisiert wird.
-      console.error("StoneIntelligence: Reconciliation fehlgeschlagen", error);
+    if (this.transport?.state !== "online") {
+      this.transport?.reconnectNow();
     }
-    await this.syncOpenEditorBindings();
+    this.requestPass();
   }
 
-  /**
-   * Gleicht ALLE bekannten Notizen AUSSER den gerade live gebundenen ab - ein Durchlauf des
-   * periodischen Hintergrund-Timers (`BACKGROUND_POLL_INTERVAL_MS`). Bewusst SEQUENTIELL (eine
-   * Notiz nach der anderen fertig abgeglichen, bevor die naechste startet), analog zum bisherigen
-   * `syncAllNotes`-Muster - vermeidet unkontrollierten Verbindungs-/Join-Burst auf der geteilten
-   * Verbindung bei einem groesseren Vault.
-   */
-  private async pollBackgroundNotes(): Promise<void> {
-    if (!this.settings.vaultId || this.backgroundPollRunning) {
-      return;
-    }
-    this.backgroundPollRunning = true;
-    try {
-      for (const path of Object.keys(this.settings.noteIds)) {
-        if (this.boundViews.has(path)) {
-          continue;
+  private registerCommands(): void {
+    // Befehls-IDs der Vorversion beibehalten - sonst verlieren Nutzer ihre Tastenkuerzel.
+    this.addCommand({ id: "stoneintelligence-resync-all", name: "Jetzt synchronisieren", callback: () => this.syncNow() });
+    this.addCommand({ id: "stoneintelligence-show-status", name: "Sync-Übersicht öffnen", callback: () => void this.activateStatusView() });
+    this.addCommand({
+      id: "stoneintelligence-login",
+      name: "Anmelden",
+      checkCallback: (checking) => {
+        if (checking) {
+          return !this.isLoggedIn();
         }
-        try {
-          await this.syncNoteInBackground(path, { preferLocal: false });
-        } catch (error) {
-          console.error(`StoneIntelligence: Hintergrund-Sync fuer "${path}" fehlgeschlagen`, error);
+        this.runStatusAction("login");
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "stoneintelligence-logout",
+      name: "Abmelden",
+      checkCallback: (checking) => {
+        if (checking) {
+          return this.isLoggedIn();
         }
-      }
-    } finally {
-      this.backgroundPollRunning = false;
-    }
+        void this.logout();
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "stoneintelligence-toggle-pause",
+      name: "Sync pausieren oder fortsetzen",
+      callback: () => {
+        this.setPaused(!this.settings.paused);
+        new Notice(this.settings.paused ? "StoneIntelligence: Sync pausiert." : "StoneIntelligence: Sync läuft wieder.");
+      },
+    });
+    this.addCommand({
+      id: "stoneintelligence-resync-active",
+      name: "Aktuelle Notiz neu verbinden",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        const available = file instanceof TFile && file.extension === "md" && this.isReady();
+        if (checking || !file) {
+          return available;
+        }
+        this.detachLive(file.path);
+        void this.syncOpenEditorBindings();
+        new Notice(`StoneIntelligence: „${basename(file.path)}“ wird neu verbunden.`);
+        return true;
+      },
+    });
   }
+
+  private registerFileMenu(): void {
+    this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
+      if (!(file instanceof TFile) || file.extension !== "md" || !this.isReady()) {
+        return;
+      }
+      const blocked = this.vaultState().blockedPaths[file.path];
+      menu.addItem((item) =>
+        item.setTitle(blocked ? "StoneIntelligence: Erneut versuchen" : "StoneIntelligence: Jetzt synchronisieren")
+          .setIcon("refresh-cw")
+          .onClick(() => {
+            delete this.vaultState().blockedPaths[file.path];
+            this.activity.clearProblem(file.path);
+            void this.runLocalChange(file.path);
+          }),
+      );
+    }));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Verbindung
 
   /**
-   * Gleicht EINE einzelne Notiz per kurzlebigem Connect-Catchup-Leave-Zyklus ab (s. Klassendoc) -
-   * nutzt dieselbe {@link SyncClient}/{@link MultiplexedTransport}-Maschinerie wie die aktive
-   * Notiz, verlaesst die Verbindung aber sofort wieder danach, statt dauerhaft gejoint zu bleiben.
-   * No-op, wenn diese Notiz bereits live gebunden ist (die kuemmert sich selbst um ihren Stand)
-   * oder gerade woanders im Start-Prozess ist.
-   *
-   * <p>`preferLocal: true` (frisch angelegte/lokal geaenderte Notiz) laesst den soeben bekannten
-   * lokalen Inhalt gewinnen, wenn er vom Server-Stand abweicht - das ist genau DIESE Aenderung,
-   * die uebertragen werden soll. `preferLocal: false` (periodischer Poll ohne konkreten Anlass)
-   * laesst wie bisher den Server gewinnen, sobald er ueberhaupt Inhalt hat (dieselbe Heuristik wie
-   * `mergeInitialContent` fuer die aktive Notiz) - ein reiner Zeit-Tick ist kein Beleg dafuer, dass
-   * die lokale Datei die neuere ist.
+   * Die EINE geteilte Sync-Verbindung. Holt bei JEDEM (Re-)Connect ein frisches Single-Use-Ticket
+   * (ein Reconnect mit altem Ticket scheiterte garantiert mit 403). Nach jedem Connect wird ein
+   * Abgleich angestossen - er holt nach, was an Vault-Ankuendigungen verpasst wurde.
    */
-  private async syncNoteInBackground(path: string, options: { preferLocal: boolean }): Promise<void> {
-    if (this.sessions.has(path) || this.startingPaths.has(path) || !this.settings.vaultId) {
-      return;
-    }
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) {
-      return;
-    }
-
-    const noteId = await this.ensureNoteId(file);
-    const transport = this.ensureTransport();
-    const doc = new Y.Doc();
-    const text = doc.getText("content");
-    const client = new SyncClient("", () => transport.createVirtualSocket(noteId, { priority: false }), doc);
-    client.connect();
-    try {
-      const connected = await this.awaitConnected(client, BACKGROUND_SYNC_TIMEOUT_MS);
-      if (!connected) {
-        return;
-      }
-      const caughtUp = await this.awaitCatchupComplete(client, BACKGROUND_SYNC_TIMEOUT_MS);
-      if (!caughtUp) {
-        return;
-      }
-
-      const localContent = await this.app.vault.read(file);
-      const serverContent = text.toString();
-      if (serverContent === localContent) {
-        return;
-      }
-      if (options.preferLocal || serverContent.length === 0) {
-        doc.transact(() => {
-          text.delete(0, text.length);
-          text.insert(0, localContent);
-        });
-      } else {
-        await this.applyRemoteContentToFile(file, serverContent);
-      }
-    } finally {
-      client.disconnect();
-    }
-  }
-
-  /**
-   * Eine Bestandsaenderung aus dem Vault ist eingetroffen (ein anderes Geraet hat eine Notiz
-   * angelegt, geloescht oder umbenannt). Diese Nachrichten erreichen JEDES verbundene Geraet -
-   * anders als die notenskopierten Nachrichten, die nur bei gejointen, also geoeffneten Notizen
-   * ankommen (s. `VaultAnnouncementService` auf der Serverseite).
-   */
-  private async handleVaultEvent(messageType: number, noteId: string, path: string): Promise<void> {
-    try {
-      if (messageType === VAULT_NOTE_CREATED) {
-        await this.applyRemoteNoteCreated(noteId, path);
-      } else if (messageType === VAULT_NOTE_RENAMED) {
-        await this.applyRemoteNoteRenamed(noteId, path);
-      } else if (messageType === VAULT_NOTE_DELETED) {
-        await this.applyRemoteNoteDeleted(noteId, path);
-      }
-    } catch (error) {
-      console.error(`StoneIntelligence: Bestandsereignis fuer "${path}" fehlgeschlagen`, error);
-    }
-  }
-
-  /** Auf einem anderen Geraet angelegt: lokal als leeren Platzhalter anlegen und Inhalt holen. */
-  private async applyRemoteNoteCreated(noteId: string, path: string): Promise<void> {
-    if (this.app.vault.getAbstractFileByPath(path) instanceof TFile) {
-      // Schon da - typischerweise das Geraet, das die Notiz selbst angelegt hat. Die Zuordnung
-      // trotzdem sicherstellen, damit beide Seiten dieselbe NoteId benutzen (Fehlerklasse 5).
-      this.settings.noteIds[path] = noteId;
-      await this.saveSettings();
-      return;
-    }
-    // NoteId VOR dem Anlegen eintragen: der `create`-Vault-Event feuert sonst zuerst und
-    // `ensureNoteId` legte eine ZWEITE Note fuer denselben Pfad an, statt die bestehende zu nutzen.
-    this.settings.noteIds[path] = noteId;
-    await this.saveSettings();
-
-    const folderPath = path.split("/").slice(0, -1).join("/");
-    if (folderPath && !this.app.vault.getAbstractFileByPath(folderPath)) {
-      await this.app.vault.createFolder(folderPath).catch(() => {
-        // Race mit einer anderen gleichzeitig eintreffenden Notiz im selben Ordner - harmlos.
+  private ensureTransport(): MultiplexedTransport {
+    if (!this.transport) {
+      this.transport = new MultiplexedTransport(() => this.issueFreshWsUrl(), (url) => new WebSocket(url), {
+        onVaultEvent: (type, noteId, path) => void this.handleVaultEvent(type, noteId, path),
+        onStateChange: (state) => {
+          this.activity.update({ connection: state });
+          if (state === "online") {
+            // Notizen, die offline ohne gemeinsame Basis nicht gebunden werden konnten.
+            void this.syncOpenEditorBindings();
+          }
+        },
+        onConnected: () => this.requestPass(),
+        subscribeContentUpdates: true,
       });
     }
-    this.reconcilingPaths.add(path);
+    return this.transport;
+  }
+
+  private async issueFreshWsUrl(): Promise<string> {
+    const ticketClient = new TicketClient(this.settings.platformApiUrl.replace(/\/+$/, ""), this.getAccessToken);
+    const ticket = await ticketClient.issueTicket(this.settings.vaultId);
+    return `${wsUrlFor(this.settings)}/ws/sync?ticket=${encodeURIComponent(ticket.token)}`;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Abgleich-Durchlauf
+
+  /** Stoesst einen Durchlauf an; laeuft schon einer, folgt genau ein weiterer direkt danach. */
+  requestPass(): void {
+    if (!this.isReady()) {
+      return;
+    }
+    if (this.passRunning) {
+      this.passRequested = true;
+      return;
+    }
+    void this.runPasses();
+  }
+
+  private async runPasses(): Promise<void> {
+    this.passRunning = true;
     try {
-      const created = await this.app.vault.create(path, "");
-      await this.syncNoteInBackground(created.path, { preferLocal: false });
+      do {
+        this.passRequested = false;
+        await this.reconcileOnce();
+      } while (this.passRequested && this.isReady());
     } finally {
-      this.reconcilingPaths.delete(path);
+      this.passRunning = false;
     }
   }
 
-  /** Auf einem anderen Geraet umbenannt: lokal nachziehen, ohne den Rename zurueckzumelden. */
-  private async applyRemoteNoteRenamed(noteId: string, newPath: string): Promise<void> {
-    const oldPath = this.pathForNoteId(noteId);
-    if (!oldPath || oldPath === newPath) {
-      return;
-    }
-    const file = this.app.vault.getAbstractFileByPath(oldPath);
-    if (!(file instanceof TFile)) {
-      return;
-    }
+  private async reconcileOnce(): Promise<void> {
+    const vaultId = this.settings.vaultId;
+    const state = this.vaultState();
+    await this.flushPendingOps();
 
-    this.stopSync(oldPath);
-    delete this.settings.noteIds[oldPath];
-    this.settings.noteIds[newPath] = noteId;
-    await this.saveSettings();
-
-    const folderPath = newPath.split("/").slice(0, -1).join("/");
-    if (folderPath && !this.app.vault.getAbstractFileByPath(folderPath)) {
-      await this.app.vault.createFolder(folderPath).catch(() => undefined);
-    }
-    this.serverDrivenPaths.add(oldPath);
-    this.serverDrivenPaths.add(newPath);
+    let serverNotes;
     try {
-      await this.app.fileManager.renameFile(file, newPath);
-    } finally {
-      this.serverDrivenPaths.delete(oldPath);
-      this.serverDrivenPaths.delete(newPath);
+      serverNotes = await this.noteApiClient.listAllNotes(vaultId);
+    } catch (error) {
+      console.debug("StoneIntelligence: Notizliste nicht abrufbar", error);
+      return;
     }
-    await this.syncOpenEditorBindings();
+    if (vaultId !== this.settings.vaultId || !this.isReady()) {
+      return;
+    }
+
+    const excluded = this.settings.excludedFolders;
+    const fullPlan = planReconciliation({
+      serverNotes: serverNotes.filter((note) => !isExcluded(note.path, excluded)),
+      localFiles: this.app.vault.getMarkdownFiles()
+        .filter((file) => !isExcluded(file.path, excluded))
+        .map((file) => ({ path: file.path, mtime: file.stat.mtime, size: file.stat.size })),
+      noteIds: Object.fromEntries(Object.entries(state.noteIds).filter(([path]) => !isExcluded(path, excluded))),
+      meta: state.noteMeta,
+      pendingNoteIds: new Set(state.pendingOps.map((op) => op.noteId)),
+      livePaths: new Set([...this.live.keys(), ...this.liveStarting]),
+      blockedPaths: state.blockedPaths,
+    });
+    const legacyServer = serverNotes.some((note) => note.revision === undefined);
+    const legacyContentDue = Date.now() - this.lastLegacyContentPass >= LEGACY_FULL_CONTENT_INTERVAL_MS;
+    const plan = legacyServer && !legacyContentDue
+      ? fullPlan.filter((action) => !(action.kind === "sync" && action.serverRevision === null))
+      : fullPlan;
+    if (legacyServer && legacyContentDue) {
+      this.lastLegacyContentPass = Date.now();
+    }
+
+    this.activity.beginPass(plan.length);
+    try {
+      await runWithConcurrency(plan, PASS_CONCURRENCY, async (action) => {
+        if (vaultId === this.settings.vaultId && this.isReady()) {
+          await this.executeAction(action);
+        }
+        this.activity.advancePass();
+      });
+    } finally {
+      await this.saveSettings();
+      this.activity.endPass(vaultId === this.settings.vaultId);
+    }
   }
 
-  /**
-   * Auf einem anderen Geraet geloescht: lokale Datei in den Papierkorb (Toms Entscheidung -
-   * echtes Sync-Verhalten, aber wiederherstellbar). `fileManager.trashFile` respektiert dabei
-   * Obsidians eigene Einstellung "Geloeschte Dateien" (Obsidian-.trash oder System-Papierkorb),
-   * statt eine eigene, vom Nutzer nicht kontrollierbare Loeschpolitik zu erfinden.
-   */
-  private async applyRemoteNoteDeleted(noteId: string, path: string): Promise<void> {
-    const localPath = this.pathForNoteId(noteId) ?? path;
-    this.stopSync(localPath);
-    delete this.settings.noteIds[localPath];
-    await this.saveSettings();
-
-    const file = this.app.vault.getAbstractFileByPath(localPath);
-    if (!(file instanceof TFile)) {
-      return;
-    }
-    this.serverDrivenPaths.add(localPath);
+  private async executeAction(action: ReconcileAction): Promise<void> {
+    const path = action.kind === "renameLocal" ? action.from : action.path;
     try {
-      await this.app.fileManager.trashFile(file);
-    } finally {
-      this.serverDrivenPaths.delete(localPath);
+      switch (action.kind) {
+        case "download":
+          await this.downloadNote(action.noteId, action.path);
+          break;
+        case "adopt":
+          this.mapNote(action.path, action.noteId);
+          await this.syncContent(action.noteId, action.path, null, "adopt");
+          break;
+        case "upload":
+          await this.uploadNote(action.path);
+          break;
+        case "sync":
+          await this.syncContent(action.noteId, action.path, action.serverRevision, "sync");
+          break;
+        case "renameLocal":
+          await this.applyRemoteRename(action.noteId, action.from, action.to);
+          break;
+        case "checkMissing":
+          await this.resolveMissingNote(action.noteId, action.path, action.locallyChanged);
+          break;
+      }
+    } catch (error) {
+      this.reportFailure(path, error);
     }
-    new Notice(`StoneIntelligence: "${localPath}" wurde auf einem anderen Geraet geloescht und in den Papierkorb verschoben.`);
   }
 
-  /** Lokaler Pfad, unter dem diese NoteId gerade gefuehrt wird - die Zuordnung ist pfad-indiziert. */
+  private reportFailure(path: string, error: unknown): void {
+    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+      this.activity.reportProblem(path, "Keine Berechtigung für diese Notiz.");
+    } else if (error instanceof HttpError) {
+      this.activity.reportProblem(path, `Server lehnte ab (HTTP ${error.status}).`);
+    } else {
+      // Netzwerkfehler: kein "Problem" der Notiz, der naechste Durchlauf versucht es erneut.
+      console.debug(`StoneIntelligence: Abgleich von "${path}" fehlgeschlagen`, error);
+    }
+  }
+
+  private mapNote(path: string, noteId: string): void {
+    const state = this.vaultState();
+    for (const [mappedPath, mappedId] of Object.entries(state.noteIds)) {
+      if (mappedId === noteId && mappedPath !== path) {
+        delete state.noteIds[mappedPath];
+      }
+    }
+    state.noteIds[path] = noteId;
+    this.requestSettingsSave();
+  }
+
+  private unmapNote(noteId: string): void {
+    const state = this.vaultState();
+    for (const [path, id] of Object.entries(state.noteIds)) {
+      if (id === noteId) {
+        delete state.noteIds[path];
+      }
+    }
+    delete state.noteMeta[noteId];
+    void this.stateStore.remove(this.settings.vaultId, noteId);
+    this.requestSettingsSave();
+  }
+
   private pathForNoteId(noteId: string): string | null {
-    for (const [path, id] of Object.entries(this.settings.noteIds)) {
+    for (const [path, id] of Object.entries(this.vaultState().noteIds)) {
       if (id === noteId) {
         return path;
       }
@@ -748,285 +862,481 @@ export default class StoneIntelligencePlugin extends Plugin {
     return null;
   }
 
-  /**
-   * Laedt Notizen herunter, die auf dem Server existieren, aber lokal (noch) fehlen - der Fall,
-   * der sonst komplett unbehandelt waere: ein neues/leeres Vault auf einem zweiten Geraet bekaeme
-   * NIE etwas heruntergeladen, weil der Hintergrund-Poll nur ueber bereits BEKANNTE (in
-   * `settings.noteIds` eingetragene) Notizen iteriert. Legt fuer jede fehlende Notiz eine leere
-   * lokale Platzhalterdatei an und synchronisiert sie SOFORT UND EINZELN (nicht dem naechsten
-   * Poll-Tick ueberlassen) - bei Vaults mit vielen fehlenden Notizen (live beobachtet: 177, damals
-   * noch mit dauerhaften WS-Joins) blieb ein Burst gleichzeitiger Verbindungsversuche sonst haengen;
-   * sequentiell (eine Notiz nach der anderen fertig abgeglichen) bleibt langsamer, aber zuverlaessig.
-   */
-  private async reconcileMissingNotesFromServer(): Promise<void> {
-    const localPaths = new Set(this.app.vault.getMarkdownFiles().map((f) => f.path));
-    const serverNotes = await this.noteApiClient.listAllNotes(this.settings.vaultId);
-
-    for (const note of serverNotes) {
-      if (localPaths.has(note.path)) {
-        continue;
-      }
-      // NoteId VOR dem Anlegen der Datei eintragen: der `create`-Event-Handler ruft ebenfalls
-      // `syncNoteInBackground` auf (zusaetzlich zu unserem expliziten Aufruf unten) - dessen
-      // `ensureNoteId` wuerde sonst eine ZWEITE Note fuer denselben Pfad anlegen (Fehlerklasse 5)
-      // statt die bereits vorhandene Server-Note zu uebernehmen.
-      this.settings.noteIds[note.path] = note.id;
-      await this.saveSettings();
-
-      const folderPath = note.path.split("/").slice(0, -1).join("/");
-      if (folderPath && !this.app.vault.getAbstractFileByPath(folderPath)) {
-        await this.app.vault.createFolder(folderPath).catch(() => {
-          // Race mit einer anderen gerade heruntergeladenen Notiz im selben Ordner - harmlos.
-        });
-      }
-      this.reconcilingPaths.add(note.path);
-      try {
-        const created = await this.app.vault.create(note.path, "");
-        await this.syncNoteInBackground(created.path, { preferLocal: false });
-      } catch (error) {
-        console.error(`StoneIntelligence: Download von "${note.path}" fehlgeschlagen`, error);
-      } finally {
-        this.reconcilingPaths.delete(note.path);
-      }
+  private async ensureFolder(path: string): Promise<void> {
+    const folder = parentFolder(path);
+    if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
+      await this.app.vault.createFolder(folder).catch(() => undefined);
     }
   }
 
-  private async ensureNoteId(file: TFile): Promise<string> {
-    const existing = this.settings.noteIds[file.path];
+  /** Auf dem Server vorhanden, lokal nicht: leere Datei anlegen, Inhalt abgleichen. */
+  private async downloadNote(noteId: string, path: string): Promise<void> {
+    if (this.app.vault.getAbstractFileByPath(path)) {
+      return;
+    }
+    // Zuordnung VOR dem Anlegen: der `create`-Event sieht sie und laesst die Datei in Ruhe.
+    this.mapNote(path, noteId);
+    await this.ensureFolder(path);
+    this.serverDrivenPaths.add(path);
+    try {
+      await this.app.vault.create(path, "");
+    } finally {
+      this.serverDrivenPaths.delete(path);
+    }
+    const result = await this.syncContent(noteId, path, null, "download");
+    if (result && result.outcome !== "offline") {
+      this.activity.log("downloaded", path);
+    }
+  }
+
+  /**
+   * Lokal vorhanden, auf dem Server nicht: anlegen und hochladen. Existiert der Pfad auf dem
+   * Server doch schon (409, z. B. zeitgleich von einem anderen Geraet angelegt), wird DIESE Note
+   * uebernommen statt eine zweite anzulegen.
+   */
+  private async uploadNote(path: string): Promise<string | null> {
+    const state = this.vaultState();
+    const existing = state.noteIds[path];
     if (existing) {
       return existing;
     }
-    const noteId = await this.noteApiClient.createNote(this.settings.vaultId, file.path, 1);
-    this.settings.noteIds[file.path] = noteId;
-    await this.saveSettings();
+    let noteId: string;
+    let adopted = false;
+    try {
+      noteId = await this.noteApiClient.createNote(this.settings.vaultId, path, 1);
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 409) {
+        const match = (await this.noteApiClient.listAllNotes(this.settings.vaultId)).find((note) => note.path === path);
+        if (!match) {
+          throw error;
+        }
+        noteId = match.id;
+        adopted = true;
+      } else if (error instanceof HttpError && [400, 403].includes(error.status)) {
+        const reason = error.status === 403 ? "Keine Berechtigung, hier Notizen anzulegen." : "Pfad vom Server abgelehnt.";
+        state.blockedPaths[path] = reason;
+        this.activity.reportProblem(path, reason);
+        this.requestSettingsSave();
+        return null;
+      } else {
+        throw error;
+      }
+    }
+    this.mapNote(path, noteId);
+    const result = await this.syncContent(noteId, path, null, adopted ? "adopt" : "upload");
+    if (!adopted && result && result.outcome !== "offline") {
+      this.activity.log("uploaded", path);
+    }
     return noteId;
   }
 
-  /**
-   * Holt die EINE geteilte Sync-Verbindung fuer diesen Vault (erstellt sie beim ersten Aufruf,
-   * alle weiteren Aufrufe bekommen dieselbe Instanz zurueck) - der Kern der Multiplexing-
-   * Umstellung: vorher hatte jede Notiz ihre eigene WebSocket-Verbindung samt eigenem Ticket.
-   * Der Transport selbst holt sich bei JEDEM (Re-)Connect ueber `issueFreshWsUrl` ein frisches
-   * Ticket - Tickets sind Single-Use, ein Reconnect mit der urspruenglichen URL waere ein
-   * bereits verbrauchtes Ticket und scheiterte garantiert mit 403 (live beobachtet).
-   */
-  private ensureTransport(): MultiplexedTransport {
-    if (!this.transport) {
-      this.transport = new MultiplexedTransport(() => this.issueFreshWsUrl(), (url) => new WebSocket(url), {
-        onVaultEvent: (type, noteId, path) => void this.handleVaultEvent(type, noteId, path),
-      });
-    }
-    return this.transport;
-  }
-
-  private async issueFreshWsUrl(): Promise<string> {
-    const ticketClient = new TicketClient(this.settings.platformApiUrl, this.getAccessToken);
-    const ticket = await ticketClient.issueTicket(this.settings.vaultId);
-    return `${this.settings.platformWsUrl}/ws/sync?ticket=${encodeURIComponent(ticket.token)}`;
-  }
-
-  /**
-   * Wartet, bis DIESE Notiz tatsaechlich gejoint ist (nicht nur registriert) - bei einer
-   * geteilten, gequeuten Verbindung kann das je nach Position in der Warteschlange dauern (s.
-   * `multiplexedTransport.ts`). Ohne dieses Warten wuerde die anschliessende Catchup-Gnadenfrist
-   * in `doStartSync` viel zu frueh ablaufen, bevor die Notiz ueberhaupt gejoint wurde.
-   *
-   * <p>Gibt `false` zurueck, wenn `timeoutMs` ohne echtes "connected" verstreicht - der Aufrufer
-   * (`mergeInitialContent`) MUSS das als "noch nicht sicher verbunden" behandeln, NIE als Erfolg
-   * (ehemals ein P1-Bug: der Timeout-Pfad liess "unbekannt/nicht verbunden" faelschlich wie
-   * "Server ist leer" aussehen, s. docs/sync-comparison-review-2026-09-18.md).
-   */
-  private awaitConnected(client: SyncClient, timeoutMs = 30_000): Promise<boolean> {
-    if (client.status === "connected") {
-      return Promise.resolve(true);
-    }
-    return new Promise((resolve) => {
-      const previous = client.onStatusChange;
-      const timeout = window.setTimeout(() => {
-        client.onStatusChange = previous;
-        resolve(false);
-      }, timeoutMs);
-      client.onStatusChange = (status) => {
-        previous?.(status);
-        if (status === "connected") {
-          window.clearTimeout(timeout);
-          client.onStatusChange = previous;
-          resolve(true);
+  /** Ein-Notiz-Abgleich im Hintergrund; offene Notizen erledigt die Live-Bindung. */
+  private async syncContent(
+    noteId: string,
+    path: string,
+    serverRevision: number | null,
+    reason: "sync" | "adopt" | "download" | "upload" | "local",
+  ): Promise<ContentSyncResult | null> {
+    return this.withNoteLock(noteId, async () => {
+      if (this.live.has(path) || this.liveStarting.has(path) || this.pathForNoteId(noteId) !== path) {
+        return null;
+      }
+      const result = await syncNoteContent(this.contentPorts(), noteId, path);
+      if (result.outcome === "offline") {
+        return result;
+      }
+      this.recordMeta(noteId, path, serverRevision);
+      this.activity.clearProblem(path);
+      if (result.outcome === "conflict" && result.conflictPath) {
+        this.reportConflict(path, result.conflictPath);
+      } else if (reason === "sync" || reason === "local") {
+        if (result.outcome === "pulled" || result.outcome === "merged" || result.outcome === "pushed") {
+          this.activity.log(result.outcome, path);
         }
-      };
+      }
+      return result;
     });
   }
 
-  /**
-   * Wartet auf das explizite Catchup-Abschlusssignal des Servers (s. `SyncFrame.TYPE_CATCHUP_
-   * COMPLETE`) statt auf eine fixe Gnadenfrist zu raten. `timeoutMs` bleibt als reines
-   * Sicherheitsnetz (z. B. gegen einen sehr alten Server ohne dieses Signal oder ein verlorenes
-   * Frame) - im Normalfall loest das Signal selbst lange vorher auf.
-   *
-   * <p>Gibt `false` zurueck, wenn der Timeout OHNE das Signal verstreicht. Der Aufrufer darf das
-   * NIE als "Server ist leer" interpretieren - ein leeres Y.Text bei Timeout kann genausogut
-   * bedeuten "die Historie ist einfach noch unterwegs", exakt der Fehlschluss, den dieses Signal
-   * eigentlich verhindern sollte (ehemals ein P1-Bug, s. docs/sync-comparison-review-2026-09-18.md).
-   */
-  private awaitCatchupComplete(client: SyncClient, timeoutMs = 30_000): Promise<boolean> {
-    return new Promise((resolve) => {
-      const previous = client.onCatchupComplete;
-      const timeout = window.setTimeout(() => {
-        client.onCatchupComplete = previous;
-        resolve(false);
-      }, timeoutMs);
-      client.onCatchupComplete = () => {
-        previous?.();
-        window.clearTimeout(timeout);
-        client.onCatchupComplete = previous;
-        resolve(true);
-      };
-    });
+  private reportConflict(path: string, conflictPath: string): void {
+    this.activity.log("conflict", path, `Lokale Fassung gesichert als „${basename(conflictPath)}“`);
+    new Notice(
+      `StoneIntelligence: „${basename(path)}“ war hier und auf dem Server unterschiedlich. `
+        + `Die Server-Fassung ist jetzt aktiv, deine lokale liegt in „${basename(conflictPath)}“.`,
+      10_000,
+    );
   }
 
-  private async startSync(file: TFile, priority = false): Promise<void> {
-    if (this.sessions.has(file.path) || this.startingPaths.has(file.path) || !this.settings.vaultId) {
+  private recordMeta(noteId: string, path: string, serverRevision: number | null): void {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
       return;
     }
-    this.startingPaths.add(file.path);
+    // Ohne bekannte Revision (-1) gleicht der naechste Durchlauf einmal ab und merkt sie sich dann.
+    this.vaultState().noteMeta[noteId] = { revision: serverRevision ?? -1, mtime: file.stat.mtime, size: file.stat.size };
+    this.requestSettingsSave();
+  }
+
+  private withNoteLock<T>(noteId: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.noteLocks.get(noteId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(task);
+    const tail = run.catch(() => undefined);
+    this.noteLocks.set(noteId, tail);
+    void tail.then(() => {
+      if (this.noteLocks.get(noteId) === tail) {
+        this.noteLocks.delete(noteId);
+      }
+    });
+    return run;
+  }
+
+  private contentPorts(): ContentSyncPorts {
+    const vaultId = this.settings.vaultId;
+    return {
+      loadState: (noteId) => this.stateStore.load(vaultId, noteId),
+      saveState: (noteId, state) => this.stateStore.save(vaultId, noteId, state),
+      readFile: async (path) => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) {
+          throw new Error(`Datei fehlt: ${path}`);
+        }
+        return this.app.vault.read(file);
+      },
+      writeFile: (path, content) => this.writeRemoteContent(path, content),
+      writeConflictCopy: (path, content) => this.writeConflictCopy(path, content),
+      connect: (noteId, doc) => this.connectBackground(noteId, doc),
+    };
+  }
+
+  private async connectBackground(noteId: string, doc: Y.Doc): Promise<{ disconnect(): void } | null> {
+    return this.transport ? connectForCatchup(this.transport, noteId, doc, CONTENT_SYNC_TIMEOUT_MS) : null;
+  }
+
+  /** Schreibt vom Server kommenden Inhalt - als eigene Aenderung markiert, damit sie nicht zurueckgemeldet wird. */
+  private async writeRemoteContent(path: string, content: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      return;
+    }
+    this.journal.registerSelfInitiated(crypto.randomUUID(), [`modify:${path}:${hashContent(content)}`]);
+    await this.app.vault.modify(file, content);
+  }
+
+  private async writeConflictCopy(path: string, content: string): Promise<string> {
+    const copyPath = conflictCopyPath(path, new Date(), (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
+    // Die Kopie ist eine ganz normale neue Notiz - der `create`-Event laedt sie hoch.
+    await this.app.vault.create(copyPath, content);
+    return copyPath;
+  }
+
+  /** Auf einem anderen Geraet (oder waehrend dieses offline war) umbenannt: lokal nachziehen. */
+  private async applyRemoteRename(noteId: string, from: string, to: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(from);
+    if (!(file instanceof TFile) || this.app.vault.getAbstractFileByPath(to)) {
+      return;
+    }
+    this.detachLive(from);
+    await this.ensureFolder(to);
+    this.serverDrivenPaths.add(from);
+    this.serverDrivenPaths.add(to);
     try {
-      await this.doStartSync(file, priority);
+      await this.app.fileManager.renameFile(file, to);
+      this.mapNote(to, noteId);
     } finally {
-      this.startingPaths.delete(file.path);
+      this.serverDrivenPaths.delete(from);
+      this.serverDrivenPaths.delete(to);
+    }
+    this.activity.log("renamed", to, `Umbenannt von „${basename(from)}“`);
+    void this.syncOpenEditorBindings();
+  }
+
+  /** Zugeordnete Notiz fehlt in der Server-Liste: geloescht oder nur nicht mehr sichtbar? */
+  private async resolveMissingNote(noteId: string, path: string, locallyChanged: boolean): Promise<void> {
+    const status = await this.noteApiClient.noteStatus(this.settings.vaultId, noteId);
+    if (status === "deleted") {
+      await this.applyRemoteDeletion(noteId, path, locallyChanged);
+    } else if (status === "forbidden") {
+      this.detachLive(path);
+      this.unmapNote(noteId);
+      this.vaultState().blockedPaths[path] = "Kein Zugriff mehr auf diese Notiz.";
+      this.activity.reportProblem(path, "Kein Zugriff mehr auf diese Notiz. Die lokale Datei bleibt unverändert.");
     }
   }
 
   /**
-   * Registriert die Session SOFORT (nicht erst nach vollstaendigem Verbindungsaufbau) und laesst
-   * das eigentliche Verbinden+Content-Merge im Hintergrund laufen (s. `mergeInitialContent`).
-   *
-   * <p>Fruehere Version wartete HIER (blockierend) bis zu 30s pro Notiz auf die Verbindung, BEVOR
-   * sie zur naechsten Notiz weiterging - `syncAllNotes()`/`reconcileMissingNotesFromServer()`
-   * rufen `startSync` aber SEQUENTIELL fuer jede Notiz auf. Bei einem groesseren Vault (100+
-   * Notizen) UND einer gerade langsamen/gestoerten Verbindung summierte sich das zu vielen
-   * Minuten, in denen scheinbar ueberhaupt nichts passierte (kein neuer Netzwerk-Request, keine
-   * Konsolen-Ausgabe) - live beobachtet nach einem manuellen "Alle Notizen neu synchronisieren".
-   * Das eigene Staffeln der Verbindungen ist ohnehin schon Aufgabe von
-   * `MultiplexedTransport.joinStaggerMs` - diese zusaetzliche, sequentielle Blockade hier war nur
-   * doppelte, schaedliche Drosselung obendrauf.
+   * Anderswo geloescht: in den Papierkorb (Obsidians Einstellung "Geloeschte Dateien" gilt) -
+   * aber NUR, wenn die Datei hier seit dem letzten Abgleich unveraendert ist. Sonst bleibt sie
+   * und wird als neue Notiz wieder hochgeladen; eine Loeschung darf keine ungesicherte Arbeit fressen.
    */
-  private async doStartSync(file: TFile, priority: boolean): Promise<void> {
-    const noteId = await this.ensureNoteId(file);
-    const transport = this.ensureTransport();
+  private async applyRemoteDeletion(noteId: string, path: string, locallyChanged: boolean): Promise<void> {
+    this.detachLive(path);
+    this.unmapNote(noteId);
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      return;
+    }
+    if (locallyChanged) {
+      this.activity.log("kept", path, "Anderswo gelöscht – lokale Änderungen behalten, wird neu hochgeladen");
+      this.requestPass();
+      return;
+    }
+    this.serverDrivenPaths.add(path);
+    try {
+      await this.app.fileManager.trashFile(file);
+    } finally {
+      this.serverDrivenPaths.delete(path);
+    }
+    this.activity.log("deleted", path, "Auf einem anderen Gerät gelöscht, im Papierkorb");
+  }
 
-    const doc = new Y.Doc();
-    const text = doc.getText("content");
+  private locallyChangedSinceSync(noteId: string, path: string): boolean {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    const meta = this.vaultState().noteMeta[noteId];
+    return !(file instanceof TFile) || !meta || meta.mtime !== file.stat.mtime || meta.size !== file.stat.size;
+  }
 
-    // WICHTIG: Client zuerst verbinden, DANACH erst lokalen Inhalt einspielen. SyncClients
-    // Update-Listener wird im Konstruktor registriert - wuerde man den Inhalt vorher einfuegen,
-    // wuerde das erzeugte Yjs-Update verpuffen (kein Listener vorhanden), und die Notiz wuerde
-    // nie zum Server uebertragen werden. Der URL-Parameter ist fuer die geteilte Verbindung
-    // irrelevant (SyncClient reicht ihn nur an die Factory durch) - die Factory ignoriert ihn und
-    // schliesst stattdessen ueber `noteId`/`priority` auf den passenden virtuellen Kanal.
-    const client = new SyncClient("", () => transport.createVirtualSocket(noteId, { priority }), doc);
-    client.onNoteDeleted = () => this.handleRemoteNoteDeleted(file.path);
-    // Identitaet VOR dem Verbinden setzen (Muster aller drei untersuchten Obsidian-Yjs-Plugins:
-    // Provider erzeugen -> sofort `user` setzen -> dann verbinden). Andersherum gibt es ein
-    // Fenster, in dem bereits Awareness-Verkehr laeuft, waehrend der eigene Zustand noch keine
-    // Identitaet traegt - Gegenueber sehen dann einen namen- und farblosen Cursor.
-    // Ohne dieses Feld haette y-codemirror.next fuer diesen Client keine Identitaet zum Anzeigen
-    // (`state.user` blieb bisher komplett ungesetzt) - Remote-Cursor faellt in diesem Fall auf
-    // eine generische, nicht unterscheidbare Standarddarstellung zurueck ("Anonymous", ein
-    // einzelnes Blau fuer alle). Name kommt aus demselben `preferred_username`-Claim, den der
-    // Server serverseitig als Actor-Identitaet nutzt; Farbe ist deterministisch aus dem Namen
-    // abgeleitet (uebernommen aus dem Vorgaenger-Projekt `stonesync`), damit dieselbe Person auf
-    // jedem Geraet/in jeder Session dieselbe Cursor-Farbe hat.
-    const actorName = this.actorDisplayName();
-    client.awareness.setLocalStateField("user", { name: actorName, color: pickUserColor(actorName) });
-    client.connect();
+  /**
+   * Uebertraegt offline gemerkte Loeschungen/Umbenennungen in Reihenfolge. Netzwerkfehler: Rest
+   * bleibt fuer den naechsten Versuch liegen. Endgueltige Ablehnung (4xx): verworfen und gemeldet;
+   * der naechste Abgleich stellt dann den Server-Stand wieder her.
+   */
+  private async flushPendingOps(): Promise<void> {
+    if (this.flushingOps || !this.isReady()) {
+      return;
+    }
+    this.flushingOps = true;
+    const vaultId = this.settings.vaultId;
+    const state = this.vaultState();
+    try {
+      while (state.pendingOps.length > 0 && vaultId === this.settings.vaultId) {
+        const op = state.pendingOps[0];
+        try {
+          if (op.kind === "delete") {
+            await this.noteApiClient.deleteNote(vaultId, op.noteId, op.operationId);
+          } else {
+            await this.noteApiClient.renameNote(vaultId, op.noteId, op.path);
+          }
+        } catch (error) {
+          const permanent = error instanceof HttpError && error.status >= 400 && error.status < 500
+            && error.status !== 408 && error.status !== 429;
+          if (!permanent) {
+            break;
+          }
+          if (op.kind === "rename" && (error as HttpError).status === 404) {
+            // Note inzwischen anderswo geloescht - der Abgleich erledigt den Rest.
+          } else {
+            this.activity.reportProblem(op.path, op.kind === "delete"
+              ? "Löschen vom Server abgelehnt – die Notiz wird wiederhergestellt."
+              : "Umbenennen vom Server abgelehnt – der Server-Name wird wiederhergestellt.");
+          }
+        }
+        state.pendingOps.shift();
+        await this.saveSettings();
+        this.activity.touch();
+      }
+    } finally {
+      this.flushingOps = false;
+    }
+  }
 
-    const session: NoteSyncSession = {
-      path: file.path,
-      noteId,
-      client,
-      unbindDocObserver: () => text.unobserve(observer),
-      hasLiveEditorBinding: false,
-    };
+  // ---------------------------------------------------------------------------------------------
+  // Vault-Ankuendigungen anderer Geraete (kommen ueber die Dauerverbindung sofort an)
 
-    const observer = (): void => {
-      if (session.hasLiveEditorBinding) {
-        // yCollab haelt den Editor bereits zeichengenau synchron, Obsidians eigenes Autosave
-        // uebernimmt das Schreiben auf die Datei - der grobe Volltext-Pfad wuerde nur
-        // redundant/konfliktaer dieselbe Aenderung ein zweites Mal auf die Datei schreiben.
+  private async handleVaultEvent(messageType: number, noteId: string, path: string): Promise<void> {
+    if (!this.isReady() || isExcluded(path, this.settings.excludedFolders)) {
+      return;
+    }
+    const state = this.vaultState();
+    if (state.pendingOps.some((op) => op.noteId === noteId)) {
+      return;
+    }
+    try {
+      const localPath = this.pathForNoteId(noteId);
+      if (messageType === VAULT_NOTE_UPDATED) {
+        if (localPath && !this.live.has(localPath)) {
+          this.scheduleRemoteChange(noteId);
+        }
         return;
       }
-      void this.applyRemoteContentToFile(file, text.toString());
-    };
-    text.observe(observer);
-
-    this.sessions.set(file.path, session);
-
-    void this.mergeInitialContent(file, client, doc, text);
+      if (messageType === VAULT_NOTE_CREATED) {
+        if (localPath) {
+          return;
+        }
+        const existing = this.app.vault.getAbstractFileByPath(path);
+        if (existing instanceof TFile && !state.noteIds[path]) {
+          this.mapNote(path, noteId);
+          await this.syncContent(noteId, path, null, "adopt");
+        } else if (!existing) {
+          await this.downloadNote(noteId, path);
+        }
+        // Die Ankuendigung kommt, sobald die Notiz existiert - ihr Inhalt wird vom anlegenden
+        // Geraet erst danach hochgeladen. Kurz darauf noch einmal abgleichen.
+        window.setTimeout(() => this.requestPass(), CREATED_FOLLOW_UP_MS);
+      } else if (messageType === VAULT_NOTE_RENAMED) {
+        if (localPath && localPath !== path) {
+          await this.applyRemoteRename(noteId, localPath, path);
+        }
+      } else if (messageType === VAULT_NOTE_DELETED) {
+        if (localPath) {
+          await this.applyRemoteDeletion(noteId, localPath, this.locallyChangedSinceSync(noteId, localPath));
+        }
+      }
+      await this.saveSettings();
+    } catch (error) {
+      this.reportFailure(path, error);
+    }
   }
 
-  /**
-   * Wartet im Hintergrund auf den tatsaechlichen Verbindungsaufbau (bei einer gestaffelten
-   * Warteschlange kann das dauern), dann auf eine kurze Catchup-Gnadenfrist, und entscheidet erst
-   * DANACH, ob lokaler oder Server-Inhalt gewinnt. Blockiert bewusst NICHT den Aufrufer von
-   * `doStartSync` - s. dessen Klassendoc.
-   *
-   * <p>Ein Timeout in {@link awaitConnected}/{@link awaitCatchupComplete} ist KEIN Erfolg -
-   * bricht die Funktion ohne jede Seed-Entscheidung ab und versucht es erneut, solange diese
-   * Session noch die aktuelle fuer `file.path` ist (sonst wurde sie zwischenzeitlich per
-   * `stopSync`/Neustart ersetzt oder beendet, ein weiterer Versuch waere sinnlos/falsch
-   * zugeordnet). `MultiplexedTransport` verbindet ohnehin automatisch neu - dieser Loop nutzt
-   * genau diese naechste Gelegenheit, statt selbst zu raten, wann "leer" wirklich leer bedeutet
-   * (ehemals ein P1-Bug: Timeout wurde wie ein bestaetigt leerer Server behandelt, s.
-   * docs/sync-comparison-review-2026-09-18.md).
-   */
-  private async mergeInitialContent(file: TFile, client: SyncClient, doc: Y.Doc, text: Y.Text): Promise<void> {
-    while (this.sessions.get(file.path)?.client === client) {
-      const connected = await this.awaitConnected(client);
-      if (!connected) {
-        continue;
-      }
+  // ---------------------------------------------------------------------------------------------
+  // Lokale Aenderungen
 
-      // Wartet auf das explizite Server-Signal "Catchup abgeschlossen" (s. SyncFrame.
-      // TYPE_CATCHUP_COMPLETE), statt wie frueher eine fixe Gnadenfrist zu raten - die war unter
-      // Last (viele/grosse Notizen, gestaffelte Joins auf derselben geteilten Verbindung)
-      // nachweislich zu kurz: der lokale Dateiinhalt wurde dann zusaetzlich zum inzwischen doch
-      // noch eingetroffenen Server-Inhalt eingespielt (additiv im CRDT, kein "letzter gewinnt") -
-      // live beobachtet als verdreifachter Notizinhalt nach mehreren Reconnect-Zyklen.
-      const caughtUp = await this.awaitCatchupComplete(client);
-      if (!caughtUp) {
-        continue;
-      }
+  private isTrackable(path: string): boolean {
+    return this.isReady() && isSyncablePath(path) && !isExcluded(path, this.settings.excludedFolders);
+  }
 
-      const initialContent = await this.app.vault.read(file);
-      if (text.length === 0 && initialContent.length > 0) {
-        // Kein Server-/Catchup-Inhalt eingetroffen (Y.Text ist leer) - diese Notiz hat noch keine
-        // Server-Historie, lokaler Inhalt ist die Wahrheit und wird eingespielt.
-        doc.transact(() => {
-          text.insert(0, initialContent);
-        });
-      } else if (text.length > 0 && text.toString() !== initialContent) {
-        // Catchup hat Server-Inhalt geliefert, der vom lokalen abweicht - das ist der Normalfall
-        // beim ERSTEN Sync einer via reconcileMissingNotesFromServer() heruntergeladenen Notiz
-        // (lokal nur ein leerer Platzhalter). Server-Stand gewinnt und wird in die Datei geschrieben.
-        await this.applyRemoteContentToFile(file, text.toString());
-      }
+  private handleLocalCreate(file: TAbstractFile): void {
+    if (!(file instanceof TFile) || file.extension !== "md" || this.serverDrivenPaths.has(file.path)) {
       return;
+    }
+    if (!this.isTrackable(file.path) || this.vaultState().noteIds[file.path]) {
+      return;
+    }
+    this.scheduleLocalChange(file.path);
+  }
+
+  private async handleLocalModify(file: TAbstractFile): Promise<void> {
+    if (!(file instanceof TFile) || file.extension !== "md" || !this.isTrackable(file.path)) {
+      return;
+    }
+    if (this.live.has(file.path)) {
+      // yCollab hat die Tastatureingaben laengst im Y.Text - das ist nur Obsidians Autosave.
+      return;
+    }
+    const content = await this.app.vault.cachedRead(file);
+    if (this.journal.correlate(`modify:${file.path}:${hashContent(content)}`)) {
+      return;
+    }
+    const state = this.vaultState();
+    if (state.blockedPaths[file.path]) {
+      // Geaendert -> neuer Versuch (z. B. nachdem Rechte vergeben wurden).
+      delete state.blockedPaths[file.path];
+      this.activity.clearProblem(file.path);
+    }
+    this.scheduleLocalChange(file.path);
+  }
+
+  private scheduleLocalChange(path: string): void {
+    window.clearTimeout(this.localChangeTimers.get(path));
+    this.localChangeTimers.set(path, window.setTimeout(() => {
+      this.localChangeTimers.delete(path);
+      void this.runLocalChange(path);
+    }, LOCAL_CHANGE_DEBOUNCE_MS));
+  }
+
+  private scheduleRemoteChange(noteId: string): void {
+    window.clearTimeout(this.remoteChangeTimers.get(noteId));
+    this.remoteChangeTimers.set(noteId, window.setTimeout(() => {
+      this.remoteChangeTimers.delete(noteId);
+      const path = this.pathForNoteId(noteId);
+      if (path && this.isReady()) {
+        void this.syncContent(noteId, path, null, "sync").catch((error) => this.reportFailure(path, error));
+      }
+    }, REMOTE_CHANGE_DEBOUNCE_MS));
+  }
+
+  private async runLocalChange(path: string): Promise<void> {
+    if (!this.isTrackable(path) || !(this.app.vault.getAbstractFileByPath(path) instanceof TFile)) {
+      return;
+    }
+    try {
+      const noteId = this.vaultState().noteIds[path];
+      if (noteId) {
+        await this.syncContent(noteId, path, null, "local");
+      } else {
+        await this.uploadNote(path);
+      }
+    } catch (error) {
+      this.reportFailure(path, error);
+    }
+  }
+
+  private async handleLocalDelete(file: TAbstractFile): Promise<void> {
+    if (!this.settings.vaultId || this.serverDrivenPaths.has(file.path)) {
+      return;
+    }
+    const state = this.vaultState();
+    const affected = file instanceof TFolder
+      ? Object.keys(state.noteIds).filter((path) => path.startsWith(`${file.path}/`))
+      : [file.path];
+    let changed = false;
+    for (const path of affected) {
+      const noteId = state.noteIds[path];
+      if (!noteId) {
+        continue;
+      }
+      this.detachLive(path);
+      delete state.noteIds[path];
+      delete state.noteMeta[noteId];
+      void this.stateStore.remove(this.settings.vaultId, noteId);
+      queueDelete(state, noteId, path, crypto.randomUUID());
+      this.activity.log("deleted", path, "Gelöscht");
+      changed = true;
+    }
+    if (changed) {
+      await this.saveSettings();
+      void this.flushPendingOps();
     }
   }
 
   /**
-   * Alle tatsaechlich offenen Markdown-Panes samt ihrer CodeMirror-6-`EditorView`.
-   *
-   * <p>Die fruehere Fassung nutzte `workspace.activeEditor?.editor.cm` und band nur die EINE
-   * aktive Notiz. Das war der Grund, warum fremde Cursor live nicht ankamen: beim `file-open`-
-   * Ereignis zeigt `activeEditor` haeufig noch nicht auf die gerade geoeffnete Datei, der Zugriff
-   * lieferte `undefined`, und die Bindung wurde stillschweigend uebersprungen - kein yCollab,
-   * also weder Zeichen-Sync noch Awareness-Cursor, ohne jede Fehlermeldung. Das Vorgaengerprojekt
-   * `stonesync` zaehlte stattdessen die offenen Panes auf (SyncManager.openMarkdownEditors) -
-   * dieses Muster ist hier uebernommen.
-   *
-   * <p>Obsidians `Editor`-Wrapper legt die zugrundeliegende `EditorView` nicht in der offiziellen
-   * API offen; `editor.cm` ist der in der Community etablierte, aber inoffizielle Zugriffspfad.
+   * Umbenennen/Verschieben: NoteId bleibt stabil (Fehlerklasse 5), nur die Zuordnung wandert mit.
+   * Ordner-Umbenennungen tragen alle enthaltenen Notizen mit; kommen zusaetzlich Einzel-Events fuer
+   * die Kinder, finden sie ihre Zuordnung schon am neuen Ort vor und tun nichts.
+   */
+  private async handleLocalRename(file: TAbstractFile, oldPath: string): Promise<void> {
+    if (!this.settings.vaultId || this.serverDrivenPaths.has(oldPath) || this.serverDrivenPaths.has(file.path)) {
+      return;
+    }
+    const state = this.vaultState();
+    const moves: Array<[string, string]> = file instanceof TFolder
+      ? Object.keys(state.noteIds)
+        .filter((path) => path.startsWith(`${oldPath}/`))
+        .map((path) => [path, `${file.path}/${path.slice(oldPath.length + 1)}`])
+      : [[oldPath, file.path]];
+
+    let changed = false;
+    for (const [from, to] of moves) {
+      const noteId = state.noteIds[from];
+      if (!noteId) {
+        if (file instanceof TFile && !state.noteIds[to] && this.isTrackable(to)) {
+          this.scheduleLocalChange(to);
+        }
+        continue;
+      }
+      delete state.noteIds[from];
+      state.noteIds[to] = noteId;
+      queueRename(state, noteId, to);
+      const session = this.live.get(from);
+      if (session) {
+        this.live.delete(from);
+        session.path = to;
+        this.live.set(to, session);
+      }
+      changed = true;
+    }
+    if (changed) {
+      await this.saveSettings();
+      void this.flushPendingOps();
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Live-Bindung geoeffneter Notizen
+
+  /**
+   * Alle offenen Markdown-Panes samt CM6-`EditorView` (`editor.cm` ist der in der Community
+   * etablierte, inoffizielle Zugriffspfad). Nicht nur "das aktive": `activeEditor` zeigt beim
+   * `file-open` oft noch auf die vorige Datei - daran scheiterten frueher die Live-Cursor.
    */
   private openMarkdownEditors(): Array<{ file: TFile; view: EditorView }> {
     const result: Array<{ file: TFile; view: EditorView }> = [];
@@ -1039,19 +1349,13 @@ export default class StoneIntelligencePlugin extends Plugin {
       if (!file || file.extension !== "md") {
         continue;
       }
-      // Die Vault-Index-Pruefung ist kein Ueberfluss: nach dem Loeschen einer offenen Datei
-      // meldet das Leaf kurzzeitig noch eine Stale-TFile. Wuerde man die binden, schriebe der
-      // Catchup den alten Inhalt in den noch sichtbaren Editor und Obsidian persistierte ihn
-      // zurueck - die geloeschte Datei waere wieder da (im Vorgaengerprojekt live beobachtet).
+      // Nach dem Loeschen meldet das Leaf kurz noch eine Stale-TFile - nie binden (sonst schreibt
+      // der Catchup den alten Inhalt zurueck und die geloeschte Datei ist wieder da).
       if (!(this.app.vault.getAbstractFileByPath(file.path) instanceof TFile)) {
         continue;
       }
       const view = (markdownView.editor as unknown as { cm?: EditorView }).cm;
       if (!view) {
-        // Pane existiert, seine CM6-View aber noch nicht - Obsidian baut sie erst kurz NACH dem
-        // ausloesenden Workspace-Ereignis auf. Das ist kein Grund aufzugeben (genau daran
-        // scheiterte die Bindung bisher stillschweigend), sondern einer, es gleich erneut zu
-        // versuchen - s. `scheduleBindingRetry`.
         this.editorViewPending = true;
         continue;
       }
@@ -1060,84 +1364,36 @@ export default class StoneIntelligencePlugin extends Plugin {
     return result;
   }
 
-  /**
-   * Gleicht die CodeMirror-6-Live-Bindungen mit den tatsaechlich offenen Panes ab: jede offene
-   * Notiz bekommt eine dauerhafte Session + yCollab (Zeichen-Sync UND Cursor-Presence), jede
-   * geschlossene faellt zurueck in den periodischen Hintergrund-Poll-Pool.
-   *
-   * <p>Das erweitert die Architekturentscheidung vom 2026-09-18 (s. Klassendoc) vom Sonderfall
-   * "genau eine aktive Notiz" auf "genau die offenen Notizen" - es bleibt bei EINER geteilten
-   * WebSocket-Verbindung (`MultiplexedTransport`), offene Panes sind nur zusaetzliche JOINs
-   * darauf, keine zusaetzlichen Verbindungen. In der Praxis sind das ein bis drei Panes.
-   */
   private async syncOpenEditorBindings(): Promise<void> {
     const generation = ++this.liveBindGeneration;
     this.editorViewPending = false;
-    const open = this.openMarkdownEditors();
+    const open = this.isReady()
+      ? this.openMarkdownEditors().filter((entry) => this.isTrackable(entry.file.path))
+      : [];
     if (this.editorViewPending) {
       this.scheduleBindingRetry();
     } else {
       this.bindingRetries = 0;
     }
-    const plan = planEditorBindings(
-      open.map((entry) => ({ path: entry.file.path, view: entry.view })),
-      this.boundViews,
-    );
+    const bound = new Map([...this.live].map(([path, session]) => [path, session.view]));
+    const plan = planEditorBindings(open.map((entry) => ({ path: entry.file.path, view: entry.view })), bound);
 
-    for (const { path, view } of plan.unbind) {
-      this.detachLiveBinding(path, view);
+    for (const { path } of plan.unbind) {
+      this.detachLive(path);
     }
-
     for (const { path } of plan.bind) {
-      const entry = open.find((candidate) => candidate.file.path === path);
-      if (!entry) {
-        continue;
-      }
-      await this.startSync(entry.file, true);
       if (generation !== this.liveBindGeneration) {
-        // Ein neuerer Durchlauf (weiterer Pane-/Dateiwechsel waehrend dieses Awaits) hat die
-        // Zustaendigkeit uebernommen - hier nichts mehr anfassen, sonst ueberschreibt dieser
-        // veraltete Durchlauf dessen korrektes Ergebnis mit dem FALSCHEN Y.Text.
         return;
       }
-      // Waehrend des Awaits kann das Pane geschlossen oder auf eine andere Datei umgestellt
-      // worden sein - dann zeigt diese View diesen Pfad nicht mehr und darf nicht gebunden werden.
-      const stillShown = this.openMarkdownEditors().some(
-        (candidate) => candidate.file.path === path && candidate.view === entry.view,
-      );
-      if (!stillShown) {
-        continue;
+      const entry = open.find((candidate) => candidate.file.path === path);
+      if (entry && !this.liveStarting.has(path)) {
+        await this.startLive(entry.file, entry.view);
       }
-      const session = this.sessions.get(path);
-      if (!session) {
-        continue;
-      }
-      session.hasLiveEditorBinding = true;
-      this.boundViews.set(path, entry.view);
-      // ZWEI getrennte Transaktionen, nicht eine: `ySync` aus y-codemirror.next ist ein
-      // modulweites ViewPlugin-Singleton. Konfiguriert man den Compartment direkt von einem
-      // yCollab auf ein anderes um, sieht CodeMirror dasselbe Plugin und erzeugt es NICHT neu -
-      // es behaelt den im Konstruktor erfassten alten Y.Text samt dessen Observer. Folge (im Test
-      // reproduziert): Aenderungen an der ZUVOR gebundenen Notiz wurden weiterhin in diesen
-      // Editor geschrieben, obwohl er laengst eine andere Notiz anzeigt. Der Zwischenschritt auf
-      // die leere Konfiguration nimmt das Plugin wirklich aus der Konfiguration und zerstoert es.
-      entry.view.dispatch({ effects: this.liveBindingCompartment.reconfigure([]) });
-      entry.view.dispatch({
-        effects: this.liveBindingCompartment.reconfigure(
-          yCollab(session.client.doc.getText("content"), session.client.awareness),
-        ),
-      });
     }
+    this.updatePresenceBar();
+    this.activity.touch();
   }
 
-  /**
-   * Versucht den Bindungsabgleich kurz darauf erneut, wenn mindestens ein offenes Pane seine
-   * CM6-View noch nicht bereitgestellt hatte. Begrenzt auf {@link BINDING_RETRY_LIMIT} Versuche
-   * je Ereignis, damit ein dauerhaft view-loses Pane (z. B. eine Nicht-Editor-Ansicht) keine
-   * Endlosschleife ausloest; der Zaehler wird bei jedem erfolgreichen Durchlauf ohne offenen
-   * Rest zurueckgesetzt. Muster uebernommen aus dem Referenzplugin `obsidian-collab`, das dasselbe
-   * Timing-Problem mit einem gestaffelten Retry loest statt mit einem einmaligen Zugriff.
-   */
   private scheduleBindingRetry(): void {
     if (this.bindingRetries >= BINDING_RETRY_LIMIT) {
       return;
@@ -1148,321 +1404,128 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   /**
-   * Loest die CM6-Bindung eines Panes und beendet die zugehoerige Session - die Notiz faellt
-   * damit zurueck in den periodischen Hintergrund-Poll-Pool.
-   */
-  private detachLiveBinding(path: string, view: EditorView): void {
-    this.boundViews.delete(path);
-    try {
-      view.dispatch({ effects: this.liveBindingCompartment.reconfigure([]) });
-    } catch (error) {
-      // Die View kann zusammen mit ihrem geschlossenen Leaf bereits zerstoert sein - harmlos.
-      console.debug("StoneIntelligence: Editor-Bindung konnte nicht geloest werden", path, error);
-    }
-    this.stopSync(path);
-  }
-
-  private stopSync(path: string): void {
-    const session = this.sessions.get(path);
-    if (session) {
-      session.unbindDocObserver();
-      session.client.disconnect();
-      this.sessions.delete(path);
-    }
-  }
-
-  /**
-   * Der Server hat den Notiz-Raum mit Close-Code 4404 beendet (ein ANDERER Client hat die Note
-   * geloescht). Rein technischer Abschluss: Sync stoppen und die NoteId-Zuordnung verwerfen (ein
-   * weiterer Edit wuerde sonst versuchen, eine bereits geloeschte Note anzusprechen).
+   * Oeffnet die Live-Session einer Notiz: lokaler Zustand + seit dem letzten Abgleich geaenderte
+   * Datei -> joinen -> Server-Catchup abwarten -> Editor angleichen -> binden.
    *
-   * <p>Die lokale Datei wird hier NICHT angefasst - das erledigt {@link applyRemoteNoteDeleted}
-   * aus der vault-weiten Bestandsmeldung, die jedes Geraet erreicht (auch die, die die Notiz
-   * nicht offen haben). Frueher war diese Funktion der einzige Weg, ueber den eine Fremdloeschung
-   * ueberhaupt ankam, und sie musste deshalb selbst informieren.
+   * <p>Die Datei wird hier NIE per `vault.modify` beschrieben: der Editor bekommt den Stand per
+   * Diff, Obsidians Autosave schreibt ihn. Ein paralleles Neuladen der offenen Datei von der
+   * Platte haette sonst mit yCollab konkurriert.
    */
-  private async handleRemoteNoteDeleted(path: string): Promise<void> {
-    this.stopSync(path);
-    delete this.settings.noteIds[path];
-    await this.saveSettings();
-    // Bewusst OHNE Nutzerhinweis: diese Nachricht beendet nur den Notiz-Raum dieser gejointen
-    // Verbindung. Das Sichtbare (Datei in den Papierkorb + Meldung) macht die vault-weite
-    // Bestandsmeldung in `applyRemoteNoteDeleted`, die JEDES Geraet erreicht - sonst saehe genau
-    // die Person, die die Notiz gerade offen hat, zwei Meldungen fuer dieselbe Loeschung.
-  }
-
-  /** Ein remote empfangenes Yjs-Update wurde bereits in den Y.Text gemerged - jetzt auf die Datei anwenden. */
-  private async applyRemoteContentToFile(file: TFile, newContent: string): Promise<void> {
-    const operationId = crypto.randomUUID();
-    const fingerprint = `modify:${file.path}:${hashContent(newContent)}`;
-    this.journal.registerSelfInitiated(operationId, [fingerprint]);
-    await this.app.vault.modify(file, newContent);
-  }
-
-  /** Fehlerklasse 1: unterscheidet die eigene, gerade zurueckgeschriebene Aenderung von echten Nutzeredits. */
-  private async handleLocalModify(file: TFile): Promise<void> {
-    const session = this.sessions.get(file.path);
-    if (!session) {
-      // Eine Hintergrund-Notiz (nicht live gebunden) wurde lokal veraendert - z. B. durch ein
-      // anderes Plugin, ein externes Werkzeug, oder weil der Poll-Zyklus fuer diese Datei noch nie
-      // gelaufen ist. `preferLocal: true`, weil DIESE Aenderung gerade erst passiert ist und
-      // uebertragen werden soll - anders als beim periodischen Poll ohne konkreten Anlass.
-      void this.syncNoteInBackground(file.path, { preferLocal: true });
-      return;
-    }
-    if (session.hasLiveEditorBinding) {
-      // yCollab schreibt Tastatureingaben bereits direkt ins Y.Text - dieses modify-Event ist
-      // nur Obsidians eigenes Autosave, das denselben bereits synchronisierten Inhalt persistiert.
-      return;
-    }
-
-    const content = await this.app.vault.read(file);
-    const fingerprint = `modify:${file.path}:${hashContent(content)}`;
-    if (this.journal.correlate(fingerprint)) {
-      return;
-    }
-
-    const text = session.client.doc.getText("content");
-    if (text.toString() === content) {
-      return;
-    }
-    session.client.doc.transact(() => {
-      text.delete(0, text.length);
-      text.insert(0, content);
-    });
-  }
-
-  private async handleLocalDelete(file: TFile): Promise<void> {
-    if (this.serverDrivenPaths.has(file.path)) {
-      // Diese Loeschung haben WIR gerade als Reaktion auf eine Server-Ankuendigung ausgefuehrt -
-      // sie jetzt als eigene Aenderung zurueckzumelden waere ein zweiter DELETE auf eine bereits
-      // geloeschte Notiz.
-      return;
-    }
-    const noteId = this.settings.noteIds[file.path];
-    this.stopSync(file.path);
-    if (!noteId || !this.settings.vaultId) {
-      return;
-    }
-
-    const operationId = crypto.randomUUID();
-    await this.noteApiClient.deleteNote(this.settings.vaultId, noteId, operationId);
-    delete this.settings.noteIds[file.path];
-    await this.saveSettings();
-  }
-
-  private async handleLocalRename(file: TFile, oldPath: string): Promise<void> {
-    if (this.serverDrivenPaths.has(oldPath) || this.serverDrivenPaths.has(file.path)) {
-      // Von uns selbst ausgefuehrter Nachzug einer Server-Umbenennung - nicht zurueckmelden.
-      return;
-    }
-    const noteId = this.settings.noteIds[oldPath];
-    if (!noteId || !this.settings.vaultId) {
-      // Datei war noch nicht getrackt (z. B. Umbenennung direkt nach App-Start, bevor der
-      // initiale Vault-Sync durchlief) - unter dem neuen Pfad frisch aufnehmen.
-      void this.syncNoteInBackground(file.path, { preferLocal: true });
-      return;
-    }
-
-    const session = this.sessions.get(oldPath);
-    this.sessions.delete(oldPath);
-    delete this.settings.noteIds[oldPath];
-    this.settings.noteIds[file.path] = noteId;
-    await this.saveSettings();
-
-    if (session) {
-      // Dieselbe WebSocket-Verbindung/NoteId bleibt bestehen, nur der lokale Pfad-Schluessel
-      // aendert sich - kein Re-Connect noetig, die NoteId ist stabil (Fehlerklasse 5).
-      session.path = file.path;
-      this.sessions.set(file.path, session);
-      const boundView = this.boundViews.get(oldPath);
-      if (boundView) {
-        // Ohne das wuerde `syncOpenEditorBindings` beim naechsten Durchlauf faelschlich versuchen,
-        // eine Session unter dem inzwischen umbenannten (nicht mehr existenten) alten Pfad zu
-        // stoppen, statt die tatsaechlich gebundene (jetzt umbenannte) Session zu erkennen.
-        this.boundViews.delete(oldPath);
-        this.boundViews.set(file.path, boundView);
+  private async startLive(file: TFile, view: EditorView): Promise<void> {
+    const path = file.path;
+    this.liveStarting.add(path);
+    try {
+      const noteId = this.vaultState().noteIds[path] ?? (await this.uploadNote(path));
+      if (!noteId || !this.transport) {
+        return;
       }
-    }
+      await this.withNoteLock(noteId, async () => {
+        const transport = this.transport;
+        if (!transport || this.live.has(path)) {
+          return;
+        }
+        const ports = this.contentPorts();
+        const { doc, hadBase, localContent } = await prepareNoteDoc(ports, noteId, path);
+        const text = doc.getText("content");
+        const client = new SyncClient("", () => transport.createVirtualSocket(noteId, { priority: true }), doc);
+        const name = this.actorDisplayName();
+        client.awareness.setLocalStateField("user", { name, color: pickUserColor(name) });
+        client.connect();
+        const caughtUp = (await awaitConnected(client, LIVE_CATCHUP_WAIT_MS))
+          && (await awaitCatchupComplete(client, LIVE_CATCHUP_WAIT_MS));
 
-    await this.noteApiClient.renameNote(this.settings.vaultId, noteId, file.path);
-  }
-
-  async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-  }
-
-  async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
-    // ensures NoteApiClient/AuthClient nachfolgende Reconnects die aktuelle BaseUrl/OIDC-Config
-    // nutzen; der Token-Endpoint-Cache wird invalidiert, falls sich die Issuer-URL geaendert hat.
-    this.authClient = new AuthentikAuthClient({
-      issuerUrl: this.settings.oidcIssuerUrl, clientId: this.settings.oidcClientId,
-    });
-    this.tokenEndpoint = null;
-    this.noteApiClient = new NoteApiClient(this.settings.platformApiUrl, this.getAccessToken);
-  }
-
-  /** Legt einen neuen Vault an und uebernimmt dessen ID direkt in die Einstellungen. */
-  async createVault(name: string): Promise<void> {
-    const vaultId = await this.noteApiClient.createVault(name);
-    this.settings.vaultId = vaultId;
-    await this.saveSettings();
-  }
-
-  /** Serialisiert die reine Verbindungskonfiguration (KEINE Tokens/NoteId-Cache) als JSON. */
-  connectionConfigJson(): string {
-    const config: ConnectionConfig = {
-      platformApiUrl: this.settings.platformApiUrl,
-      platformWsUrl: this.settings.platformWsUrl,
-      vaultId: this.settings.vaultId,
-      oidcIssuerUrl: this.settings.oidcIssuerUrl,
-      oidcClientId: this.settings.oidcClientId,
-    };
-    return JSON.stringify(config, null, 2);
-  }
-
-  /** Uebernimmt eine per {@link connectionConfigJson} exportierte Konfiguration - ein Klick statt fuenf Felder. */
-  async applyConnectionConfig(json: string): Promise<void> {
-    const parsed = JSON.parse(json) as Partial<ConnectionConfig>;
-    if (typeof parsed.platformApiUrl === "string") this.settings.platformApiUrl = parsed.platformApiUrl;
-    if (typeof parsed.platformWsUrl === "string") this.settings.platformWsUrl = parsed.platformWsUrl;
-    if (typeof parsed.vaultId === "string") this.settings.vaultId = parsed.vaultId;
-    if (typeof parsed.oidcIssuerUrl === "string") this.settings.oidcIssuerUrl = parsed.oidcIssuerUrl;
-    if (typeof parsed.oidcClientId === "string") this.settings.oidcClientId = parsed.oidcClientId;
-    await this.saveSettings();
-  }
-}
-
-class StoneIntelligenceSettingTab extends PluginSettingTab {
-  constructor(
-    app: App,
-    private readonly plugin: StoneIntelligencePlugin,
-  ) {
-    super(app, plugin);
-  }
-
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.createEl("h2", { text: "StoneIntelligence" });
-
-    new Setting(containerEl)
-      .setName("Platform API URL")
-      .setDesc("z. B. https://sync.example.com")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.platformApiUrl).onChange(async (value) => {
-          this.plugin.settings.platformApiUrl = value;
-          await this.plugin.saveSettings();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Platform WebSocket URL")
-      .setDesc("z. B. wss://sync.example.com")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.platformWsUrl).onChange(async (value) => {
-          this.plugin.settings.platformWsUrl = value;
-          await this.plugin.saveSettings();
-        }),
-      );
-
-    new Setting(containerEl).setName("Vault-ID").addText((text) =>
-      text.setValue(this.plugin.settings.vaultId).onChange(async (value) => {
-        this.plugin.settings.vaultId = value;
-        await this.plugin.saveSettings();
-      }),
-    );
-
-    let newVaultName = "";
-    new Setting(containerEl)
-      .setName("Neuen Vault anlegen")
-      .setDesc("Braucht eine gueltige Anmeldung (s. u.) - der anlegende Account bekommt automatisch volle Rechte im neuen Vault.")
-      .addText((text) => text.setPlaceholder("Name des Vaults").onChange((value) => (newVaultName = value)))
-      .addButton((button) =>
-        button.setButtonText("Anlegen").onClick(async () => {
-          if (!newVaultName.trim()) {
-            new Notice("StoneIntelligence: Bitte einen Vault-Namen eingeben.");
+        if (!hadBase) {
+          if (!caughtUp) {
+            // Noch nie abgeglichen UND Server-Stand unbekannt: nicht binden (kein sicherer Merge
+            // moeglich). Sobald die Verbindung steht, wird es erneut versucht.
+            client.disconnect();
+            doc.destroy();
             return;
           }
-          try {
-            await this.plugin.createVault(newVaultName.trim());
-            new Notice("StoneIntelligence: Vault angelegt und Vault-ID uebernommen.");
-            this.display();
-          } catch (error) {
-            new Notice(`StoneIntelligence: Vault anlegen fehlgeschlagen - ${(error as Error).message}`);
+          const result = await resolveFirstContact(
+            { writeFile: async () => undefined, writeConflictCopy: (p, c) => this.writeConflictCopy(p, c) },
+            text, path, localContent,
+          );
+          if (result.outcome === "conflict" && result.conflictPath) {
+            this.reportConflict(path, result.conflictPath);
           }
-        }),
-      );
+        }
 
-    new Setting(containerEl)
-      .setName("OIDC Issuer URL")
-      .setDesc("z. B. https://portal.tstieh.de/application/o/stoneintelligence/")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.oidcIssuerUrl).onChange(async (value) => {
-          this.plugin.settings.oidcIssuerUrl = value;
-          await this.plugin.saveSettings();
-        }),
-      );
+        // Waehrend der Awaits kann das Pane geschlossen oder auf eine andere Datei umgestellt
+        // worden sein - dann zeigt diese View diesen Pfad nicht mehr und darf nicht gebunden werden.
+        const stillShown = this.openMarkdownEditors().some((candidate) => candidate.file.path === path && candidate.view === view);
+        if (!stillShown || this.live.has(path)) {
+          client.disconnect();
+          doc.destroy();
+          return;
+        }
+        await this.stateStore.save(this.settings.vaultId, noteId, Y.encodeStateAsUpdate(doc));
+        bindEditorToText(view, this.liveBindingCompartment, text, client.awareness, localContent);
 
-    new Setting(containerEl)
-      .setName("OIDC Client-ID")
-      .setDesc("Public Client (PKCE), kein Client-Secret noetig.")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.oidcClientId).onChange(async (value) => {
-          this.plugin.settings.oidcClientId = value;
-          await this.plugin.saveSettings();
-        }),
-      );
+        const session: LiveSession = { path, noteId, client, view, saveTimer: null, stopStateSaves: () => undefined };
+        const onUpdate = (): void => this.scheduleLiveStateSave(session);
+        doc.on("update", onUpdate);
+        const onAwareness = (): void => {
+          this.updatePresenceBar();
+          this.activity.touch();
+        };
+        client.awareness.on("change", onAwareness);
+        session.stopStateSaves = () => {
+          doc.off("update", onUpdate);
+          client.awareness.off("change", onAwareness);
+        };
+        client.onNoteDeleted = () => {
+          // Der Notiz-Raum ist zu; Datei/Zuordnung erledigt die vault-weite Loeschmeldung.
+          this.detachLive(session.path);
+        };
+        this.live.set(path, session);
+        this.activity.clearProblem(path);
+      });
+    } catch (error) {
+      this.reportFailure(path, error);
+    } finally {
+      this.liveStarting.delete(path);
+    }
+  }
 
-    new Setting(containerEl)
-      .setName("Anmeldung")
-      .setDesc(this.plugin.settings.tokens ? "Angemeldet." : "Nicht angemeldet.")
-      .addButton((button) =>
-        button.setButtonText("Login").onClick(async () => {
-          try {
-            await this.plugin.login();
-            this.display();
-          } catch (error) {
-            new Notice(`StoneIntelligence: Login fehlgeschlagen - ${(error as Error).message}`);
-          }
-        }),
-      )
-      .addButton((button) =>
-        button.setButtonText("Logout").onClick(async () => {
-          await this.plugin.logout();
-          this.display();
-        }),
-      );
+  private scheduleLiveStateSave(session: LiveSession): void {
+    if (session.saveTimer !== null) {
+      return;
+    }
+    session.saveTimer = window.setTimeout(() => {
+      session.saveTimer = null;
+      void this.stateStore.save(this.settings.vaultId, session.noteId, Y.encodeStateAsUpdate(session.client.doc));
+    }, STATE_SAVE_DEBOUNCE_MS);
+  }
 
-    containerEl.createEl("h3", { text: "Verbindungskonfiguration teilen" });
-    containerEl.createEl("p", {
-      text: "Server-URL, Vault-ID und OIDC-Angaben auf einen Schlag zwischen Geraeten uebertragen, "
-        + "statt jedes Feld einzeln abzutippen (enthaelt KEINE Login-Tokens).",
-    });
-
-    new Setting(containerEl)
-      .setName("Verbindungsdaten kopieren")
-      .addButton((button) =>
-        button.setButtonText("In Zwischenablage kopieren").onClick(async () => {
-          await navigator.clipboard.writeText(this.plugin.connectionConfigJson());
-          new Notice("StoneIntelligence: Verbindungsdaten kopiert.");
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Verbindungsdaten einfuegen")
-      .addButton((button) =>
-        button.setButtonText("Aus Zwischenablage uebernehmen").onClick(async () => {
-          try {
-            const json = await navigator.clipboard.readText();
-            await this.plugin.applyConnectionConfig(json);
-            new Notice("StoneIntelligence: Verbindungsdaten uebernommen.");
-            this.display();
-          } catch (error) {
-            new Notice(`StoneIntelligence: Verbindungsdaten konnten nicht uebernommen werden - ${(error as Error).message}`);
-          }
-        }),
-      );
+  /** Loest die Bindung, sichert den Zustand; die Notiz faellt zurueck in den Abgleich-Durchlauf. */
+  private detachLive(path: string): void {
+    const session = this.live.get(path);
+    if (!session) {
+      return;
+    }
+    this.live.delete(path);
+    try {
+      unbindEditor(session.view, this.liveBindingCompartment);
+    } catch (error) {
+      // View kann mit ihrem geschlossenen Leaf bereits zerstoert sein - harmlos.
+      console.debug("StoneIntelligence: Editor-Bindung konnte nicht geloest werden", path, error);
+    }
+    window.clearTimeout(session.saveTimer ?? undefined);
+    session.stopStateSaves();
+    const state = Y.encodeStateAsUpdate(session.client.doc);
+    session.client.disconnect();
+    const vaultId = this.settings.vaultId;
+    const vaultState = this.settings.vaults[vaultId];
+    if (vaultState?.noteIds[session.path] === session.noteId) {
+      void this.stateStore.save(vaultId, session.noteId, state);
+      // Autosave hat die Datei beschrieben, ohne dass der Abgleich es mitbekam: einmal nachziehen.
+      const meta = vaultState.noteMeta[session.noteId];
+      if (meta) {
+        meta.revision = -1;
+      }
+    }
+    this.updatePresenceBar();
+    this.activity.touch();
   }
 }

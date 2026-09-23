@@ -493,4 +493,178 @@ describe("MultiplexedTransport", () => {
       expect(received).toHaveLength(0);
     });
   });
+
+  // SyncClient setzt `onopen` erst NACHDEM die Factory den virtuellen Socket zurueckgegeben hat.
+  // Bei bereits offener Verbindung wurde das Open-Ereignis frueher synchron in der Factory
+  // ausgeloest - ins Leere. Jede spaeter gejointe Notiz hing dann bis zum Timeout auf "verbindet".
+  it("should_deliverOpen_toHandlersAttachedAfterCreation_when_theConnectionIsAlreadyOpen", async () => {
+    const realSocket = new FakeRealSocket();
+    const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => realSocket, { sleep: vi.fn() });
+    transport.start();
+    await waitUntilConnecting(realSocket);
+    realSocket.open();
+
+    const vs = transport.createVirtualSocket(NOTE_ID_A);
+    const onopen = vi.fn();
+    vs.onopen = onopen;
+
+    await vi.waitFor(() => expect(onopen).toHaveBeenCalledTimes(1));
+    expect(realSocket.sent[0][0]).toBe(TYPE_JOIN);
+  });
+
+  describe("Inhalts-Ankuendigungen", () => {
+    it("should_subscribeToContentAnnouncements_afterEveryConnect", async () => {
+      const first = new FakeRealSocket();
+      const second = new FakeRealSocket();
+      const sockets = [first, second];
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => sockets.shift() as FakeRealSocket, {
+        sleep: vi.fn().mockResolvedValue(undefined), subscribeContentUpdates: true,
+      });
+      transport.start();
+      await waitUntilConnecting(first);
+      first.open();
+      first.close();
+      await waitUntilConnecting(second);
+      second.open();
+
+      for (const socket of [first, second]) {
+        expect(socket.sent.some((frameBytes) => frameBytes[0] === 10)).toBe(true);
+      }
+    });
+
+    it("should_reportContentChanges_asVaultEvents", async () => {
+      const socket = new FakeRealSocket();
+      const events: Array<[number, string, string]> = [];
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => socket, {
+        sleep: vi.fn(), onVaultEvent: (type, noteId, path) => events.push([type, noteId, path]),
+      });
+      transport.start();
+      await waitUntilConnecting(socket);
+      socket.open();
+
+      socket.deliver(vaultFrame(9, NOTE_ID_A, "Protokoll.md"));
+
+      expect(events).toEqual([[9, NOTE_ID_A, "Protokoll.md"]]);
+    });
+  });
+
+  describe("Dauerverbindung fuer Vault-Ereignisse", () => {
+    // Ohne gejointe Notiz gab es bisher gar keine Verbindung - und damit auch keine vault-weiten
+    // Bestandsereignisse. Ein Geraet ohne offene Notiz erfuhr von Anlage/Loeschung/Umbenennung
+    // auf anderen Geraeten erst beim naechsten Neustart.
+    it("should_connect_without_anyJoinedNote_when_started", async () => {
+      const socket = new FakeRealSocket();
+      const createRealSocket = vi.fn().mockReturnValue(socket);
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", createRealSocket, { sleep: vi.fn() });
+
+      transport.start();
+
+      await waitUntilConnecting(socket);
+      expect(createRealSocket).toHaveBeenCalledTimes(1);
+    });
+
+    it("should_keepReconnecting_after_start_even_withoutJoinedNotes", async () => {
+      const first = new FakeRealSocket();
+      const second = new FakeRealSocket();
+      const createRealSocket = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+      const sleep = vi.fn().mockResolvedValue(undefined);
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", createRealSocket, { sleep });
+      transport.start();
+      await waitUntilConnecting(first);
+      first.open();
+
+      first.close();
+
+      await vi.waitFor(() => expect(createRealSocket).toHaveBeenCalledTimes(2));
+    });
+
+    it("should_reportConnectionState_andEveryReconnect", async () => {
+      const first = new FakeRealSocket();
+      const second = new FakeRealSocket();
+      const createRealSocket = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+      const states: string[] = [];
+      const onConnected = vi.fn();
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", createRealSocket, {
+        sleep: vi.fn().mockResolvedValue(undefined),
+        onStateChange: (state) => states.push(state),
+        onConnected,
+      });
+      transport.start();
+      await waitUntilConnecting(first);
+      first.open();
+      first.close();
+      await waitUntilConnecting(second);
+      second.open();
+
+      expect(transport.state).toBe("online");
+      expect(onConnected).toHaveBeenCalledTimes(2);
+      expect(states).toEqual(["connecting", "online", "offline", "connecting", "online"]);
+    });
+
+    it("should_backOffExponentially_whileTheServerStaysUnreachable", async () => {
+      const sleep = vi.fn().mockResolvedValue(undefined);
+      let attempts = 0;
+      const getUrl = vi.fn(async () => {
+        attempts++;
+        if (attempts > 4) {
+          await new Promise(() => undefined);
+        }
+        throw new Error("offline");
+      });
+      const transport = new MultiplexedTransport(getUrl, vi.fn(), {
+        sleep, reconnectDelayMs: 1000, maxReconnectDelayMs: 5000, random: () => 0,
+      });
+
+      transport.start();
+
+      await vi.waitFor(() => expect(sleep).toHaveBeenCalledTimes(4));
+      expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 2000, 4000, 5000]);
+    });
+
+    it("should_resetTheBackoff_afterASuccessfulConnect", async () => {
+      const sockets = [new FakeRealSocket(), new FakeRealSocket(), new FakeRealSocket()];
+      let socketIndex = 0;
+      const sleep = vi.fn().mockResolvedValue(undefined);
+      let failNext = true;
+      const getUrl = vi.fn(async () => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("offline");
+        }
+        return "wss://example.invalid";
+      });
+      const transport = new MultiplexedTransport(getUrl, () => sockets[socketIndex++], {
+        sleep, reconnectDelayMs: 1000, random: () => 0,
+      });
+      transport.start();
+      await waitUntilConnecting(sockets[0]);
+      sockets[0].open();
+
+      sockets[0].close();
+
+      await vi.waitFor(() => expect(sleep).toHaveBeenCalledTimes(2));
+      expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 1000]);
+    });
+
+    it("should_reconnectImmediately_when_askedTo_insteadOfWaitingForTheBackoff", async () => {
+      const socket = new FakeRealSocket();
+      let attempts = 0;
+      const getUrl = vi.fn(async () => {
+        attempts++;
+        if (attempts === 1) {
+          throw new Error("offline");
+        }
+        return "wss://example.invalid";
+      });
+      const transport = new MultiplexedTransport(getUrl, () => socket, {
+        sleep: () => new Promise(() => undefined),
+      });
+      transport.start();
+      await vi.waitFor(() => expect(transport.state).toBe("offline"));
+
+      transport.reconnectNow();
+
+      await waitUntilConnecting(socket);
+    });
+  });
 });

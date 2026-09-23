@@ -1,61 +1,238 @@
-.stoneintelligence-status-view {
-  padding: 0 8px;
+/* StoneIntelligence – nutzt ausschliesslich Obsidian-Variablen, damit jedes Theme greift. */
+
+/* Statusleiste */
+.stoneintelligence-status-bar,
+.stoneintelligence-presence-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-1);
 }
 
-.stoneintelligence-status-list {
-  list-style: none;
-  margin: 0 0 1em;
-  padding: 0;
+.stoneintelligence-status-icon {
+  display: inline-flex;
 }
 
-.stoneintelligence-status-row {
+.stoneintelligence-status-icon svg {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+}
+
+.stoneintelligence-status-bar.is-warning {
+  color: var(--text-warning);
+}
+
+.stoneintelligence-status-bar.is-error {
+  color: var(--text-error);
+}
+
+.is-spinning svg {
+  animation: stoneintelligence-spin 1.2s linear infinite;
+}
+
+@keyframes stoneintelligence-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-spinning svg {
+    animation: none;
+  }
+}
+
+/* Seitenleiste */
+.stoneintelligence-panel {
+  padding: var(--size-4-3) var(--size-4-3) var(--size-4-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-4);
+}
+
+.stoneintelligence-hero,
+.stoneintelligence-settings-status {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-4-3);
+}
+
+.stoneintelligence-hero-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-success);
+  padding-top: 2px;
+}
+
+.stoneintelligence-hero-icon svg {
+  width: var(--icon-l);
+  height: var(--icon-l);
+}
+
+.is-muted .stoneintelligence-hero-icon {
+  color: var(--text-muted);
+}
+
+.is-warning .stoneintelligence-hero-icon {
+  color: var(--text-warning);
+}
+
+.is-error .stoneintelligence-hero-icon {
+  color: var(--text-error);
+}
+
+.stoneintelligence-hero-label {
+  font-weight: var(--font-semibold);
+  font-size: var(--font-ui-medium);
+}
+
+.stoneintelligence-hero-detail {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: var(--line-height-tight);
+  margin-top: 2px;
+}
+
+.stoneintelligence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+
+.stoneintelligence-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-1);
+}
+
+.stoneintelligence-button-icon {
+  display: inline-flex;
+}
+
+.stoneintelligence-button-icon svg {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+}
+
+.stoneintelligence-section-title {
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--size-4-1);
+}
+
+.stoneintelligence-row {
+  padding: var(--size-4-1) var(--size-4-2);
+  margin: 0 calc(-1 * var(--size-4-2));
+  border-radius: var(--radius-s);
+}
+
+.stoneintelligence-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.stoneintelligence-row-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 0;
-  font-size: var(--font-ui-small);
+  gap: var(--size-4-2);
+  min-width: 0;
 }
 
-.stoneintelligence-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.stoneintelligence-row-icon {
+  display: inline-flex;
+  color: var(--text-faint);
   flex-shrink: 0;
-  background: var(--text-faint);
 }
 
-.stoneintelligence-status-row.is-connected .stoneintelligence-status-dot {
-  background: var(--color-green);
+.stoneintelligence-row-icon svg {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
 }
 
-.stoneintelligence-status-row.is-connecting .stoneintelligence-status-dot {
-  background: var(--color-yellow);
+.stoneintelligence-row.is-problem .stoneintelligence-row-icon {
+  color: var(--text-warning);
 }
 
-.stoneintelligence-status-row.is-disconnected .stoneintelligence-status-dot {
-  background: var(--text-faint);
-}
-
-.stoneintelligence-status-row.is-error .stoneintelligence-status-dot {
-  background: var(--color-red);
-}
-
-.stoneintelligence-status-text {
-  flex: 1;
+.stoneintelligence-row-name {
+  color: var(--text-normal);
+  text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--font-ui-small);
 }
 
-.stoneintelligence-status-state {
+.stoneintelligence-row-name:hover {
+  text-decoration: underline;
+}
+
+.stoneintelligence-row-detail {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  padding-left: calc(var(--icon-xs) + var(--size-4-2));
+}
+
+.stoneintelligence-people {
+  display: flex;
+  gap: var(--size-2-2);
+  padding-left: calc(var(--icon-xs) + var(--size-4-2));
+  margin-top: 2px;
+}
+
+.stoneintelligence-people {
+  flex-wrap: wrap;
+}
+
+.stoneintelligence-person {
+  --si-person-color: var(--interactive-accent);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: 1px var(--size-4-2) 1px var(--size-2-3);
+  border-radius: var(--radius-l);
+  background: var(--background-modifier-hover);
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
 
-.stoneintelligence-status-empty {
-  color: var(--text-muted);
+.stoneintelligence-person-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--si-person-color);
 }
 
-.stoneintelligence-status-bar {
+.stoneintelligence-muted {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.stoneintelligence-footer {
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: var(--size-4-3);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Einstellungen */
+.stoneintelligence-settings-status {
+  padding: var(--size-4-3);
+  margin-bottom: var(--size-4-4);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+
+.stoneintelligence-advanced {
+  margin-top: var(--size-4-6);
+}
+
+.stoneintelligence-advanced > summary {
   cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  padding: var(--size-4-2) 0;
 }

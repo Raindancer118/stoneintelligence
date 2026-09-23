@@ -16,10 +16,15 @@ const TYPE_NOTE_DELETED = 4;
 export const VAULT_NOTE_CREATED = 6;
 export const VAULT_NOTE_DELETED = 7;
 export const VAULT_NOTE_RENAMED = 8;
+/** Inhalt einer (hier nicht gejointen) Notiz hat sich geaendert - nur nach Abo, s. {@link TYPE_SUBSCRIBE_CONTENT_UPDATES}. */
+export const VAULT_NOTE_UPDATED = 9;
+/** Client->Server: "ich verstehe VAULT_NOTE_UPDATED" - aeltere Plugins bekommen Typ 9 so nie. */
+const TYPE_SUBSCRIBE_CONTENT_UPDATES = 10;
+const NIL_NOTE_ID = "00000000-0000-0000-0000-000000000000";
 const TYPE_VAULT_NOTE_CREATED = VAULT_NOTE_CREATED;
 const TYPE_VAULT_NOTE_DELETED = VAULT_NOTE_DELETED;
 const TYPE_VAULT_NOTE_RENAMED = VAULT_NOTE_RENAMED;
-const VAULT_EVENT_TYPES = new Set([TYPE_VAULT_NOTE_CREATED, TYPE_VAULT_NOTE_DELETED, TYPE_VAULT_NOTE_RENAMED]);
+const VAULT_EVENT_TYPES = new Set([TYPE_VAULT_NOTE_CREATED, TYPE_VAULT_NOTE_DELETED, TYPE_VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED]);
 
 export type VaultEventHandler = (messageType: number, noteId: string, path: string) => void;
 /** Muss zu {@code SyncClient.CLOSE_CODE_NOTE_DELETED} passen - SyncClient reagiert bereits darauf, bleibt unveraendert. */
@@ -75,11 +80,26 @@ class VirtualSocket implements WebSocketLike {
   }
 }
 
+/** Zustand der EINEN physischen Verbindung - Grundlage fuer die Statusanzeige im Plugin. */
+export type TransportState = "offline" | "connecting" | "online";
+
 export interface MultiplexedTransportOptions {
   /** Wartezeit zwischen zwei JOIN-Nachrichten - verhindert einen Burst aus hunderten gleichzeitigen Joins. */
   joinStaggerMs?: number;
-  /** Wartezeit vor einem automatischen Reconnect-Versuch, nachdem die Verbindung abgebrochen ist. */
+  /**
+   * Wartezeit vor dem ERSTEN automatischen Reconnect-Versuch, nachdem die Verbindung abgebrochen
+   * ist. Jeder weitere erfolglose Versuch verdoppelt sie (mit etwas Zufall, damit nicht alle
+   * Geraete nach einem Server-Neustart im selben Takt anklopfen), bis {@link maxReconnectDelayMs}.
+   */
   reconnectDelayMs?: number;
+  maxReconnectDelayMs?: number;
+  /** Zufallsquelle fuer den Jitter - in Tests fest, sonst `Math.random`. */
+  random?: () => number;
+  onStateChange?: (state: TransportState) => void;
+  /** Inhalts-Ankuendigungen geschlossener Notizen abonnieren (nach jedem Connect erneut). */
+  subscribeContentUpdates?: boolean;
+  /** Nach JEDEM erfolgreichen (Re-)Connect - Anlass, verpasste Vault-Ereignisse per Abgleich nachzuholen. */
+  onConnected?: () => void;
   sleep?: (ms: number) => Promise<void>;
   /** Empfaengt vault-weite Bestandsereignisse (Anlage/Loeschung/Umbenennung einer Notiz). */
   onVaultEvent?: VaultEventHandler;
@@ -121,9 +141,23 @@ export class MultiplexedTransport {
    * the authorized socket alive").
    */
   private destroyed = false;
+  /**
+   * Nach {@link start}: Verbindung auch ohne gejointe Notiz halten und immer wieder aufbauen -
+   * sonst kommen vault-weite Bestandsereignisse nur an, solange zufaellig eine Notiz offen ist.
+   */
+  private keepAlive = false;
+  private reconnectAttempt = 0;
+  /** Nur der zuletzt geplante Reconnect darf feuern (onerror UND onclose planen beide einen). */
+  private reconnectToken = 0;
+  state: TransportState = "offline";
 
   private readonly joinStaggerMs: number;
   private readonly reconnectDelayMs: number;
+  private readonly maxReconnectDelayMs: number;
+  private readonly random: () => number;
+  private readonly onStateChange: ((state: TransportState) => void) | null;
+  private readonly onConnected: (() => void) | null;
+  private readonly subscribeContentUpdates: boolean;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly onVaultEvent: VaultEventHandler | null;
 
@@ -134,8 +168,39 @@ export class MultiplexedTransport {
   ) {
     this.joinStaggerMs = options.joinStaggerMs ?? 150;
     this.reconnectDelayMs = options.reconnectDelayMs ?? 2000;
+    this.maxReconnectDelayMs = options.maxReconnectDelayMs ?? 30_000;
+    this.random = options.random ?? Math.random;
+    this.onStateChange = options.onStateChange ?? null;
+    this.onConnected = options.onConnected ?? null;
+    this.subscribeContentUpdates = options.subscribeContentUpdates ?? false;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.onVaultEvent = options.onVaultEvent ?? null;
+  }
+
+  /** Baut die Verbindung sofort auf und haelt sie dauerhaft, auch ganz ohne gejointe Notiz. */
+  start(): void {
+    this.keepAlive = true;
+    void this.ensureRealSocketConnecting();
+  }
+
+  /**
+   * Sofort neu verbinden statt den laufenden Backoff abzuwarten - z. B. wenn der Nutzer
+   * "Jetzt synchronisieren" waehlt oder das Betriebssystem meldet, dass das Netz wieder da ist.
+   */
+  reconnectNow(): void {
+    if (this.destroyed) {
+      return;
+    }
+    this.reconnectToken++;
+    this.reconnectAttempt = 0;
+    void this.ensureRealSocketConnecting();
+  }
+
+  private setState(state: TransportState): void {
+    if (this.state !== state) {
+      this.state = state;
+      this.onStateChange?.(state);
+    }
   }
 
   /**
@@ -169,6 +234,7 @@ export class MultiplexedTransport {
       return;
     }
     this.connecting = true;
+    this.setState("connecting");
     try {
       const url = await this.getUrl();
       if (this.destroyed) {
@@ -184,6 +250,11 @@ export class MultiplexedTransport {
       socket.binaryType = "arraybuffer";
       socket.onopen = () => {
         this.isOpen = true;
+        this.reconnectAttempt = 0;
+        this.setState("online");
+        if (this.subscribeContentUpdates) {
+          this.sendFramed(TYPE_SUBSCRIBE_CONTENT_UPDATES, NIL_NOTE_ID, new Uint8Array(0));
+        }
         if (this.everConnected) {
           // RECONNECT (nicht der allererste Connect): der Server kennt keine alten Joins einer
           // vorherigen, jetzt toten Verbindung mehr - ALLE aktuell registrierten Notizen muessen
@@ -194,10 +265,12 @@ export class MultiplexedTransport {
         }
         this.everConnected = true;
         void this.drainJoinQueue();
+        this.onConnected?.();
       };
       socket.onmessage = (ev) => this.handleIncoming(new Uint8Array(ev.data as ArrayBuffer));
       socket.onclose = (ev) => {
         this.isOpen = false;
+        this.setState("offline");
         // OHNE dieses Zuruecksetzen bliebe `realSocket` fuer immer auf die tote Verbindung
         // zeigen - jede danach registrierte oder bereits wartende Notiz haette nie wieder eine
         // Chance auf `onopen`/`onerror` und wuerde fuer immer auf "connecting" stehen bleiben
@@ -210,6 +283,7 @@ export class MultiplexedTransport {
       };
       socket.onerror = () => {
         this.isOpen = false;
+        this.setState("offline");
         this.realSocket = null;
         for (const vs of this.virtualSockets.values()) {
           vs.dispatchError();
@@ -222,6 +296,7 @@ export class MultiplexedTransport {
       // s. main.ts getAccessToken) - es wurde nie ein echtes Socket erzeugt, dessen onerror/
       // onclose sonst einen Reconnect anstoessen wuerde. OHNE diesen expliziten Pfad bliebe jede
       // registrierte Notiz fuer immer auf "connecting" stehen (live beobachtet).
+      this.setState("offline");
       for (const vs of this.virtualSockets.values()) {
         vs.dispatchError();
       }
@@ -231,15 +306,34 @@ export class MultiplexedTransport {
     }
   }
 
-  /** Automatischer Reconnect, solange noch mindestens eine Notiz verbunden bleiben will. */
+  private wantsConnection(): boolean {
+    return !this.destroyed && (this.keepAlive || this.virtualSockets.size > 0);
+  }
+
+  private nextReconnectDelay(): number {
+    if (this.reconnectAttempt === 0) {
+      return this.reconnectDelayMs;
+    }
+    const exponential = Math.min(this.reconnectDelayMs * 2 ** this.reconnectAttempt, this.maxReconnectDelayMs);
+    return Math.round(exponential * (1 + 0.3 * this.random()));
+  }
+
+  /**
+   * Automatischer Reconnect mit exponentiellem Backoff, solange die Verbindung gewollt ist
+   * (Dauerverbindung nach {@link start} oder mindestens eine gejointe Notiz). Frueher: fixe 2s,
+   * endlos - ein laengerer Server-Ausfall bedeutete ein Ticket-Request alle 2s von jedem Geraet.
+   */
   private scheduleReconnectIfNeeded(): void {
-    if (this.destroyed || this.virtualSockets.size === 0) {
+    if (!this.wantsConnection()) {
       return;
     }
-    void this.sleep(this.reconnectDelayMs).then(() => {
-      if (!this.destroyed && this.virtualSockets.size > 0 && !this.realSocket) {
-        void this.ensureRealSocketConnecting();
+    const token = ++this.reconnectToken;
+    void this.sleep(this.nextReconnectDelay()).then(() => {
+      if (token !== this.reconnectToken || !this.wantsConnection() || this.realSocket) {
+        return;
       }
+      this.reconnectAttempt++;
+      void this.ensureRealSocketConnecting();
     });
   }
 
@@ -252,6 +346,8 @@ export class MultiplexedTransport {
    */
   destroy(): void {
     this.destroyed = true;
+    this.keepAlive = false;
+    this.reconnectToken++;
     this.virtualSockets.clear();
     this.joinQueue.length = 0;
     this.realSocket?.close();
@@ -272,7 +368,15 @@ export class MultiplexedTransport {
           continue;
         }
         this.sendFramed(TYPE_JOIN, noteId, new Uint8Array(0));
-        vs.dispatchOpen();
+        // Nie synchron: bei bereits offener Verbindung laeuft dieser Code noch INNERHALB von
+        // `createVirtualSocket` - der Aufrufer (SyncClient.connect) setzt `onopen` aber erst
+        // danach. Synchron ausgeloest ging das Ereignis ins Leere und die Notiz hing bis zum
+        // Timeout auf "verbindet".
+        queueMicrotask(() => {
+          if (this.virtualSockets.get(noteId) === vs) {
+            vs.dispatchOpen();
+          }
+        });
         if (this.joinQueue.length > 0) {
           await this.sleep(this.joinStaggerMs);
         }
