@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, type Group, type PathRule, type Role, type Vault } from "../api";
   import { connectionConfigJson } from "../connectionConfig";
+  import InvitePeople from "./InvitePeople.svelte";
 
   let { vault }: { vault: Vault } = $props();
 
@@ -131,6 +132,8 @@
 {#if error}
   <p class="error">{error}</p>
 {/if}
+
+<InvitePeople {vault} />
 
 <section>
   <h3>Plugin-Verbindung</h3>

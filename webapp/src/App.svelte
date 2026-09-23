@@ -4,6 +4,15 @@
   import { completeLogin, getUser, login as startLogin, logout as startLogout, preferredUsername } from "./lib/auth";
   import { api, type Vault } from "./lib/api";
   import Sidebar from "./lib/components/Sidebar.svelte";
+  import InviteLanding from "./lib/components/InviteLanding.svelte";
+
+  /** Nur relative App-Pfade als Rücksprungziel - nie eine fremde Adresse aus dem Login-State. */
+  function safeReturnPath(value: unknown): string | null {
+    return typeof value === "string" && /^\/invite\/[A-Za-z0-9_-]+$/.test(value) ? value : null;
+  }
+  function inviteTokenFrom(pathname: string): string | null {
+    return pathname.match(/^\/invite\/([A-Za-z0-9_-]+)$/)?.[1] ?? null;
+  }
 
   let user = $state<User | null>(null);
   let loading = $state(true);
@@ -14,6 +23,7 @@
   let dirty = $state(false);
   let canManage = $state(false);
   let authBusy = $state(false);
+  let inviteToken = $state<string | null>(null);
   let alive = true;
 
   function mayLeave() { return !dirty || window.confirm("Ungespeicherte Änderungen verwerfen? Speichere oder exportiere deinen Entwurf, wenn du ihn behalten möchtest."); }
@@ -29,10 +39,16 @@
     if (created) { selected = created; section = "notes"; dirty = false; canManage = false; }
     else selected = loaded.find(v => v.id === selected?.id) ?? loaded[0] ?? null;
   }
+  async function joined(vaultId: string) {
+    inviteToken = null;
+    window.history.replaceState({}, "", "/");
+    await refreshVaults();
+    selected = vaults.find(v => v.id === vaultId) ?? selected;
+  }
   async function authenticate(logout = false) {
     if (authBusy || (logout && !mayLeave())) return;
     authBusy = true; error = "";
-    try { if (logout) await startLogout(); else await startLogin(); }
+    try { if (logout) await startLogout(); else await startLogin(inviteToken ? `/invite/${inviteToken}` : undefined); }
     catch (e) { error = e instanceof Error ? e.message : "Die Anmeldung ist gerade nicht erreichbar."; }
     finally { authBusy = false; }
   }
@@ -40,12 +56,15 @@
     void (async () => {
       try {
         if (window.location.pathname === "/callback") {
-          await completeLogin(); window.history.replaceState({}, "", "/");
+          const completed = await completeLogin();
+          const returnTo = safeReturnPath((completed?.state as { returnTo?: unknown } | undefined)?.returnTo);
+          window.history.replaceState({}, "", returnTo ?? "/");
         }
+        inviteToken = inviteTokenFrom(window.location.pathname);
         const signedIn = await getUser();
         if (!alive) return;
         user = signedIn;
-        if (user) await refreshVaults();
+        if (user && !inviteToken) await refreshVaults();
       } catch (e) { if (alive) error = e instanceof Error ? e.message : "Das Dashboard konnte nicht geladen werden."; }
       finally { if (alive) loading = false; }
     })();
@@ -55,6 +74,8 @@
 
 <svelte:head><title>{selected ? `${selected.name} · ` : ""}StoneIntelligence</title><meta name="description" content="Deine Notizen lesen, bearbeiten und gemeinsam organisieren." /></svelte:head>
 {#if loading}<div class="boot" role="status"><img src="/logo.png" alt="" width="48" height="48" /><p>Dein Arbeitsplatz wird geladen…</p></div>
+{:else if inviteToken}
+  <InviteLanding token={inviteToken} signedIn={user !== null} onLogin={() => authenticate()} onJoined={joined} />
 {:else if !user}
   <main class="gate"><div class="gate-brand"><img src="/logo.png" alt="" width="48" height="48" /><span>StoneIntelligence</span></div><h1>Ein Platz für dein Wissen.</h1><p>Lies und bearbeite deine Obsidian-Notizen im Browser. Deine Vaults und ihre Zugriffsrechte bleiben an einem Ort.</p>{#if error}<p class="feedback error" role="alert">{error}</p>{/if}<button class="primary" disabled={authBusy} onclick={() => authenticate()}>{authBusy ? "Anmeldung wird geöffnet…" : "Mit Authentik anmelden"}</button><p class="hint">Melde dich mit deinem bestehenden Konto an.</p></main>
 {:else}
@@ -64,7 +85,7 @@
     <div class="body"><aside><Sidebar {vaults} selectedId={selected?.id ?? null} onSelect={choose} onCreated={refreshVaults} canCreate={() => mayLeave()} /></aside>
       <main id="workspace">
         {#if selected}
-          <div class="workspace-heading"><div><p class="workspace-label">Arbeitsbereich</p><h1>{selected.name}</h1></div><nav aria-label="Vault-Bereiche"><button class:active={section === "notes"} aria-pressed={section === "notes"} onclick={() => navigate("notes")}>Notizen</button>{#if canManage}<button class:active={section === "manage"} aria-pressed={section === "manage"} onclick={() => navigate("manage")}>Verwaltung</button>{/if}</nav></div>
+          <div class="workspace-heading"><div><p class="workspace-label">Arbeitsbereich</p><h1>{selected.name}</h1></div><nav aria-label="Vault-Bereiche"><button class:active={section === "notes"} aria-pressed={section === "notes"} onclick={() => navigate("notes")}>Notizen</button>{#if canManage}<button class:active={section === "manage"} aria-pressed={section === "manage"} onclick={() => navigate("manage")}>Mitglieder & Rechte</button>{/if}</nav></div>
           {#key selected.id}
             {#if section === "notes"}
               {#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}

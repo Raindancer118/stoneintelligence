@@ -4,6 +4,7 @@ import VaultDetail from "../src/lib/components/VaultDetail.svelte";
 import { api } from "../src/lib/api";
 vi.mock("../src/lib/api", () => ({ api: {
   listRoles: vi.fn(), listGroups: vi.fn(), listPathRules: vi.fn(), createGroup: vi.fn(), createRole: vi.fn(), createPathRule: vi.fn(),
+  listInvitations: vi.fn(), searchPeople: vi.fn(),
 } }));
 const group = { id: "group", name: "Team", memberSubjects: [], roleIds: [] };
 beforeEach(() => {
@@ -11,6 +12,7 @@ beforeEach(() => {
   vi.mocked(api.listRoles).mockResolvedValue([]);
   vi.mocked(api.listGroups).mockResolvedValue([group]);
   vi.mocked(api.listPathRules).mockResolvedValue([]);
+  vi.mocked(api.listInvitations).mockResolvedValue([]);
 });
 afterEach(cleanup);
 describe("vault detail loading", () => {

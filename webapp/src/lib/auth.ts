@@ -21,8 +21,9 @@ const userManager = new UserManager({
   automaticSilentRenew: false,
 });
 
-export async function login(): Promise<void> {
-  await userManager.signinRedirect();
+/** @param returnTo Pfad, auf den die App nach der Anmeldung zurueckkehrt (z. B. eine Einladung). */
+export async function login(returnTo?: string): Promise<void> {
+  await userManager.signinRedirect(returnTo ? { state: { returnTo } } : undefined);
 }
 
 export async function completeLogin(): Promise<User> {

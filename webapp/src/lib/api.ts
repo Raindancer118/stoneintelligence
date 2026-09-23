@@ -33,14 +33,40 @@ export interface Note {
 export interface NotePage { epochId: string; complete: boolean; nextCursor: string | null; notes: Note[]; }
 export interface NoteContent { revision: number; updates: string[]; }
 export interface AuditEvent { actor: string; action: string; payload: Record<string, unknown>; occurredAt: string; }
+export interface PersonSuggestion { username: string; name: string; maskedEmail: string; alreadyMember: boolean; }
+export type InviteAccess = "EDIT" | "READ";
+export interface InviteResult { status: "ADDED" | "INVITED" | "ALREADY_MEMBER"; displayName: string; }
+export interface PendingInvitation { id: string; email: string; access: InviteAccess; invitedBy: string; createdAt: string; expiresAt: string; }
+export interface InvitationInfo {
+  state: "PENDING" | "ACCEPTED" | "EXPIRED" | "REVOKED"; vaultName: string; invitedBy: string; maskedEmail: string;
+  access: InviteAccess; expiresAt: string; enrollmentUrl: string | null;
+}
 export class ApiError extends Error {
-  constructor(public status: number) {
-    super(({ 401: "Deine Anmeldung ist abgelaufen. Bitte melde dich erneut an.",
+  constructor(public status: number, detail?: string) {
+    super(detail ?? ({ 401: "Deine Anmeldung ist abgelaufen. Bitte melde dich erneut an.",
       403: "Du hast für diese Aktion keine Berechtigung.", 404: "Dieser Eintrag ist nicht mehr verfügbar.",
       409: "Der Eintrag wurde inzwischen geändert oder der Pfad ist bereits belegt.",
       429: "Zu viele Anfragen. Bitte versuche es gleich erneut." } as Record<number, string>)[status]
       ?? `Die Anfrage ist fehlgeschlagen (HTTP ${status}). Bitte erneut versuchen.`);
   }
+}
+
+/** Fachliche Ablehnungen (HTTP 422) bringen einen fuer Menschen geschriebenen Text mit. */
+async function problemDetail(response: Response): Promise<string | undefined> {
+  if (response.status !== 422) return undefined;
+  try {
+    const body = await response.json() as { detail?: unknown };
+    return typeof body.detail === "string" ? body.detail : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Ohne Login - die Einladungsseite muss auch fuer Personen ohne Konto funktionieren. */
+async function publicRequest<T>(path: string): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, { signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) throw new ApiError(response.status, await problemDetail(response));
+  return await response.json() as T;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -55,7 +81,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     },
   });
   if (!response.ok) {
-    throw new ApiError(response.status);
+    throw new ApiError(response.status, await problemDetail(response));
   }
   if (response.status === 204 || response.headers.get("Content-Length") === "0") {
     return undefined as T;
@@ -101,6 +127,19 @@ export const api = {
     request<void>(`/api/v1/vaults/${vaultId}/groups/${groupId}/roles/${roleId}`, { method: "POST" }),
   unassignRole: (vaultId: string, groupId: string, roleId: string) =>
     request<void>(`/api/v1/vaults/${vaultId}/groups/${groupId}/roles/${roleId}`, { method: "DELETE" }),
+
+  searchPeople: (vaultId: string, query: string) =>
+    request<PersonSuggestion[]>(`/api/v1/vaults/${vaultId}/people?${new URLSearchParams({ q: query })}`),
+  addPerson: (vaultId: string, username: string, access: InviteAccess) =>
+    request<InviteResult>(`/api/v1/vaults/${vaultId}/members`, { method: "POST", body: JSON.stringify({ username, access }) }),
+  inviteByEmail: (vaultId: string, email: string, access: InviteAccess) =>
+    request<InviteResult>(`/api/v1/vaults/${vaultId}/invitations`, { method: "POST", body: JSON.stringify({ email, access }) }),
+  listInvitations: (vaultId: string) => request<PendingInvitation[]>(`/api/v1/vaults/${vaultId}/invitations`),
+  revokeInvitation: (vaultId: string, invitationId: string) =>
+    request<void>(`/api/v1/vaults/${vaultId}/invitations/${invitationId}`, { method: "DELETE" }),
+  describeInvitation: (token: string) => publicRequest<InvitationInfo>(`/api/v1/invitations/${encodeURIComponent(token)}`),
+  acceptInvitation: (token: string) =>
+    request<{ vaultId: string; vaultName: string }>(`/api/v1/invitations/${encodeURIComponent(token)}/accept`, { method: "POST" }),
 
   listPathRules: (vaultId: string) => request<PathRule[]>(`/api/v1/vaults/${vaultId}/path-rules`),
   createPathRule: (vaultId: string, pathPrefix: string, scopeSubject: string | null, effect: "ALLOW" | "DENY") =>

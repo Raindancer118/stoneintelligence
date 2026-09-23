@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import App from "../src/App.svelte";
-import { getUser } from "../src/lib/auth";
+import { completeLogin, getUser, login } from "../src/lib/auth";
 import { api } from "../src/lib/api";
 vi.mock("../src/lib/auth", () => ({
   getUser: vi.fn(), completeLogin: vi.fn(), login: vi.fn(), logout: vi.fn(),
   preferredUsername: () => "Tom",
 }));
-vi.mock("../src/lib/api", () => ({ api: { listVaults: vi.fn(), permissions: vi.fn(), listNotes: vi.fn() } }));
-beforeEach(() => { vi.resetAllMocks(); });
+vi.mock("../src/lib/api", () => ({ api: {
+  listVaults: vi.fn(), permissions: vi.fn(), listNotes: vi.fn(), describeInvitation: vi.fn(), acceptInvitation: vi.fn(),
+} }));
+beforeEach(() => { vi.resetAllMocks(); window.history.replaceState({}, "", "/"); });
 afterEach(cleanup);
 describe("dashboard startup", () => {
   it("shows login without querying vaults when no valid session exists", async () => {
@@ -25,5 +27,50 @@ describe("dashboard startup", () => {
     render(App);
     await screen.findByRole("heading", { name: "My notes", level: 1 });
     expect(api.listVaults).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("invitation links", () => {
+  const invitation = {
+    state: "PENDING", vaultName: "Team-Notizen", invitedBy: "tom", maskedEmail: "n***@example.org", access: "EDIT",
+    expiresAt: "2026-10-07T10:00:00Z", enrollmentUrl: null,
+  } as const;
+
+  it("shows the invitation without requiring a login, and signs in back to it", async () => {
+    window.history.replaceState({}, "", "/invite/tok123");
+    vi.mocked(getUser).mockResolvedValue(null);
+    vi.mocked(api.describeInvitation).mockResolvedValue(invitation);
+    render(App);
+
+    await screen.findByRole("heading", { name: "tom lädt dich zu „Team-Notizen“ ein" });
+    await fireEvent.click(screen.getByRole("button", { name: "Ich habe schon ein Konto – anmelden" }));
+    expect(login).toHaveBeenCalledWith("/invite/tok123");
+  });
+
+  it("opens the joined vault after accepting", async () => {
+    window.history.replaceState({}, "", "/invite/tok123");
+    vi.mocked(getUser).mockResolvedValue({ profile: { sub: "neu" } } as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(api.describeInvitation).mockResolvedValue(invitation);
+    vi.mocked(api.acceptInvitation).mockResolvedValue({ vaultId: "v1", vaultName: "Team-Notizen" });
+    vi.mocked(api.listVaults).mockResolvedValue([{ id: "v1", name: "Team-Notizen", createdAt: "" }]);
+    vi.mocked(api.permissions).mockResolvedValue(["READ"]);
+    vi.mocked(api.listNotes).mockResolvedValue({ epochId: "e", notes: [], complete: true, nextCursor: null });
+    render(App);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Einladung annehmen" }));
+
+    await screen.findByRole("heading", { name: "Team-Notizen", level: 1 });
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("returns to the invitation after the login callback", async () => {
+    window.history.replaceState({}, "", "/callback?code=x");
+    vi.mocked(completeLogin).mockResolvedValue({ state: { returnTo: "/invite/tok123" } } as Awaited<ReturnType<typeof completeLogin>>);
+    vi.mocked(getUser).mockResolvedValue({ profile: { sub: "neu" } } as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(api.describeInvitation).mockResolvedValue(invitation);
+    render(App);
+
+    await screen.findByRole("button", { name: "Einladung annehmen" });
+    await waitFor(() => expect(window.location.pathname).toBe("/invite/tok123"));
   });
 });

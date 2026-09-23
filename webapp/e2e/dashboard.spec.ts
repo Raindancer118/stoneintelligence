@@ -13,12 +13,25 @@ test.beforeEach(async ({ page }) => {
   const doc = new Y.Doc(); doc.getText("content").insert(0, initial);
   const documents = new Map([[noteId, doc]]);
   const revisions = new Map([[noteId, 1]]);
+  const invitations: unknown[] = [];
   const notes = [{ id: noteId, vaultId, path: "Projekte/Kundenportal.md", noteLevel: 1, createdBy: "Tom", createdAt: "2026-09-19T09:00:00Z" }];
   await page.route("**/api/v1/**", async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const json = (body: unknown, status = 200) => route.fulfill({ status, json: body });
     if (path.endsWith("/vaults")) return json([{ id: vaultId, name: "Team-Wissen", createdAt: "2026-09-19T09:00:00Z" }]);
     if (path.endsWith("/permissions")) return json(["READ", "WRITE", "CREATE", "DELETE", "MANAGE"]);
+    if (path.endsWith("/people")) return json([{ username: "anna", name: "Anna Arendt", maskedEmail: "a***@example.org", alreadyMember: false }]);
+    if (path.endsWith("/members") && request.method() === "POST") return json({ status: "ADDED", displayName: "Anna Arendt" });
+    if (path.endsWith("/invitations") && request.method() === "POST") {
+      invitations.push({ id: "inv-1", email: request.postDataJSON().email, access: "EDIT", invitedBy: "Tom", createdAt: "2026-09-23T10:00:00Z", expiresAt: "2026-10-07T10:00:00Z" });
+      return json({ status: "INVITED", displayName: request.postDataJSON().email });
+    }
+    if (path.endsWith("/invitations")) return json(invitations);
+    if (path.endsWith("/roles") || path.endsWith("/groups") || path.endsWith("/path-rules")) return json([]);
+    if (path.startsWith("/api/v1/invitations/")) return json({
+      state: "PENDING", vaultName: "Team-Wissen", invitedBy: "Tom", maskedEmail: "n***@example.org", access: "EDIT",
+      expiresAt: "2026-10-07T10:00:00Z", enrollmentUrl: "https://portal.example/if/flow/stoneintelligence-invitation/?itoken=1",
+    });
     if (path.endsWith("/content")) {
       const id = path.split("/").at(-2)!;
       const currentDoc = documents.get(id)!;
@@ -73,7 +86,7 @@ test("preserves draft when the server rejects a stale revision", async ({ page }
   await expect(page.getByRole("alert")).toContainText("Zwischenzeitlich geändert");
   await expect(editor).toHaveValue("Mein Entwurf bleibt erhalten");
   page.once("dialog", dialog => dialog.dismiss());
-  await page.getByRole("button", { name: "Verwaltung", exact: true }).click();
+  await page.getByRole("button", { name: "Mitglieder & Rechte", exact: true }).click();
   await expect(editor).toHaveValue("Mein Entwurf bleibt erhalten");
 });
 
@@ -112,4 +125,17 @@ test("create a note in a folder and save its first content", async ({ page }) =>
   await page.reload();
   await page.getByRole("button", { name: "Neue Notiz Ideen" }).click();
   await expect(page.getByText("Meine erste Notiz", { exact: true })).toBeVisible();
+});
+
+test("invite an existing account and an email address from the members page", async ({ page }) => {
+  await openNote(page);
+  await page.getByRole("button", { name: "Mitglieder & Rechte", exact: true }).click();
+  const field = page.getByLabel("Name oder E-Mail-Adresse");
+  await field.fill("an");
+  await page.getByRole("button", { name: "Anna Arendt hinzufügen" }).click();
+  await expect(page.getByRole("status")).toHaveText("Anna Arendt ist jetzt Mitglied.");
+  await field.fill("neu@example.org");
+  await page.getByRole("button", { name: "Einladung an neu@example.org senden" }).click();
+  await expect(page.getByRole("status")).toHaveText("Einladung an neu@example.org verschickt.");
+  await expect(page.getByRole("button", { name: "Einladung an neu@example.org zurückziehen" })).toBeVisible();
 });

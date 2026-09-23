@@ -65,9 +65,27 @@ class VaultControllerTest {
         invitations.inviteByEmail(de.raindancer118.stoneintelligence.domain.id.VaultId.of(vault.id()), "tom", "neu@example.org",
             de.raindancer118.stoneintelligence.platform.invitation.InviteAccess.EDIT);
         var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "none")
-            .claim("preferred_username", "neu").claim("email", "Neu@example.org").build();
+            .claim("preferred_username", "neu").claim("email", "Neu@example.org").claim("email_verified", true).build();
         var newcomer = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt, java.util.List.of(), "neu");
 
         assertThat(controller.list(newcomer)).extracting(VaultController.VaultResponse::name).containsExactly("Team");
+    }
+
+    /**
+     * Ohne bestaetigte Adresse koennte sich jede Person, die ein Konto mit fremder E-Mail anlegt,
+     * deren Einladungen aneignen. Authentik stellt standardmaessig email_verified=false aus - dann
+     * bleibt nur der (sichere) Weg ueber den Link aus der Mail.
+     */
+    @Test
+    void should_notAcceptInvitations_forUnverifiedEmailClaims() {
+        var tom = new TestingAuthenticationToken("tom", null);
+        var vault = controller.create(new VaultController.CreateVaultRequest("Team"), tom);
+        invitations.inviteByEmail(de.raindancer118.stoneintelligence.domain.id.VaultId.of(vault.id()), "tom", "neu@example.org",
+            de.raindancer118.stoneintelligence.platform.invitation.InviteAccess.EDIT);
+        var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "none")
+            .claim("preferred_username", "imposter").claim("email", "neu@example.org").claim("email_verified", false).build();
+        var imposter = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt, java.util.List.of(), "imposter");
+
+        assertThat(controller.list(imposter)).isEmpty();
     }
 }
