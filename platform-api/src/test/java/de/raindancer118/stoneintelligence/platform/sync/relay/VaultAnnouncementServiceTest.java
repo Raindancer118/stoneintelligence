@@ -193,4 +193,48 @@ class VaultAnnouncementServiceTest {
             assertThat(reader.received).isEmpty();
         }
     }
+
+    /**
+     * Wird innerhalb einer Transaktion angekuendigt (Notiz anlegen/umbenennen/loeschen), darf die
+     * Nachricht erst nach dem Commit raus: sonst tritt ein Geraet der Notiz bei, bevor sie fuer
+     * andere Transaktionen sichtbar ist - der Join laeuft ins Leere (live beobachtet: 10s Haenger
+     * beim Hochladen jeder neuen Notiz) oder, bei einem Rollback, kuendigt man etwas an, das es nie gab.
+     */
+    @Nested
+    class InTransactions {
+
+        @org.junit.jupiter.api.AfterEach
+        void clearSynchronization() {
+            if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+                org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            }
+        }
+
+        @Test
+        void should_holdAnnouncementsBackUntilTheTransactionCommits() {
+            var subscriber = new RecordingVaultSubscriber("s");
+            announcements.subscribe(vaultId, subscriber);
+            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+
+            announcements.announceNoteCreated(vaultId, noteId, "neu.md");
+            assertThat(subscriber.received).isEmpty();
+
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
+                .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+            assertThat(subscriber.received).hasSize(1);
+        }
+
+        @Test
+        void should_dropAnnouncements_whenTheTransactionRollsBack() {
+            var subscriber = new RecordingVaultSubscriber("s");
+            announcements.subscribe(vaultId, subscriber);
+            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+
+            announcements.announceNoteDeleted(vaultId, noteId, "weg.md");
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
+                .forEach(sync -> sync.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK));
+
+            assertThat(subscriber.received).isEmpty();
+        }
+    }
 }

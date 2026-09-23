@@ -26,6 +26,42 @@ export type ContentSyncOutcome = "unchanged" | "pushed" | "pulled" | "merged" | 
 export interface ContentSyncResult {
   outcome: ContentSyncOutcome;
   conflictPath?: string;
+  /** Nur bei "offline": lokale Aenderungen wurden erfasst, haben den Server aber noch nicht erreicht. */
+  pendingLocalChanges?: boolean;
+}
+
+/** Text eines gespeicherten Yjs-Zustands (null, wenn es keinen gibt). */
+export function textOfState(state: Uint8Array | null): string | null {
+  if (!state) {
+    return null;
+  }
+  const doc = new Y.Doc();
+  try {
+    Y.applyUpdate(doc, state);
+    return doc.getText("content").toString();
+  } finally {
+    doc.destroy();
+  }
+}
+
+/**
+ * Gibt es lokale Aenderungen, die den Server nie erreicht haben? Entscheidet, ob eine anderswo
+ * ausgefuehrte Loeschung hier greifen darf. Nur ein BELEG zaehlt: offline erfasste Aenderungen
+ * (`dirty`) oder ein Inhalt, der vom zuletzt synchronisierten Stand abweicht. Ein geaenderter
+ * Zeitstempel allein ist keiner (Obsidians Autosave schreibt offene Notizen neu, ohne dass sich
+ * etwas aendert), und ohne gespeicherten Stand (Notizen aus der Zeit vor dem lokalen Sync-Zustand)
+ * gewinnt die Loeschung - die Datei landet ohnehin im wiederherstellbaren Papierkorb.
+ */
+export function hasUnsyncedLocalEdits(input: {
+  dirty: boolean; statUnchanged: boolean; lastSyncedText: string | null; currentText: string;
+}): boolean {
+  if (input.dirty) {
+    return true;
+  }
+  if (input.statUnchanged || input.lastSyncedText === null) {
+    return false;
+  }
+  return input.lastSyncedText !== input.currentText;
 }
 
 /**
@@ -95,7 +131,7 @@ export async function syncNoteContent(ports: ContentSyncPorts, noteId: string, p
         // Reparatur-Resend raus, auch wenn die Datei bis dahin wieder anders aussieht.
         await ports.saveState(noteId, Y.encodeStateAsUpdate(doc));
       }
-      return { outcome: "offline" };
+      return { outcome: "offline", pendingLocalChanges: localChanged };
     }
     try {
       let result: ContentSyncResult;

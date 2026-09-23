@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { conflictCopyPath, type ContentSyncPorts, syncNoteContent } from "../src/sync/noteContentSync";
+import { conflictCopyPath, type ContentSyncPorts, hasUnsyncedLocalEdits, syncNoteContent } from "../src/sync/noteContentSync";
 
 /**
  * Simuliert Server + Datei-System eines Geraets. `connect` verhaelt sich wie der echte Ablauf
@@ -177,5 +177,41 @@ describe("conflictCopyPath", () => {
   it("should_countUp_when_theNameIsTaken", () => {
     const taken = new Set(["Notiz (Konflikt 2026-09-23 11-42).md"]);
     expect(conflictCopyPath("Notiz.md", date, (path) => taken.has(path))).toBe("Notiz (Konflikt 2026-09-23 11-42) 2.md");
+  });
+});
+
+describe("hasUnsyncedLocalEdits", () => {
+  // Der Fall aus der Praxis: Notiz aus der Zeit vor dem lokalen Sync-Zustand, anderswo geloescht.
+  // Ohne jeden Beleg fuer eine lokale Aenderung muss die Loeschung gewinnen.
+  it("should_letADeletionWin_when_thereIsNoEvidenceOfLocalEdits", () => {
+    expect(hasUnsyncedLocalEdits({ dirty: false, statUnchanged: false, lastSyncedText: null, currentText: "x" })).toBe(false);
+  });
+
+  it("should_ignoreTimestampDrift_when_theContentMatchesTheLastSyncedState", () => {
+    expect(hasUnsyncedLocalEdits({ dirty: false, statUnchanged: false, lastSyncedText: "gleich", currentText: "gleich" })).toBe(false);
+  });
+
+  it("should_reportEdits_when_theContentDiffersFromTheLastSyncedState", () => {
+    expect(hasUnsyncedLocalEdits({ dirty: false, statUnchanged: false, lastSyncedText: "alt", currentText: "neu" })).toBe(true);
+  });
+
+  it("should_reportEdits_thatWereCapturedOfflineButNeverReachedTheServer", () => {
+    expect(hasUnsyncedLocalEdits({ dirty: true, statUnchanged: true, lastSyncedText: "neu", currentText: "neu" })).toBe(true);
+  });
+
+  it("should_trustAnUnchangedFile", () => {
+    expect(hasUnsyncedLocalEdits({ dirty: false, statUnchanged: true, lastSyncedText: "alt", currentText: "neu" })).toBe(false);
+  });
+});
+
+describe("offline outcome", () => {
+  it("should_tellTheCaller_whetherLocalEditsAreWaiting", async () => {
+    const world = new FakeWorld();
+    world.files.set("a.md", "Basis");
+    await syncNoteContent(world, "n1", "a.md");
+    world.online = false;
+
+    world.files.set("a.md", "Basis geaendert");
+    expect(await syncNoteContent(world, "n1", "a.md")).toEqual({ outcome: "offline", pendingLocalChanges: true });
   });
 });

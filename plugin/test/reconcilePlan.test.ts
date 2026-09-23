@@ -124,17 +124,7 @@ describe("planReconciliation", () => {
       meta: { n1: { revision: 1, mtime: 1, size: 10 } },
     }));
 
-    expect(plan).toEqual([{ kind: "checkMissing", noteId: "n1", path: "weg.md", locallyChanged: false }]);
-  });
-
-  it("should_flagLocalChanges_onMissingNotes_soTheyAreNeverSilentlyTrashed", () => {
-    const plan = planReconciliation(input({
-      localFiles: [file("weg.md", 5, 99)],
-      noteIds: { "weg.md": "n1" },
-      meta: { n1: { revision: 1, mtime: 1, size: 10 } },
-    }));
-
-    expect(plan).toEqual([{ kind: "checkMissing", noteId: "n1", path: "weg.md", locallyChanged: true }]);
+    expect(plan).toEqual([{ kind: "checkMissing", noteId: "n1", path: "weg.md" }]);
   });
 
   it("should_restoreAKnownNote_whoseLocalFileVanishedWithoutARecordedDelete", () => {

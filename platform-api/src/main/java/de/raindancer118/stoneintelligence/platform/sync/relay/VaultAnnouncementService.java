@@ -97,7 +97,26 @@ public class VaultAnnouncementService {
         path.get().ifPresent(resolved -> announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_UPDATED, noteId, resolved));
     }
 
+    /**
+     * Innerhalb einer Transaktion erst nach dem Commit senden (bei Rollback gar nicht): sonst sehen
+     * Empfaenger eine Notiz, die fuer ihre eigenen Anfragen noch nicht existiert - ihr sofortiger
+     * JOIN wurde still verworfen und die Verbindung wartete bis zum Timeout.
+     */
     private void announce(VaultId vaultId, byte messageType, NoteId noteId, String path) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        sendNow(vaultId, messageType, noteId, path);
+                    }
+                });
+            return;
+        }
+        sendNow(vaultId, messageType, noteId, path);
+    }
+
+    private void sendNow(VaultId vaultId, byte messageType, NoteId noteId, String path) {
         for (var subscriber : subscribers.getOrDefault(vaultId, Set.of())) {
             try {
                 if (messageType == SyncFrame.TYPE_VAULT_NOTE_UPDATED

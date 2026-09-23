@@ -26,6 +26,8 @@ export interface NoteMeta {
   revision: number;
   mtime: number;
   size: number;
+  /** Offline erfasste lokale Aenderungen, die den Server noch nicht erreicht haben. */
+  dirty?: boolean;
 }
 
 export interface ReconcileInput {
@@ -49,7 +51,8 @@ export type ReconcileAction =
   | { kind: "upload"; path: string }
   | { kind: "sync"; noteId: string; path: string; serverRevision: number | null }
   | { kind: "renameLocal"; noteId: string; from: string; to: string }
-  | { kind: "checkMissing"; noteId: string; path: string; locallyChanged: boolean };
+  /** Zugeordnet, fehlt aber in der Server-Liste: geloescht oder nur nicht mehr sichtbar? main.ts fragt nach. */
+  | { kind: "checkMissing"; noteId: string; path: string };
 
 const FORBIDDEN_CHARACTERS = /[\\:*?"<>|\u0000-\u001f\u007f]/;
 
@@ -86,7 +89,7 @@ export function planReconciliation(input: ReconcileInput): ReconcileAction[] {
 
     if (!server) {
       if (local) {
-        actions.push({ kind: "checkMissing", noteId, path, locallyChanged: locallyChanged(local, meta) });
+        actions.push({ kind: "checkMissing", noteId, path });
       }
       continue;
     }
