@@ -1,3 +1,4 @@
+import type { AiChangeSet, AiChangeSetView, AiRevertReport } from "../ui/aiChanges";
 import { obsidianFetch } from "./obsidianFetch";
 import { withRateLimitRetry } from "./retryFetch";
 
@@ -316,6 +317,20 @@ export class NoteApiClient {
     if (!response.ok) {
       throw new HttpError(response.status, "failed to revoke invitation", await problemDetail(response));
     }
+  }
+
+  /** Die KI-Laeufe des Vaults, neueste zuerst (ADR 0008). */
+  async listAiChangeSets(vaultId: string): Promise<AiChangeSet[]> {
+    return this.json<AiChangeSet[]>(`/api/v1/vaults/${vaultId}/ai/change-sets`, "failed to list AI changes");
+  }
+
+  async aiChangeSet(vaultId: string, changeSetId: string): Promise<AiChangeSetView> {
+    return this.json<AiChangeSetView>(`/api/v1/vaults/${vaultId}/ai/change-sets/${changeSetId}`, "failed to load AI change");
+  }
+
+  /** Braucht Bearbeiten- und Loeschrecht; was seit der KI jemand geaendert hat, bleibt stehen. */
+  async revertAiChangeSet(vaultId: string, changeSetId: string): Promise<AiRevertReport> {
+    return this.json<AiRevertReport>(`/api/v1/vaults/${vaultId}/ai/change-sets/${changeSetId}/revert`, "failed to undo AI change", {});
   }
 
   private async json<T>(path: string, action: string, body?: object): Promise<T> {

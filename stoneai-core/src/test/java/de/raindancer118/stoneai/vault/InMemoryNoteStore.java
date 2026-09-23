@@ -18,6 +18,7 @@ public final class InMemoryNoteStore implements NoteStore {
     public final Map<Path, String> notes = new LinkedHashMap<>();
     public final Set<Path> refused = new HashSet<>();
     public final List<Path> writes = new ArrayList<>();
+    public final Map<Path, byte[]> attachments = new LinkedHashMap<>();
 
     @Override
     public boolean exists(Path file) {
@@ -36,6 +37,12 @@ public final class InMemoryNoteStore implements NoteStore {
         }
         writes.add(file);
         notes.put(file, content);
+    }
+
+    @Override
+    public Path writeAttachment(Path file, byte[] content) {
+        attachments.put(file, content);
+        return file;
     }
 
     @Override

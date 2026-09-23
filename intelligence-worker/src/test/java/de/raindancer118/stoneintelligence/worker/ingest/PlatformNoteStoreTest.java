@@ -87,4 +87,24 @@ class PlatformNoteStoreTest {
 
         assertThatThrownBy(() -> store.write(Path.of("/etc/passwd"), "x")).isInstanceOf(NoteWriteRefusedException.class);
     }
+
+    // The AI's own files (earlier originals) are listed like notes - but they are no text to read.
+    @Test
+    void should_leaveFilesOutOfTheIndex() throws Exception {
+        platform.storeFile("v", null, "Anhänge/Alt.pdf", new byte[]{1}, "application/pdf", 1);
+
+        assertThat(store().indexable(StoneAiConfig.defaults(), null)).isEmpty();
+    }
+
+    @Test
+    void should_storeTheOriginal_whereThePlatformPutIt() throws Exception {
+        platform.human("Anhänge/Brief.pdf", "", 1);
+        var store = store();
+
+        var stored = store.writeAttachment(root.resolve("Anhänge/Brief.pdf"), new byte[]{1, 2});
+
+        assertThat(stored).isEqualTo(root.resolve("Anhänge/Brief (2).pdf"));
+        assertThat(platform.files).containsKey("Anhänge/Brief (2).pdf");
+        assertThat(store.exists(stored)).isTrue();
+    }
 }

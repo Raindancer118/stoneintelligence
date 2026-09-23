@@ -11,5 +11,6 @@ import de.raindancer118.stoneintelligence.domain.id.NoteId;
 public record AiChange(UUID id, UUID changeSetId, NoteId noteId, String path, Kind kind,
                        String textBefore, String textAfter, Instant at) {
 
-    public enum Kind { CREATED, UPDATED }
+    /** {@code FILE_CREATED}: eine Datei (das gelesene Original); {@code textAfter} ist ihr SHA-256. */
+    public enum Kind { CREATED, UPDATED, FILE_CREATED }
 }

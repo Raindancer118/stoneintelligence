@@ -108,7 +108,8 @@ describe("KI-Bereich", () => {
       label: "Vorlesung.pdf", createdAt: "2026-09-23T10:00:00Z", revertedAt: null }]);
     vi.mocked(api.changeSet).mockResolvedValue({ changeSet: { id: "cs", service: "gemini", agent: "ki:Gemini", requestedBy: "tom",
       label: "Vorlesung.pdf", createdAt: "2026-09-23T10:00:00Z", revertedAt: null },
-      changes: [{ noteId: "n1", path: "Notizen/Photosynthese.md", kind: "CREATED", at: "2026-09-23T10:00:01Z" }] });
+      changes: [{ noteId: "n1", path: "Notizen/Photosynthese.md", kind: "CREATED", at: "2026-09-23T10:00:01Z" },
+        { noteId: "f1", path: "Anhänge/Vorlesung.pdf", kind: "FILE_CREATED", at: "2026-09-23T10:00:02Z" }] });
     vi.mocked(api.revertChangeSet).mockResolvedValue({ reverted: 1,
       conflicts: [{ path: "Notizen/Zelle.md", reason: "Seit der KI hat jemand weitergeschrieben" }] });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -116,6 +117,7 @@ describe("KI-Bereich", () => {
 
     await fireEvent.click(await screen.findByRole("button", { name: "Änderungen aus Vorlesung.pdf anzeigen" }));
     await screen.findByText("Notizen/Photosynthese.md");
+    expect(screen.getByText("Anhänge/Vorlesung.pdf").closest("li")?.textContent).toContain("Original");
     await fireEvent.click(screen.getByRole("button", { name: "Vorlesung.pdf rückgängig machen" }));
 
     expect(confirm).toHaveBeenCalled();

@@ -276,7 +276,7 @@
                   {:else}
                     <ul class="changes">
                       {#each details[set.id].changes as change (change.noteId + change.at)}
-                        <li><span class="kind">{change.kind === "CREATED" ? "Neu" : "Ergänzt"}</span> {change.path}</li>
+                        <li><span class="kind">{change.kind === "FILE_CREATED" ? "Original" : change.kind === "CREATED" ? "Neu" : "Ergänzt"}</span> {change.path}</li>
                       {/each}
                     </ul>
                   {/if}

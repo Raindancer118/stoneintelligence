@@ -125,6 +125,44 @@ class VaultIndexTest {
             assertThat(index().resolve("Kategorientheorie", 0.88)).isEmpty();
         }
 
+        // German compounds share long prefixes - "Schaden…" alone does not make two notes one.
+        @Test
+        @DisplayName("should not merge two compounds that merely start alike")
+        void should_returnEmpty_when_onlyThePrefixMatches() throws IOException {
+            note("Notizen/Schadennummer.md", "---\ntitle: Schadennummer\n---\n\nx\n");
+
+            assertThat(index().resolve("Schadenmeldung", 0.88)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("should not merge notes about different dates or numbers")
+        void should_returnEmpty_when_theNumbersDiffer() throws IOException {
+            note("Notizen/Verkehrsunfall 2025.md", "---\ntitle: Verkehrsunfall 2025\n---\n\nx\n");
+
+            assertThat(index().resolve("Verkehrsunfall 2026", 0.88)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("should treat typographic hyphens and spaces like plain ones")
+        void should_resolve_when_onlyTheHyphenDiffers() throws IOException {
+            Path file = note("Notizen/HWS-Distorsion.md", "---\ntitle: HWS-Distorsion\n---\n\nx\n");
+
+            assertThat(index().resolve("HWS\u2011Distorsion", 0.88)).contains(file);
+        }
+
+        // A later run registering a draft under a variant spelling must not rename the note.
+        @Test
+        @DisplayName("should keep the title a note already has")
+        void should_keepTheExistingTitle_when_registeredAgain() throws IOException {
+            VaultIndex index = index();
+            Path file = vault.resolve("Notizen/Gruppe.md");
+            index.register("Gruppe", java.util.List.of(), file);
+
+            index.register("Gruppen", java.util.List.of(), file);
+
+            assertThat(index.titleOf(file)).isEqualTo("Gruppe");
+        }
+
         @Test
         @DisplayName("should let a newly written note be found without a rebuild")
         void should_containNote_when_registeredAfterWriting() throws IOException {

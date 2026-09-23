@@ -266,3 +266,8 @@
 .stoneintelligence-connect-warning {
   color: var(--text-warning);
 }
+
+.stoneintelligence-ai-active {
+  border-left: 3px solid var(--interactive-accent);
+  padding-left: 0.75em;
+}

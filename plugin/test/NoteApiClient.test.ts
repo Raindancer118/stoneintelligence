@@ -378,5 +378,33 @@ describe("NoteApiClient", () => {
       await expect(clientWith(vi.fn().mockResolvedValue({ ok: false, status: 404 })).fileLimits()).resolves.toBeNull();
     });
   });
-});
+  describe("AI change sets", () => {
+    it("should_listAndRevertTheAiRuns_ofTheVault", async () => {
+      const fakeFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "cs-1", label: "Brief.pdf" }] })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ changeSet: { id: "cs-1" }, changes: [{ path: "Notizen/A.md" }] }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ reverted: 1, conflicts: [] }) });
+      const client = new NoteApiClient("https://platform.example", vi.fn().mockResolvedValue("t"), fakeFetch as unknown as typeof fetch);
 
+      expect(await client.listAiChangeSets("v")).toEqual([{ id: "cs-1", label: "Brief.pdf" }]);
+      expect((await client.aiChangeSet("v", "cs-1")).changes).toEqual([{ path: "Notizen/A.md" }]);
+      expect(await client.revertAiChangeSet("v", "cs-1")).toEqual({ reverted: 1, conflicts: [] });
+
+      expect(fakeFetch.mock.calls[0][0]).toBe("https://platform.example/api/v1/vaults/v/ai/change-sets");
+      expect(fakeFetch.mock.calls[1][0]).toBe("https://platform.example/api/v1/vaults/v/ai/change-sets/cs-1");
+      expect(fakeFetch.mock.calls[2][0]).toBe("https://platform.example/api/v1/vaults/v/ai/change-sets/cs-1/revert");
+      expect(fakeFetch.mock.calls[2][1]).toEqual(expect.objectContaining({ method: "POST", headers: expect.objectContaining({ Authorization: "Bearer t" }) }));
+    });
+
+    it("should_surfaceTheServersReason_whenTheUndoIsRefused", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({
+        ok: false, status: 422, headers: { get: () => "application/problem+json" },
+        json: async () => ({ detail: "Diese KI-Änderung wurde bereits rückgängig gemacht" }),
+        text: async () => JSON.stringify({ detail: "Diese KI-Änderung wurde bereits rückgängig gemacht" }),
+      });
+      const client = new NoteApiClient("https://platform.example", vi.fn().mockResolvedValue("t"), fakeFetch as unknown as typeof fetch);
+
+      await expect(client.revertAiChangeSet("v", "cs-1")).rejects.toThrow("bereits rückgängig");
+    });
+  });
+});

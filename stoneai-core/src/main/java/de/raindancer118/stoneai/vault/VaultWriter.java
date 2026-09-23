@@ -73,7 +73,7 @@ public final class VaultWriter {
         // Register before rendering, so a note can be linked from the very block that creates it.
         index.register(note.title(), note.aliases(), file);
         String blockId = blockId(documentHash, note);
-        String block = renderBlock(note);
+        String block = renderBlock(note, file);
 
         if (!store.exists(file)) {
             String content = renderNewNote(note, sourceLink, blockId, block);
@@ -142,19 +142,22 @@ public final class VaultWriter {
     }
 
     /** The generated text itself: definition first, then the body, then where it came from. */
-    private String renderBlock(DraftNote note) {
+    private String renderBlock(DraftNote note, Path self) {
         StringBuilder block = new StringBuilder();
         if (note.definition() != null && !note.definition().isBlank()) {
-            block.append("> ").append(note.definition().strip().replace("\n", "\n> ")).append("\n\n");
+            block.append("> ").append(resolveLinks(note.definition().strip()).replace("\n", "\n> ")).append("\n\n");
         }
-        block.append(note.body().strip());
+        block.append(resolveLinks(note.body().strip()));
 
         // Only link to notes that exist or are being written in this same run. A vault full of
         // broken links is worse than no links: Obsidian's graph fills up with phantom nodes and
         // every one of them looks like a note someone forgot to write.
         List<String> links = note.related().stream()
-                .filter(title -> index.resolve(title, config.notes().similarityThreshold()).isPresent())
-                .map(title -> "[[" + title + "]]")
+                .map(title -> index.resolve(title, config.notes().similarityThreshold()))
+                .flatMap(java.util.Optional::stream)
+                .filter(file -> !file.equals(self))
+                .distinct()
+                .map(file -> index.linkTo(file, config.vault().resolvedPath()))
                 .toList();
         if (!links.isEmpty()) {
             block.append("\n\n**Siehe auch:** ").append(String.join(", ", links));
@@ -166,6 +169,32 @@ public final class VaultWriter {
             block.append("\n\n*Quelle: ").append(sources).append('*');
         }
         return block.toString();
+    }
+
+    private static final java.util.regex.Pattern WIKILINK =
+            java.util.regex.Pattern.compile("(?<!!)\\[\\[([^\\]|#]+)(#[^\\]|]*)?(?:\\|([^\\]]*))?\\]\\]");
+
+    /**
+     * The model's own [[links]]: rewritten to the file they resolve to, or reduced to plain text
+     * when there is no such note - a dangling link is never written.
+     */
+    private String resolveLinks(String text) {
+        java.util.regex.Matcher matcher = WIKILINK.matcher(text);
+        StringBuilder resolved = new StringBuilder();
+        while (matcher.find()) {
+            String target = matcher.group(1).strip();
+            String shown = matcher.group(3) == null ? target : matcher.group(3).strip();
+            String replacement = index.resolve(target, config.notes().similarityThreshold())
+                    .map(file -> {
+                        String link = index.linkTo(file, config.vault().resolvedPath());
+                        String name = link.substring(2, link.indexOf('|') > 0 ? link.indexOf('|') : link.length() - 2);
+                        return name.equals(shown) ? "[[" + name + "]]" : "[[" + name + "|" + shown + "]]";
+                    })
+                    .orElse(shown);
+            matcher.appendReplacement(resolved, java.util.regex.Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(resolved);
+        return resolved.toString();
     }
 
     private Frontmatter frontmatterFor(DraftNote note, String sourceLink) {
@@ -188,6 +217,7 @@ public final class VaultWriter {
         if (!note.entities().isEmpty()) {
             frontmatter = frontmatter.withNested("entities", note.entities());
         }
+        // Plain titles, not links: they cost nothing while missing and let a later run connect them.
         if (!note.related().isEmpty()) {
             frontmatter = frontmatter.withList("related", note.related());
         }

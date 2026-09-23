@@ -26,6 +26,16 @@ public interface NoteStore {
      */
     void write(Path file, String content) throws IOException;
 
+    /**
+     * Stores the original of a processed document (a PDF) so the source note can link it.
+     *
+     * @return where it was stored - a hosted vault may pick another name when {@code file} is taken
+     * @throws NoteWriteRefusedException when the store will not keep it (too large, not allowed)
+     */
+    default Path writeAttachment(Path file, byte[] content) throws IOException {
+        throw new NoteWriteRefusedException("dieser Speicher nimmt keine Anhänge auf");
+    }
+
     /** Every note the index may know about; protected notes are left out. */
     List<IndexedNote> indexable(StoneAiConfig config, ProtectionPolicy protection) throws IOException;
 

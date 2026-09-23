@@ -1,0 +1,124 @@
+package de.raindancer118.stoneai.extract;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import de.raindancer118.stoneai.chunk.Chunk;
+import de.raindancer118.stoneai.config.StoneAiConfig;
+import de.raindancer118.stoneai.note.TextSimilarity;
+import de.raindancer118.stoneai.source.SourceDocument;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * Decides which notes a document should become - before any chunk is read on its own. Reading
+ * chunk by chunk, a model sees only terms; asked about the whole document it sees what the
+ * document is about: an accident with its parties, a character and her story, the central ideas
+ * of a lecture. The plan also carries the titles the vault already has, so a second letter about
+ * the same accident extends the note of the first.
+ */
+public final class TopicPlanner {
+
+    /** How much of the document the planner reads - plenty for the gist, bounded in cost. */
+    static final int TEXT_BUDGET = 24_000;
+    /** Above this many notes, only titles sharing a word with the document are offered. */
+    private static final int MAX_EXISTING = 200;
+
+    private final StoneAiConfig config;
+    private final LlmClient llm;
+
+    public TopicPlanner(StoneAiConfig config, LlmClient llm) {
+        this.config = config;
+        this.llm = llm;
+    }
+
+    /**
+     * The plan and what it cost. An answer that stays unusable after one repair round falls back
+     * to one note about the document; a provider that cannot be reached is not papered over - the
+     * exception travels up, so the job is retried instead of producing a worse result.
+     */
+    public Result plan(SourceDocument document, List<Chunk> chunks, List<String> existingTitles) {
+        String system = Prompts.planSystem(config.llm().language());
+        String user = Prompts.planUser(document.title(), relevant(existingTitles, document), excerpt(chunks));
+        LlmAnswer answer = llm.complete(Tier.SMART, system, user);
+        try {
+            return new Result(parse(answer.text()), answer.tokensUsed());
+        } catch (ExtractionException first) {
+            LlmAnswer repaired = llm.complete(Tier.SMART, system, Prompts.repairUser(answer.text(), first.getMessage()));
+            int used = answer.tokensUsed() + repaired.tokensUsed();
+            try {
+                return new Result(parse(repaired.text()), used);
+            } catch (ExtractionException second) {
+                return new Result(TopicPlan.single(document.title()), used);
+            }
+        }
+    }
+
+    public record Result(TopicPlan plan, int tokensUsed) {
+    }
+
+    private TopicPlan parse(String answer) {
+        JsonNode topics = ConceptJson.tree(answer == null ? "" : answer).get("topics");
+        if (topics == null || !topics.isArray()) {
+            throw new ExtractionException("the answer has no \"topics\" array");
+        }
+        List<TopicPlan.Topic> planned = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonNode node : topics) {
+            String title = TextSimilarity.plain(node.path("title").asText(""));
+            if (title.isEmpty() || !seen.add(TextSimilarity.normalise(title))) {
+                continue;
+            }
+            List<String> aliases = new ArrayList<>();
+            node.path("aliases").forEach(alias -> {
+                String plain = TextSimilarity.plain(alias.asText(""));
+                if (!plain.isEmpty()) {
+                    aliases.add(plain);
+                }
+            });
+            planned.add(new TopicPlan.Topic(title, node.path("kind").asText("thema").strip(),
+                    node.path("scope").asText("").strip(), aliases));
+        }
+        if (planned.isEmpty()) {
+            throw new ExtractionException("the plan names no topic");
+        }
+        int limit = Math.max(1, config.notes().maxNotesPerDocument());
+        return new TopicPlan(planned.size() > limit ? planned.subList(0, limit) : planned);
+    }
+
+    /** The document, or - when it is long - the beginning of every chunk, so no part is unseen. */
+    static String excerpt(List<Chunk> chunks) {
+        int total = chunks.stream().mapToInt(chunk -> chunk.text().length()).sum();
+        if (total <= TEXT_BUDGET) {
+            return String.join("\n\n", chunks.stream().map(Chunk::text).toList());
+        }
+        int share = Math.max(400, TEXT_BUDGET / chunks.size());
+        StringBuilder excerpt = new StringBuilder();
+        for (Chunk chunk : chunks) {
+            String text = chunk.text();
+            excerpt.append("[").append(chunk.provenance().label()).append("]\n")
+                    .append(text, 0, Math.min(share, text.length())).append(text.length() > share ? " …" : "")
+                    .append("\n\n");
+            if (excerpt.length() > TEXT_BUDGET * 1.2) {
+                break;
+            }
+        }
+        return excerpt.toString();
+    }
+
+    /** In a large vault, the titles that share a word with the document - the rest cannot match. */
+    private static List<String> relevant(List<String> titles, SourceDocument document) {
+        List<String> distinct = titles.stream().distinct().toList();
+        if (distinct.size() <= MAX_EXISTING) {
+            return distinct;
+        }
+        Set<String> words = new LinkedHashSet<>(Arrays.asList(TextSimilarity.normalise(document.fullText()).split(" ")));
+        return distinct.stream()
+                .filter(title -> Arrays.stream(TextSimilarity.normalise(title).split(" "))
+                        .anyMatch(word -> word.length() >= 4 && words.contains(word)))
+                .limit(MAX_EXISTING)
+                .toList();
+    }
+}

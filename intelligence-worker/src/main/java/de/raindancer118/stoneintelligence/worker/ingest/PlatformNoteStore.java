@@ -70,7 +70,7 @@ final class PlatformNoteStore implements NoteStore {
         try {
             if (existing == null) {
                 var noteId = platform.create(vaultId, changeSetId, path, content, level);
-                byPath.put(path, new ListedNote(noteId, path, level, "ki:"));
+                byPath.put(path, new ListedNote(noteId, path, level, "ki:", "NOTE"));
             } else if (!existing.writtenByAi()) {
                 throw new NoteWriteRefusedException("von einem Menschen angelegt - die KI verändert sie nicht");
             } else {
@@ -81,11 +81,29 @@ final class PlatformNoteStore implements NoteStore {
         }
     }
 
+    @Override
+    public Path writeAttachment(Path file, byte[] content) throws IOException {
+        var path = relative(file);
+        if (path == null) {
+            throw new NoteWriteRefusedException("liegt außerhalb des Vaults");
+        }
+        try {
+            var stored = platform.storeFile(vaultId, changeSetId, path, content, "application/pdf", level);
+            byPath.putIfAbsent(stored, new ListedNote(null, stored, level, "ki:", "FILE"));
+            return ROOT.resolve(stored);
+        } catch (PlatformRefusedException refused) {
+            throw new NoteWriteRefusedException(refused.getMessage());
+        }
+    }
+
     /** Menschen-Notizen per Dateiname (ohne sie zu lesen), KI-Notizen mit Titel und Aliassen. */
     @Override
     public List<IndexedNote> indexable(StoneAiConfig config, ProtectionPolicy protection) throws IOException {
         var notes = new ArrayList<IndexedNote>();
         for (var note : byPath.values()) {
+            if (note.isFile()) {
+                continue;
+            }
             var file = ROOT.resolve(note.path());
             notes.add(note.writtenByAi()
                 ? IndexedNote.fromContent(file, platform.read(vaultId, changeSetId, note.noteId()))

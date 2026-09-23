@@ -37,15 +37,22 @@ public final class SourceNoteWriter {
 
     /** The wikilink other notes use to point at this document's source note. */
     public String linkFor(SourceDocument document) {
-        String name = NoteFileName.forTitle(document.title());
+        String name = fileFor(document).getFileName().toString();
         return "[[" + config.vault().sourcesFolder() + "/" + name.substring(0, name.length() - 3) + "]]";
     }
 
+    /**
+     * The source note's file. Vaults written before file names kept their spaces have it as
+     * {@code DnD-Charaktere.md} - that file is used on, so a document never gets two source notes.
+     */
     public Path fileFor(SourceDocument document) {
-        return config.vault().sourcesDir().resolve(NoteFileName.forTitle(document.title()));
+        Path current = config.vault().sourcesDir().resolve(NoteFileName.forTitle(document.title()));
+        Path legacy = config.vault().sourcesDir().resolve(NoteFileName.forTitle(document.title()).replace(' ', '-'));
+        return !store.exists(current) && store.exists(legacy) ? legacy : current;
     }
 
-    public Path write(SourceDocument document, List<String> noteTitles, Path attachment) throws IOException {
+    /** @param noteLinks wikilinks to the notes of this run - already resolved to existing files */
+    public Path write(SourceDocument document, List<String> noteLinks, Path attachment) throws IOException {
         Path file = fileFor(document);
         String today = clock.get().toString();
 
@@ -76,11 +83,15 @@ public final class SourceNoteWriter {
         if (!document.skippedPages().isEmpty()) {
             block.append("> Übersprungene Seiten: ").append(document.skippedPages()).append("\n\n");
         }
+        if (!store.localFiles()) {
+            // Gehostet (StoneIntelligence): das Plugin oeffnet unter dieser Adresse den Dialog.
+            block.append("[KI-Änderungen anzeigen oder rückgängig machen](obsidian://stoneintelligence-ai-changes)\n\n");
+        }
         block.append("## Abgeleitete Notizen\n\n");
-        if (noteTitles.isEmpty()) {
+        if (noteLinks.isEmpty()) {
             block.append("_Keine._\n");
         } else {
-            noteTitles.forEach(title -> block.append("- [[").append(title).append("]]\n"));
+            noteLinks.forEach(link -> block.append("- ").append(link).append('\n'));
         }
 
         String blockId = "src-" + document.sha256().substring(0, 8);

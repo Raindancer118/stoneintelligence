@@ -35,19 +35,21 @@ public final class MocWriter {
     }
 
     public Path file() {
-        return config.vault().mocDir().resolve(NoteFileName.forTitle(INDEX_TITLE));
+        // Fixed name: vaults written before file names kept their spaces already have this file.
+        return config.vault().mocDir().resolve("StoneAI-Index.md");
     }
 
-    public Path update(SourceDocument document, List<String> noteTitles, String sourceLink)
+    /** @param noteLinks wikilinks to the notes of this run - already resolved to existing files */
+    public Path update(SourceDocument document, List<String> noteLinks, String sourceLink)
             throws IOException {
         Path file = file();
         String today = clock.get().toString();
 
         StringBuilder block = new StringBuilder();
         block.append("### ").append(sourceLink).append('\n')
-                .append("*").append(noteTitles.size()).append(" Notizen, zuletzt ")
+                .append("*").append(noteLinks.size()).append(" Notizen, zuletzt ")
                 .append(today).append("*\n\n");
-        noteTitles.forEach(title -> block.append("- [[").append(title).append("]]\n"));
+        noteLinks.forEach(link -> block.append("- ").append(link).append('\n'));
 
         String existing = store.exists(file) ? store.read(file) : "";
         Frontmatter.Document parsed = Frontmatter.of(existing);

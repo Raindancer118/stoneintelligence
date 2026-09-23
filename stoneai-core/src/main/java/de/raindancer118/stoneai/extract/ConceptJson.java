@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.raindancer118.stoneai.chunk.Provenance;
+import de.raindancer118.stoneai.note.TextSimilarity;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -29,10 +30,10 @@ final class ConceptJson {
             {
               "concepts": [
                 {
-                  "title": "kurzer, eindeutiger Begriff — der Notiztitel",
+                  "title": "der Titel des Themas aus der Liste - exakt übernommen",
                   "aliases": ["alternative Schreibweisen"],
-                  "definition": "ein bis zwei Sätze, die den Begriff definieren",
-                  "body": "Markdown: Erklärung, Beispiele, Formeln. Keine Überschrift, kein Frontmatter.",
+                  "definition": "ein bis zwei Sätze: worum es in dieser Notiz geht",
+                  "body": "Markdown: Absätze, Stichpunkte für Fakten, ### Zwischenüberschriften. Kein H1/H2, kein Frontmatter.",
                   "tags": ["oberthema/unterthema — durch echte Schlagworte ersetzen"],
                   "entities": {"begriff": ["..."], "person": ["..."], "datum": ["..."]},
                   "related": ["Titel anderer Konzepte aus demselben Text"],
@@ -40,6 +41,10 @@ final class ConceptJson {
                 }
               ]
             }""";
+
+    static JsonNode tree(String answer) {
+        return readTree(unwrap(answer));
+    }
 
     static List<ExtractedConcept> parse(String answer, Provenance provenance) {
         JsonNode root = readTree(unwrap(answer));
@@ -68,9 +73,13 @@ final class ConceptJson {
                 ? clamp(node.get("confidence").asDouble(DEFAULT_CONFIDENCE))
                 : DEFAULT_CONFIDENCE;
 
-        return new ExtractedConcept(title.strip(), strings(node, "aliases"),
+        return new ExtractedConcept(TextSimilarity.plain(title), plain(strings(node, "aliases")),
                 text(node, "definition").strip(), body.strip(), strings(node, "tags"),
-                entities(node), strings(node, "related"), confidence, provenance);
+                entities(node), plain(strings(node, "related")), confidence, provenance);
+    }
+
+    private static List<String> plain(List<String> titles) {
+        return titles.stream().map(TextSimilarity::plain).filter(title -> !title.isEmpty()).distinct().toList();
     }
 
     /**

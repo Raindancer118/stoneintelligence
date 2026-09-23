@@ -5,6 +5,7 @@ import de.raindancer118.stoneai.chunk.Chunker;
 import de.raindancer118.stoneai.config.StoneAiConfig;
 import de.raindancer118.stoneai.extract.ExtractionResult;
 import de.raindancer118.stoneai.extract.ExtractionService;
+import de.raindancer118.stoneai.extract.TopicPlanner;
 import de.raindancer118.stoneai.extract.LlmClient;
 import de.raindancer118.stoneai.ledger.LedgerEntry;
 import de.raindancer118.stoneai.ledger.ProcessingLedger;
@@ -12,12 +13,14 @@ import de.raindancer118.stoneai.note.Consolidator;
 import de.raindancer118.stoneai.note.DraftNote;
 import de.raindancer118.stoneai.protection.ProtectionDecision;
 import de.raindancer118.stoneai.protection.ProtectionPolicy;
+import de.raindancer118.stoneai.source.DocumentKind;
 import de.raindancer118.stoneai.source.DocumentLoaders;
 import de.raindancer118.stoneai.source.EmptyDocumentException;
 import de.raindancer118.stoneai.source.SourceDocument;
 import de.raindancer118.stoneai.source.UnsupportedDocumentException;
 import de.raindancer118.stoneai.vault.MocWriter;
 import de.raindancer118.stoneai.vault.NoteStore;
+import de.raindancer118.stoneai.vault.NoteWriteRefusedException;
 import de.raindancer118.stoneai.vault.SourceNoteWriter;
 import de.raindancer118.stoneai.vault.VaultIndex;
 import de.raindancer118.stoneai.vault.VaultWriter;
@@ -30,7 +33,9 @@ import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /**
@@ -118,12 +123,15 @@ public final class IngestPipeline {
         }
 
         List<Chunk> chunks = new Chunker(CHUNK_CHARS, CHUNK_OVERLAP).split(source);
-        ExtractionResult extraction = new ExtractionService(config, recorder).extract(chunks);
+        Path vaultRoot = config.vault().resolvedPath();
+        VaultIndex index = VaultIndex.build(config, ProtectionPolicy.of(config, vaultRoot), store);
+
+        // First decide what the document is about, then write exactly those notes.
+        TopicPlanner.Result planned = new TopicPlanner(config, recorder).plan(source, chunks, index.titles());
+        ExtractionResult extraction = new ExtractionService(config, recorder).extract(chunks, planned.plan());
         List<DraftNote> notes = new Consolidator(config, recorder).consolidate(extraction.concepts());
 
-        VaultIndex index = VaultIndex.build(config, ProtectionPolicy.of(config, config.vault().resolvedPath()), store);
-        VaultWriter writer = new VaultWriter(config, ProtectionPolicy.of(config,
-                config.vault().resolvedPath()), clock, index, store);
+        VaultWriter writer = new VaultWriter(config, ProtectionPolicy.of(config, vaultRoot), clock, index, store);
         if (dryRun) {
             writer = writer.dryRun();
         }
@@ -131,38 +139,41 @@ public final class IngestPipeline {
 
         SourceNoteWriter sourceWriter = new SourceNoteWriter(config, clock, dryRun, store);
         String sourceLink = sourceWriter.linkFor(source);
+        index.reserve(sourceWriter.fileFor(source));
 
         // Announce every note of this run before writing any of it, so a cross reference
         // resolves regardless of the order the notes happen to be written in.
         notes.forEach(note -> index.register(note.title(), note.aliases(), noteWriter.fileFor(note)));
 
         List<WriteResult> writes = new ArrayList<>();
-        List<String> writtenTitles = new ArrayList<>();
+        Set<String> links = new LinkedHashSet<>();
         for (DraftNote note : notes) {
             WriteResult result = noteWriter.write(note, source.sha256(), sourceLink);
             writes.add(result);
-            if (result.wrote()) {
-                writtenTitles.add(note.title());
+            if (result.wrote() || result.outcome() == WriteResult.Outcome.UNCHANGED) {
+                links.add(index.linkTo(result.file(), vaultRoot));
             }
         }
 
-        Path attachment = hosted ? null : copyAttachment(source);
+        Path attachment = hosted ? storeOriginal(source, store) : copyAttachment(source);
         if (config.notes().writeSourceNote()) {
-            sourceWriter.write(source, writtenTitles, attachment);
+            sourceWriter.write(source, List.copyOf(links), attachment);
         }
         if (config.notes().writeMoc()) {
-            new MocWriter(config, clock, dryRun, store).update(source, writtenTitles, sourceLink);
+            new MocWriter(config, clock, dryRun, store).update(source, List.copyOf(links), sourceLink);
         }
+        List<String> writtenTitles = writes.stream().filter(WriteResult::wrote)
+                .map(write -> index.titleOf(write.file())).toList();
 
         if (!dryRun && !hosted) {
             ledger.record(new LedgerEntry(source.sha256(), document.toString(), Instant.now(),
-                    writtenTitles, recorder.models(), extraction.tokensUsed()));
+                    writtenTitles, recorder.models(), extraction.tokensUsed() + planned.tokensUsed()));
             ledger.save();
             moveProcessed(document);
         }
 
         return new IngestReport(document, source.sha256(), source.title(), "", writes,
-                extraction.failures(), source.skippedPages(), extraction.tokensUsed(),
+                extraction.failures(), source.skippedPages(), extraction.tokensUsed() + planned.tokensUsed(),
                 extraction.budgetExhausted());
     }
 
@@ -179,6 +190,23 @@ public final class IngestPipeline {
     private Path protectionRootFor(Path document) {
         Path vault = config.vault().resolvedPath();
         return document.startsWith(vault) ? vault : document.getParent();
+    }
+
+    /**
+     * A hosted run keeps the uploaded original in the vault, so the source note links to the
+     * document itself. Text uploads are skipped - they would only sit beside their own notes as
+     * a duplicate. A store that refuses (too large, no room) leaves the source note without it.
+     */
+    private Path storeOriginal(SourceDocument source, NoteStore store) throws IOException {
+        if (!config.vault().copyAttachments() || dryRun || source.kind() != DocumentKind.PDF) {
+            return null;
+        }
+        Path target = config.vault().attachmentsDir().resolve(source.file().getFileName().toString());
+        try {
+            return store.writeAttachment(target, Files.readAllBytes(source.file()));
+        } catch (NoteWriteRefusedException refused) {
+            return null;
+        }
     }
 
     private Path copyAttachment(SourceDocument source) throws IOException {

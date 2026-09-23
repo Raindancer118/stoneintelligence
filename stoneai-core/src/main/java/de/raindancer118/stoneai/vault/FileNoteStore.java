@@ -28,6 +28,13 @@ final class FileNoteStore implements NoteStore {
     }
 
     @Override
+    public Path writeAttachment(Path file, byte[] content) throws IOException {
+        Files.createDirectories(file.toAbsolutePath().getParent());
+        Files.write(file, content);
+        return file;
+    }
+
+    @Override
     public void write(Path file, String content) throws IOException {
         Path parent = file.toAbsolutePath().getParent();
         Files.createDirectories(parent);

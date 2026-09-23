@@ -41,6 +41,12 @@ class IngestPipelineTest {
                "related":[],"confidence":0.9}]}
             """;
 
+
+    /** The planner's answer: the one topic the fixed extraction answer is about. */
+    static final String PLAN = """
+            {"topics":[{"title":"Äquivalenzrelation","kind":"begriff","scope":"Definition","aliases":["ÄR"]}]}
+            """;
+
     @BeforeEach
     void setUp() throws IOException {
         vault = root.resolve("vault");
@@ -213,7 +219,7 @@ class IngestPipelineTest {
 
         @Override
         public LlmAnswer complete(Tier tier, String system, String user) {
-            return new LlmAnswer(answer, 50, "fake");
+            return new LlmAnswer(system.contains("Themenplan") ? PLAN : answer, 50, "fake");
         }
 
         @Override

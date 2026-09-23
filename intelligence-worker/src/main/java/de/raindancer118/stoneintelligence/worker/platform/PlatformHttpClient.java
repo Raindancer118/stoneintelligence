@@ -98,6 +98,14 @@ public final class PlatformHttpClient implements PlatformApi {
             .header("Content-Type", "application/json"));
     }
 
+    @Override
+    public String storeFile(String vaultId, UUID changeSetId, String path, byte[] content, String contentType, int level) {
+        var url = "/internal/ai/vaults/" + vaultId + "/change-sets/" + changeSetId + "/files?path="
+            + java.net.URLEncoder.encode(path, java.nio.charset.StandardCharsets.UTF_8) + "&level=" + level;
+        return parse(send(request(url).POST(HttpRequest.BodyPublishers.ofByteArray(content)).header("Content-Type", contentType)),
+            new TypeReference<NoteRef>() { }).path();
+    }
+
     private static String notesPath(String vaultId, UUID changeSetId) {
         return "/internal/ai/vaults/" + vaultId + "/change-sets/" + changeSetId + "/notes";
     }

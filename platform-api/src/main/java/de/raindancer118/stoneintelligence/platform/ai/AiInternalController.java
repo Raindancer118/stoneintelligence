@@ -73,6 +73,21 @@ public class AiInternalController {
         return new NoteRef(written.noteId().value().toString(), written.path());
     }
 
+    /** Das gelesene Original als Datei im Vault (Rohdaten im Body, Pfad und Level als Parameter). */
+    @PostMapping("/vaults/{vaultId}/change-sets/{changeSetId}/files")
+    public NoteRef storeFile(@PathVariable String vaultId, @PathVariable UUID changeSetId,
+                             @org.springframework.web.bind.annotation.RequestParam String path,
+                             @org.springframework.web.bind.annotation.RequestParam int level,
+                             @org.springframework.web.bind.annotation.RequestHeader(value = "Content-Type", required = false) String contentType,
+                             @RequestBody byte[] content) {
+        var vId = VaultId.of(vaultId);
+        var changeSet = changeSet(vId, changeSetId);
+        access.require(vId, changeSet.requestedBy(), Permission.CREATE, path);
+        var written = ai.storeFile(vId, changeSetId, path, content,
+            contentType == null ? "application/octet-stream" : contentType, NoteLevel.of(level));
+        return new NoteRef(written.noteId().value().toString(), written.path());
+    }
+
     @PutMapping("/vaults/{vaultId}/change-sets/{changeSetId}/notes/{noteId}")
     public NoteRef updateNote(@PathVariable String vaultId, @PathVariable UUID changeSetId, @PathVariable String noteId,
                                   @RequestBody UpdateNoteRequest request) {
@@ -114,7 +129,7 @@ public class AiInternalController {
             var page = notes.list(vId, cursor, 500);
             access.readableNotes(vId, changeSet.requestedBy(), page.notes()).stream()
                 .filter(note -> ai.mayProcess(service, note.level()))
-                .map(note -> new ListedNote(note.id().value().toString(), note.path(), note.level().value(), note.createdBy()))
+                .map(note -> new ListedNote(note.id().value().toString(), note.path(), note.level().value(), note.createdBy(), note.kind().name()))
                 .forEach(listed::add);
             cursor = page.complete() ? null : page.nextCursor().orElse(null);
         } while (cursor != null);
@@ -176,7 +191,7 @@ public class AiInternalController {
     public record CreateNoteRequest(String path, String text, Integer level) { }
     public record UpdateNoteRequest(String text) { }
     public record NoteRef(String noteId, String path) { }
-    public record ListedNote(String noteId, String path, int level, String createdBy) { }
+    public record ListedNote(String noteId, String path, int level, String createdBy, String kind) { }
     public record ProgressRequest(String message, Integer percent) { }
     public record FailRequest(String error, Boolean retryable) { }
     public record JobAck(UUID jobId) { }

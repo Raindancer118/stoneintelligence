@@ -119,7 +119,6 @@ class VaultWriterTest {
             WriteResult result = writer().write(note("Menge A/B: [Teil] #1", "Inhalt."),
                     documentHash, "[[Q]]");
 
-            assertThat(result.file().getFileName().toString()).doesNotContainAnyWhitespaces();
             assertThat(result.file().getFileName().toString())
                     .doesNotContain("/").doesNotContain("[").doesNotContain("#").doesNotContain(":");
             assertThat(result.file()).exists();
