@@ -1,0 +1,10 @@
+[Unit]
+Description=StoneIntelligence: naechtliche Sicherung
+
+[Timer]
+# 03:40 - nach der Uniqua-Sicherung (03:15), damit sich beide nicht die Storage Box teilen.
+OnCalendar=*-*-* 03:40:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

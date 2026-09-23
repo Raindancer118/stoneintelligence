@@ -42,6 +42,14 @@ jobs:
             **/target/failsafe-reports/**
           if-no-files-found: ignore
 
+  # Die naechtliche Sicherung auf dorn (ops/backup) - gegen eine echte Wegwerf-Postgres.
+  backup-script-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test backup script
+        run: ops/backup/test-backup.sh
+
   plugin-build-and-test:
     runs-on: ubuntu-latest
     defaults:

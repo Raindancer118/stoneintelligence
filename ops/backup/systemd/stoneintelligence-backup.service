@@ -1,0 +1,16 @@
+[Unit]
+Description=StoneIntelligence: Datenbank und Dateien sichern
+# Ohne Storage Box und Satteltasche gar nicht erst starten; das Skript prueft es zusaetzlich.
+Requires=mnt-storagebox.mount
+After=mnt-storagebox.mount docker.service
+OnFailure=stoneintelligence-stoerung@%n.service
+
+[Service]
+Type=oneshot
+# uid 1000 - mit dieser ist die Storage Box eingehaengt; murthag ist in der docker-Gruppe.
+User=murthag
+WorkingDirectory=/home/murthag/stoneintelligence
+ExecStart=/home/murthag/stoneintelligence/ops/backup/backup.sh
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=2h
