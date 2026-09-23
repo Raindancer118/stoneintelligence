@@ -18,7 +18,7 @@ set -euo pipefail
 STACK_DIR="${BACKUP_STACK_DIR:-/home/murthag/stoneintelligence}"
 DB_ZIEL="${BACKUP_DB_ZIEL:-/mnt/storagebox/stoneintelligence/db-backups}"
 DATEIEN_QUELLE="${BACKUP_DATEIEN_QUELLE:-/mnt/storagebox/stoneintelligence/files}"
-DATEIEN_ZIEL="${BACKUP_DATEIEN_ZIEL:-/mnt/saphirassatteltasche/backups/stoneintelligence/files}"
+DATEIEN_ZIEL="${BACKUP_DATEIEN_ZIEL:-/mnt/saphirassatteltasche/stoneintelligence/files}"
 DB_NAME="${BACKUP_DB_NAME:-stoneintelligence}"
 TAEGLICH_BEHALTEN="${BACKUP_TAEGLICH:-30}"
 MONATLICH_BEHALTEN="${BACKUP_MONATLICH:-12}"
