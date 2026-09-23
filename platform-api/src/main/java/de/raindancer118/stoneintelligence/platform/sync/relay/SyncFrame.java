@@ -47,6 +47,18 @@ public record SyncFrame(byte messageType, NoteId noteId, byte[] payload) {
     public static final byte TYPE_VAULT_NOTE_CREATED = 6;
     public static final byte TYPE_VAULT_NOTE_DELETED = 7;
     public static final byte TYPE_VAULT_NOTE_RENAMED = 8;
+    /**
+     * Inhalt einer Notiz hat sich geaendert (Payload: Pfad). Nur an Verbindungen, die die Notiz
+     * NICHT gejoint haben - die bekommen das Update ohnehin selbst. Gedrosselt, s.
+     * {@code VaultAnnouncementService#announceNoteUpdated}.
+     */
+    public static final byte TYPE_VAULT_NOTE_UPDATED = 9;
+    /**
+     * Client->Server (NoteId-Feld ohne Bedeutung): diese Verbindung versteht
+     * {@link #TYPE_VAULT_NOTE_UPDATED}. Opt-in, damit aeltere Plugins, die jeden unbekannten Typ
+     * als Yjs-Update behandeln, ihn nie bekommen.
+     */
+    public static final byte TYPE_SUBSCRIBE_CONTENT_UPDATES = 10;
 
     public static final int NOTE_ID_LENGTH = 36;
     private static final int HEADER_LENGTH = 1 + NOTE_ID_LENGTH;

@@ -14,6 +14,8 @@ class RecordingVaultSubscriber implements VaultSubscriber {
     private final Set<String> readablePaths;
     private final boolean failOnSend;
     final List<Received> received = new ArrayList<>();
+    final Set<NoteId> joined = new java.util.HashSet<>();
+    boolean contentUpdates = true;
 
     RecordingVaultSubscriber(String id) {
         this(id, null, false);
@@ -37,6 +39,16 @@ class RecordingVaultSubscriber implements VaultSubscriber {
     @Override
     public String id() {
         return id;
+    }
+
+    @Override
+    public boolean wantsContentUpdates() {
+        return contentUpdates;
+    }
+
+    @Override
+    public boolean hasJoined(NoteId noteId) {
+        return joined.contains(noteId);
     }
 
     @Override

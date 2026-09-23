@@ -71,6 +71,8 @@ class VaultSyncSimulationIT {
     private static final byte MESSAGE_TYPE_VAULT_NOTE_CREATED = 6;
     private static final byte MESSAGE_TYPE_VAULT_NOTE_DELETED = 7;
     private static final byte MESSAGE_TYPE_VAULT_NOTE_RENAMED = 8;
+    private static final byte MESSAGE_TYPE_VAULT_NOTE_UPDATED = 9;
+    private static final byte MESSAGE_TYPE_SUBSCRIBE_CONTENT_UPDATES = 10;
     private static final int NOTE_ID_LENGTH = 36;
 
     @DynamicPropertySource
@@ -602,6 +604,35 @@ class VaultSyncSimulationIT {
         deviceA.session.sendMessage(new BinaryMessage(
             frame(MESSAGE_TYPE_DOC_UPDATE, survivingNoteId, "ueberlebt-v2".getBytes(StandardCharsets.UTF_8))));
         assertThat(deviceB.awaitCatchup(survivingNoteId).payload()).isEqualTo("ueberlebt-v2".getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Inhaltsaenderung einer Notiz, die Geraet B NICHT offen hat: B erfaehrt sofort davon (statt
+     * erst beim naechsten periodischen Abgleich) - aber nur, wenn es das ausdruecklich abonniert.
+     */
+    @Test
+    void should_announceContentChanges_toSubscribedDevicesThatHaveTheNoteClosed() throws Exception {
+        var vaultId = createVault("judy", "content-announcements");
+        var noteId = createNote("judy", vaultId, "Protokoll.md");
+        var editor = new Device("judy");
+        var subscribed = new Device("judy");
+        var legacy = new Device("judy");
+        editor.connect(vaultId);
+        subscribed.connect(vaultId);
+        legacy.connect(vaultId);
+        subscribed.session.sendMessage(new BinaryMessage(
+            frame(MESSAGE_TYPE_SUBSCRIBE_CONTENT_UPDATES, "00000000-0000-0000-0000-000000000000", new byte[0])));
+        editor.join(noteId);
+        // JOIN und Abo werden auf verschiedenen Verbindungen verarbeitet - kurz Zeit geben.
+        Thread.sleep(300);
+
+        editor.session.sendMessage(new BinaryMessage(frame(MESSAGE_TYPE_DOC_UPDATE, noteId, "neu".getBytes(StandardCharsets.UTF_8))));
+
+        var announcement = subscribed.awaitCatchup(noteId);
+        assertThat(announcement.type()).isEqualTo(MESSAGE_TYPE_VAULT_NOTE_UPDATED);
+        assertThat(announcement.payload()).isEqualTo("Protokoll.md".getBytes(StandardCharsets.UTF_8));
+        var legacyFrames = legacy.handler.byNote.computeIfAbsent(noteId, id -> new LinkedBlockingQueue<>());
+        assertThat(legacyFrames.poll(1, TimeUnit.SECONDS)).as("nicht abonniert -> keine Ankuendigung").isNull();
     }
 
     @Test

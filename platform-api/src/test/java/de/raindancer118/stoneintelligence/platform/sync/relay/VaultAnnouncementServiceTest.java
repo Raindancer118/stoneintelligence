@@ -124,4 +124,73 @@ class VaultAnnouncementServiceTest {
             assertThat(announcements.subscriberCount(vaultId)).isZero();
         }
     }
+
+    /**
+     * Inhaltsaenderungen: Geraete, die die Notiz NICHT offen haben, erfahren davon sofort statt
+     * erst beim naechsten periodischen Abgleich. Gedrosselt, weil jeder Tastendruck ein Update ist.
+     */
+    @Nested
+    class ContentUpdates {
+
+        private long now = 0;
+        private final VaultAnnouncementService throttled = new VaultAnnouncementService(() -> now);
+
+        @Test
+        void should_announceUpdates_toSubscribersThatHaveNotJoinedTheNote() {
+            var closed = new RecordingVaultSubscriber("closed");
+            var open = new RecordingVaultSubscriber("open");
+            open.joined.add(noteId);
+            throttled.subscribe(vaultId, closed);
+            throttled.subscribe(vaultId, open);
+
+            throttled.announceNoteUpdated(vaultId, noteId, () -> java.util.Optional.of("a.md"));
+
+            assertThat(closed.received).containsExactly(
+                new RecordingVaultSubscriber.Received(SyncFrame.TYPE_VAULT_NOTE_UPDATED, noteId, "a.md"));
+            // Wer gejoint hat, bekommt das Update selbst - eine zusaetzliche Ankuendigung wuerde
+            // aeltere Plugins, die Typ 9 nicht kennen, als vermeintliches Yjs-Update verwirren.
+            assertThat(open.received).isEmpty();
+        }
+
+        @Test
+        void should_announceAtMostOncePerSecond_perNote() {
+            var subscriber = new RecordingVaultSubscriber("s");
+            throttled.subscribe(vaultId, subscriber);
+            var lookups = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.function.Supplier<java.util.Optional<String>> path = () -> {
+                lookups.incrementAndGet();
+                return java.util.Optional.of("a.md");
+            };
+
+            throttled.announceNoteUpdated(vaultId, noteId, path);
+            now += 400_000_000L;
+            throttled.announceNoteUpdated(vaultId, noteId, path);
+            now += 700_000_000L;
+            throttled.announceNoteUpdated(vaultId, noteId, path);
+
+            assertThat(subscriber.received).hasSize(2);
+            assertThat(lookups).as("Pfad-Lookup (DB) nur, wenn wirklich angekuendigt wird").hasValue(2);
+        }
+
+        @Test
+        void should_notAnnounceUpdates_toConnectionsThatDidNotOptIn() {
+            var legacyPlugin = new RecordingVaultSubscriber("legacy");
+            legacyPlugin.contentUpdates = false;
+            throttled.subscribe(vaultId, legacyPlugin);
+
+            throttled.announceNoteUpdated(vaultId, noteId, () -> java.util.Optional.of("a.md"));
+
+            assertThat(legacyPlugin.received).isEmpty();
+        }
+
+        @Test
+        void should_respectReadPermissions_forUpdates() {
+            var reader = RecordingVaultSubscriber.readingOnly("reader", "sichtbar.md");
+            throttled.subscribe(vaultId, reader);
+
+            throttled.announceNoteUpdated(vaultId, noteId, () -> java.util.Optional.of("geheim.md"));
+
+            assertThat(reader.received).isEmpty();
+        }
+    }
 }
