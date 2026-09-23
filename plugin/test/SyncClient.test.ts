@@ -296,6 +296,70 @@ describe("SyncClient", () => {
     });
   });
 
+  describe("repair resend sendet nur, was dem Server fehlt", () => {
+    function docUpdatesSent(socket: FakeWebSocket): Uint8Array[] {
+      return socket.sent.filter((raw) => messageType(raw) === MESSAGE_TYPE_DOC_UPDATE)
+        .map((raw) => new Uint8Array(raw).subarray(1));
+    }
+
+    function serverDocWith(text: string): Y.Doc {
+      const doc = new Y.Doc();
+      doc.getText("content").insert(0, text);
+      return doc;
+    }
+
+    // Jeder Resend wird serverseitig als neues Update angehaengt und erhoeht die Revision. Ein
+    // Resend ohne neuen Inhalt liess zwei Geraete sich bei jedem Abgleich gegenseitig anstossen.
+    it("should_sendNothing_when_theServerAlreadyHasEverything", () => {
+      const server = serverDocWith("gleich");
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("", () => socket);
+      Y.applyUpdate(client.doc, Y.encodeStateAsUpdate(server));
+      client.awareness.setLocalState(null);
+      client.connect();
+      socket.onopen?.({} as Event);
+
+      socket.onmessage?.({ data: framed(MESSAGE_TYPE_DOC_UPDATE, Y.encodeStateAsUpdate(server)) } as MessageEvent);
+      socket.onmessage?.({ data: framed(MESSAGE_TYPE_CATCHUP_COMPLETE, new Uint8Array(0)) } as MessageEvent);
+
+      expect(docUpdatesSent(socket)).toHaveLength(0);
+    });
+
+    it("should_sendOnlyTheMissingLocalChange_when_editedOffline", () => {
+      const server = serverDocWith("Basis");
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("", () => socket);
+      Y.applyUpdate(client.doc, Y.encodeStateAsUpdate(server));
+      client.doc.getText("content").insert(5, " + offline");
+      client.connect();
+      socket.onopen?.({} as Event);
+
+      socket.onmessage?.({ data: framed(MESSAGE_TYPE_DOC_UPDATE, Y.encodeStateAsUpdate(server)) } as MessageEvent);
+      socket.onmessage?.({ data: framed(MESSAGE_TYPE_CATCHUP_COMPLETE, new Uint8Array(0)) } as MessageEvent);
+
+      const sent = docUpdatesSent(socket);
+      expect(sent).toHaveLength(1);
+      sent.forEach((update) => Y.applyUpdate(server, update));
+      expect(server.getText("content").toString()).toBe("Basis + offline");
+    });
+
+    it("should_resendAnOfflineDeletion_eventhough_itCreatesNoNewStructs", () => {
+      const server = serverDocWith("abc def");
+      const socket = new FakeWebSocket();
+      const client = new SyncClient("", () => socket);
+      Y.applyUpdate(client.doc, Y.encodeStateAsUpdate(server));
+      client.doc.getText("content").delete(3, 4);
+      client.connect();
+      socket.onopen?.({} as Event);
+
+      socket.onmessage?.({ data: framed(MESSAGE_TYPE_DOC_UPDATE, Y.encodeStateAsUpdate(server)) } as MessageEvent);
+      socket.onmessage?.({ data: framed(MESSAGE_TYPE_CATCHUP_COMPLETE, new Uint8Array(0)) } as MessageEvent);
+
+      docUpdatesSent(socket).forEach((update) => Y.applyUpdate(server, update));
+      expect(server.getText("content").toString()).toBe("abc");
+    });
+  });
+
   describe("status tracking", () => {
     it("should_startAsConnecting_then_becomeConnected_when_socketOpens", () => {
       const socket = new FakeWebSocket();

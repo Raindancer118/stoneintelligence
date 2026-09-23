@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { NoteApiClient } from "../src/sync/NoteApiClient";
+import { HttpError, NoteApiClient } from "../src/sync/NoteApiClient";
 
 describe("NoteApiClient", () => {
   describe("createVault", () => {
@@ -182,6 +182,64 @@ describe("NoteApiClient", () => {
       const client = new NoteApiClient("https://platform.example", getAccessToken, fakeFetch as unknown as typeof fetch);
 
       await expect(client.deleteNote("vault-1", "note-1", "op-123")).rejects.toThrow("403");
+    });
+  });
+
+  describe("Fehler mit Statuscode", () => {
+    // Der Abgleich muss 409 (Pfad existiert schon) und 403 (keine Rechte) unterscheiden koennen,
+    // statt aus einer Fehlermeldung zu raten.
+    it("should_exposeTheHttpStatus_when_creatingANoteFails", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status: 409 });
+      const client = new NoteApiClient("https://platform.example", async () => "t", fakeFetch as unknown as typeof fetch);
+
+      const error = await client.createNote("v", "a.md", 1).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(HttpError);
+      expect((error as HttpError).status).toBe(409);
+    });
+  });
+
+  describe("listVaults", () => {
+    it("should_returnTheVaultsTheUserCanAccess", async () => {
+      const vaults = [{ id: "v1", name: "Team", createdAt: "2026-09-01T00:00:00Z" }];
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => vaults });
+      const client = new NoteApiClient("https://platform.example", async () => "tok", fakeFetch as unknown as typeof fetch);
+
+      expect(await client.listVaults()).toEqual(vaults);
+      expect(fakeFetch).toHaveBeenCalledWith(
+        "https://platform.example/api/v1/vaults",
+        expect.objectContaining({ headers: { Authorization: "Bearer tok" } }),
+      );
+    });
+  });
+
+  describe("noteStatus", () => {
+    it.each([
+      [200, "exists"],
+      [404, "deleted"],
+      [403, "forbidden"],
+    ])("should_map_HTTP_%i_to_%s", async (status, expected) => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: status === 200, status });
+      const client = new NoteApiClient("https://platform.example", async () => "t", fakeFetch as unknown as typeof fetch);
+
+      expect(await client.noteStatus("v", "n")).toBe(expected);
+      expect(fakeFetch).toHaveBeenCalledWith("https://platform.example/api/v1/vaults/v/notes/n", expect.anything());
+    });
+
+    it("should_throw_on_unexpectedStatus_insteadOfGuessing", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+      const client = new NoteApiClient("https://platform.example", async () => "t", fakeFetch as unknown as typeof fetch);
+
+      await expect(client.noteStatus("v", "n")).rejects.toBeInstanceOf(HttpError);
+    });
+  });
+
+  describe("deleteNote", () => {
+    it("should_treatAnAlreadyDeletedNote_asSuccess", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+      const client = new NoteApiClient("https://platform.example", async () => "t", fakeFetch as unknown as typeof fetch);
+
+      await expect(client.deleteNote("v", "n", "op")).resolves.toBeUndefined();
     });
   });
 });
