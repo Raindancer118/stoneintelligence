@@ -32,6 +32,7 @@ import { SyncActivity } from "./sync/SyncActivity";
 import { SyncClient } from "./sync/SyncClient";
 import { TicketClient } from "./sync/TicketClient";
 import { DeletionConflictModal } from "./ui/DeletionConflictModal";
+import { InviteModal } from "./ui/InviteModal";
 import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
 import { presentStatus, type StatusPresentation } from "./ui/statusPresentation";
 import { type Collaborator, type LiveNote, StatusView, VIEW_TYPE_STATUS } from "./ui/StatusView";
@@ -178,6 +179,8 @@ export default class StoneIntelligencePlugin extends Plugin {
   private settingsSaveTimer: number | null = null;
   /** Loeschkonflikte werden nacheinander gefragt, nie mehrere Dialoge uebereinander. */
   private decisionQueue: Promise<void> = Promise.resolve();
+  /** Darf diese Person im aktuellen Vault Mitglieder verwalten (MANAGE)? Steuert, wo "Einladen" erscheint. */
+  private manageAllowed = false;
   private readonly decisionsAsked = new Set<string>();
 
   private statusBarEl!: HTMLElement;
@@ -269,6 +272,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.requestPass();
     void this.syncOpenEditorBindings();
     void this.refreshVaultName();
+    void this.refreshPermissions();
   }
 
   private stopSyncEngine(): void {
@@ -442,6 +446,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.stopSyncEngine();
     this.settings.vaultId = vault.id;
     this.settings.vaultName = vault.name;
+    this.manageAllowed = false;
     this.vaultState();
     await this.saveSettings();
     this.startSyncEngine();
@@ -450,6 +455,29 @@ export default class StoneIntelligencePlugin extends Plugin {
   async createVault(name: string): Promise<void> {
     const vaultId = await this.noteApiClient.createVault(name);
     await this.selectVault({ id: vaultId, name, createdAt: new Date().toISOString() });
+  }
+
+  private async refreshPermissions(): Promise<void> {
+    try {
+      const allowed = (await this.noteApiClient.permissions(this.settings.vaultId)).includes("MANAGE");
+      if (allowed !== this.manageAllowed) {
+        this.manageAllowed = allowed;
+        this.activity.touch();
+      }
+    } catch {
+      // Nur fuer die Anzeige des Einladen-Knopfs - der Server prueft ohnehin selbst.
+    }
+  }
+
+  canInvite(): boolean {
+    return this.isReady() && this.manageAllowed;
+  }
+
+  openInvite(): void {
+    if (!this.settings.vaultId) {
+      return;
+    }
+    new InviteModal(this.app, this.noteApiClient, this.settings.vaultId, this.vaultName() ?? "Vault").open();
   }
 
   private async refreshVaultName(): Promise<void> {
@@ -648,6 +676,17 @@ export default class StoneIntelligencePlugin extends Plugin {
           return this.isLoggedIn();
         }
         void this.logout();
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "stoneintelligence-invite",
+      name: "Mitbearbeiter einladen",
+      checkCallback: (checking) => {
+        if (checking) {
+          return this.canInvite();
+        }
+        this.openInvite();
         return true;
       },
     });

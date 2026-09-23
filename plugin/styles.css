@@ -246,3 +246,18 @@
   font-size: var(--font-ui-small);
   padding: var(--size-4-2) 0;
 }
+
+/* Einladen */
+.stoneintelligence-invite-message {
+  color: var(--text-success);
+}
+
+.stoneintelligence-invite-error {
+  color: var(--text-error);
+}
+
+.stoneintelligence-invite-heading {
+  margin: var(--size-4-4) 0 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}

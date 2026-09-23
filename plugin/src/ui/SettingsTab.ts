@@ -23,6 +23,8 @@ export interface SettingsHost {
   saveSettings(): Promise<void>;
   connectionConfigJson(): string;
   applyConnectionConfig(json: string): Promise<void>;
+  canInvite(): boolean;
+  openInvite(): void;
 }
 
 /**
@@ -169,10 +171,20 @@ export class StoneIntelligenceSettingTab extends PluginSettingTab {
       );
     });
 
+    if (settings.vaultId) {
+      new Setting(containerEl)
+        .setName("Mitbearbeiter")
+        .setDesc(this.host.canInvite()
+          ? "Bestehende Konten hinzufügen oder Personen per E-Mail einladen."
+          : "Nur wer diesen Vault verwaltet, kann Personen einladen.")
+        .addButton((button) => button.setButtonText("Einladen…").setDisabled(!this.host.canInvite())
+          .onClick(() => this.host.openInvite()));
+    }
+
     let newVaultName = "";
     new Setting(containerEl)
       .setName("Neuen Vault anlegen")
-      .setDesc("Du bekommst automatisch volle Rechte darin und kannst im Web-Dashboard weitere Personen einladen.")
+      .setDesc("Du bekommst automatisch volle Rechte darin und kannst danach Mitbearbeiter einladen.")
       .addText((text) => text.setPlaceholder("Name").onChange((value) => (newVaultName = value)))
       .addButton((button) =>
         button.setButtonText("Anlegen").onClick(async () => {

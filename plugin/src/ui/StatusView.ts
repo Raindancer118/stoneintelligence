@@ -28,6 +28,8 @@ export interface StatusViewHost {
   isPaused(): boolean;
   openFile(path: string): void;
   openSettings(): void;
+  canInvite(): boolean;
+  openInvite(): void;
 }
 
 const ACTIVITY_TEXT: Record<ActivityKind, { icon: string; text: string }> = {
@@ -135,6 +137,9 @@ export class StatusView extends ItemView {
       this.button(actions, "Fortsetzen", "play", () => this.host.setPaused(false));
     } else {
       this.button(actions, "Pausieren", "pause", () => this.host.setPaused(true));
+    }
+    if (this.host.canInvite()) {
+      this.button(actions, "Einladen", "user-plus", () => this.host.openInvite());
     }
   }
 

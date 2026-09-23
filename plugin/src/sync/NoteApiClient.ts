@@ -18,6 +18,11 @@ export interface VaultSummary {
   createdAt: string;
 }
 
+export type InviteAccess = "EDIT" | "READ";
+export interface PersonSuggestion { username: string; name: string; maskedEmail: string; alreadyMember: boolean; }
+export interface InviteResult { status: "ADDED" | "INVITED" | "ALREADY_MEMBER"; displayName: string; }
+export interface PendingInvitation { id: string; email: string; access: InviteAccess; expiresAt: string; }
+
 /** Ob eine (in der Liste fehlende) Notiz geloescht ist oder nur nicht mehr sichtbar. */
 export type NoteStatus = "exists" | "deleted" | "forbidden";
 
@@ -26,8 +31,10 @@ export class HttpError extends Error {
   constructor(
     readonly status: number,
     action: string,
+    /** Fuer Menschen geschriebene Begruendung des Servers (HTTP 422), falls vorhanden. */
+    detail?: string,
   ) {
-    super(`${action}: HTTP ${status}`);
+    super(detail ?? `${action}: HTTP ${status}`);
     this.name = "HttpError";
   }
 }
@@ -162,5 +169,61 @@ export class NoteApiClient {
       return "forbidden";
     }
     throw new HttpError(response.status, "failed to read note");
+  }
+
+  async permissions(vaultId: string): Promise<string[]> {
+    return this.json<string[]>(`/api/v1/vaults/${vaultId}/permissions`, "failed to read permissions");
+  }
+
+  async searchPeople(vaultId: string, query: string): Promise<PersonSuggestion[]> {
+    return this.json<PersonSuggestion[]>(`/api/v1/vaults/${vaultId}/people?${new URLSearchParams({ q: query })}`, "failed to search people");
+  }
+
+  async addPerson(vaultId: string, username: string, access: InviteAccess): Promise<InviteResult> {
+    return this.json<InviteResult>(`/api/v1/vaults/${vaultId}/members`, "failed to add member", { username, access });
+  }
+
+  async inviteByEmail(vaultId: string, email: string, access: InviteAccess): Promise<InviteResult> {
+    return this.json<InviteResult>(`/api/v1/vaults/${vaultId}/invitations`, "failed to invite", { email, access });
+  }
+
+  async listInvitations(vaultId: string): Promise<PendingInvitation[]> {
+    return this.json<PendingInvitation[]>(`/api/v1/vaults/${vaultId}/invitations`, "failed to list invitations");
+  }
+
+  async revokeInvitation(vaultId: string, invitationId: string): Promise<void> {
+    const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/invitations/${invitationId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${await this.getAccessToken()}` },
+    });
+    if (!response.ok) {
+      throw new HttpError(response.status, "failed to revoke invitation", await problemDetail(response));
+    }
+  }
+
+  private async json<T>(path: string, action: string, body?: object): Promise<T> {
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        Authorization: `Bearer ${await this.getAccessToken()}`,
+      },
+    });
+    if (!response.ok) {
+      throw new HttpError(response.status, action, await problemDetail(response));
+    }
+    return (await response.json()) as T;
+  }
+}
+
+async function problemDetail(response: Response): Promise<string | undefined> {
+  if (response.status !== 422) {
+    return undefined;
+  }
+  try {
+    const body = (await response.json()) as { detail?: unknown };
+    return typeof body.detail === "string" ? body.detail : undefined;
+  } catch {
+    return undefined;
   }
 }
