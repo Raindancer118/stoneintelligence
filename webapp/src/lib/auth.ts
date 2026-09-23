@@ -30,11 +30,39 @@ export async function completeLogin(): Promise<User> {
   return userManager.signinRedirectCallback();
 }
 
-/** Faellt bewusst auf "nicht angemeldet" zurueck statt die ganze App mit einem Fehler zu blockieren. */
+/** Rechtzeitig vor Ablauf erneuern, damit keine Anfrage mit einem gerade sterbenden Token rausgeht. */
+const RENEW_BEFORE_SECONDS = 60;
+let renewal: Promise<User | null> | null = null;
+
+/**
+ * Erneuert das Access-Token mit dem Refresh-Token (`signinSilent` nutzt bei vorhandenem
+ * Refresh-Token den refresh_token-Grant, kein Iframe). Parallele Aufrufe teilen sich eine
+ * Erneuerung - Authentik rotiert Refresh-Tokens, ein zweiter gleichzeitiger Versuch wuerde am
+ * bereits verbrauchten Token scheitern.
+ */
+function renew(): Promise<User | null> {
+  renewal ??= userManager.signinSilent()
+    .then((user) => (user && !user.expired ? user : null), () => null)
+    .finally(() => { renewal = null; });
+  return renewal;
+}
+
+/**
+ * Gueltige Sitzung oder null. Ein abgelaufenes (oder gleich ablaufendes) Access-Token wird mit dem
+ * Refresh-Token still erneuert - vorher endete jede Sitzung nach der Lebensdauer des Access-Tokens.
+ * Faellt bewusst auf "nicht angemeldet" zurueck statt die ganze App mit einem Fehler zu blockieren.
+ */
 export async function getUser(): Promise<User | null> {
   try {
     const user = await userManager.getUser();
-    return user && !user.expired ? user : null;
+    if (!user) {
+      return null;
+    }
+    const expiringSoon = user.expired || (user.expires_in !== undefined && user.expires_in < RENEW_BEFORE_SECONDS);
+    if (!expiringSoon) {
+      return user;
+    }
+    return user.refresh_token ? await renew() : (user.expired ? null : user);
   } catch {
     return null;
   }
@@ -45,8 +73,8 @@ export async function logout(): Promise<void> {
 }
 
 export async function getAccessToken(): Promise<string> {
-  const user = await userManager.getUser();
-  if (!user || user.expired) {
+  const user = await getUser();
+  if (!user) {
     throw new Error("nicht angemeldet");
   }
   return user.access_token;

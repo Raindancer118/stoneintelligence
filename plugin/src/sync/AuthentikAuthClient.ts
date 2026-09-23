@@ -98,7 +98,9 @@ export class AuthentikAuthClient {
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", clientId);
     url.searchParams.set("redirect_uri", redirectUri);
-    url.searchParams.set("scope", "openid profile email");
+    // offline_access: nur damit stellt Authentik einen Refresh-Token aus. Ohne ihn endete jede
+    // Anmeldung nach der Lebensdauer des Access-Tokens (1 h) mit "Anmeldung abgelaufen".
+    url.searchParams.set("scope", "openid profile email offline_access");
     url.searchParams.set("code_challenge", codeChallenge);
     url.searchParams.set("code_challenge_method", "S256");
     url.searchParams.set("state", state);

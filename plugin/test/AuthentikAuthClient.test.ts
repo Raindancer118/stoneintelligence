@@ -58,6 +58,18 @@ describe("AuthentikAuthClient", () => {
       expect(parsed.searchParams.get("code_challenge_method")).toBe("S256");
       expect(parsed.searchParams.get("state")).toBe("the-state");
     });
+
+    // Ohne offline_access stellt Authentik keinen Refresh-Token aus: das Access-Token laeuft nach
+    // einer Stunde ab und das Plugin meldet "Anmeldung abgelaufen" (live bei Tom beobachtet).
+    it("should_requestOfflineAccess_soTheLoginOutlivesTheAccessToken", () => {
+      const url = AuthentikAuthClient.buildAuthorizationUrl(
+        "https://portal.tstieh.de/application/o/authorize/", "c", TEST_REDIRECT_URI, "ch", "st",
+      );
+
+      expect(new URL(url).searchParams.get("scope")?.split(" ")).toEqual(
+        expect.arrayContaining(["openid", "profile", "email", "offline_access"]),
+      );
+    });
   });
 
   describe("discover", () => {
