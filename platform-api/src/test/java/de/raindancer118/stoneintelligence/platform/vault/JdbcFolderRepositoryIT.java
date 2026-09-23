@@ -1,7 +1,6 @@
 package de.raindancer118.stoneintelligence.platform.vault;
 
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
-import de.raindancer118.stoneintelligence.domain.notelevel.NoteLevel;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -59,9 +58,11 @@ class JdbcFolderRepositoryIT extends FolderRepositoryContractTest {
                 .schemas("platform").locations("classpath:db/migration/platform");
             flyway.target("8").load().migrate();
             var vault = new JdbcVaultRepository(client).create("Bestand").id();
-            var notes = new JdbcNoteRepository(client);
-            notes.create(vault, "Studium/Mathe/Analysis.md", NoteLevel.of(1), "tom");
-            notes.create(vault, "Wurzel.md", NoteLevel.of(1), "tom");
+            // Mit dem Schema von damals (V8), nicht mit dem heutigen Repository.
+            for (var path : java.util.List.of("Studium/Mathe/Analysis.md", "Wurzel.md")) {
+                client.sql("INSERT INTO platform.notes (vault_id, path, note_level, created_by) VALUES (:vault, :path, 1, 'tom')")
+                    .param("vault", vault.value()).param("path", path).update();
+            }
 
             flyway.target("latest").load().migrate();
 

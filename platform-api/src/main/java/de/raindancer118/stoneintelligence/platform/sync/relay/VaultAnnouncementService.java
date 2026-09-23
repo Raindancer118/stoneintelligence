@@ -6,6 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import de.raindancer118.stoneintelligence.domain.id.NoteId;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
+import de.raindancer118.stoneintelligence.platform.vault.NoteKind;
 import org.springframework.stereotype.Component;
 
 /**
@@ -55,21 +56,39 @@ public class VaultAnnouncementService {
     }
 
     public void announceNoteCreated(VaultId vaultId, NoteId noteId, String path) {
-        announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_CREATED, noteId, path);
+        announceNoteCreated(vaultId, noteId, path, NoteKind.NOTE);
     }
 
     public void announceNoteDeleted(VaultId vaultId, NoteId noteId, String path) {
-        lastUpdateAnnouncement.remove(noteId);
-        announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_DELETED, noteId, path);
+        announceNoteDeleted(vaultId, noteId, path, NoteKind.NOTE);
     }
 
     public void announceNoteRenamed(VaultId vaultId, NoteId noteId, String newPath) {
-        announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_RENAMED, noteId, newPath);
+        announceNoteRenamed(vaultId, noteId, newPath, NoteKind.NOTE);
+    }
+
+    /** Fuer Dateien (ADR 0009) nur an Verbindungen, die Dateien kennen - dieselben Frame-Typen wie fuer Notizen. */
+    public void announceNoteCreated(VaultId vaultId, NoteId noteId, String path, NoteKind kind) {
+        announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_CREATED, noteId, path, kind);
+    }
+
+    public void announceNoteDeleted(VaultId vaultId, NoteId noteId, String path, NoteKind kind) {
+        lastUpdateAnnouncement.remove(noteId);
+        announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_DELETED, noteId, path, kind);
+    }
+
+    public void announceNoteRenamed(VaultId vaultId, NoteId noteId, String newPath, NoteKind kind) {
+        announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_RENAMED, noteId, newPath, kind);
+    }
+
+    /** Neue Fassung einer Datei: sofort (ein Upload ist kein Tipp-Schwall) und nur an Datei-kundige Verbindungen. */
+    public void announceFileUpdated(VaultId vaultId, NoteId noteId, String path) {
+        announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_UPDATED, noteId, path, NoteKind.FILE);
     }
 
     /** Ordner angelegt, geloescht oder verschoben - nur an Verbindungen, die Ordner verstehen. */
     public void announceFoldersChanged(VaultId vaultId, String path) {
-        announce(vaultId, SyncFrame.TYPE_VAULT_FOLDERS_CHANGED, SyncFrame.NO_NOTE, path);
+        announce(vaultId, SyncFrame.TYPE_VAULT_FOLDERS_CHANGED, SyncFrame.NO_NOTE, path, NoteKind.NOTE);
     }
 
     /**
@@ -99,7 +118,7 @@ public class VaultAnnouncementService {
             return;
         }
         lastUpdateAnnouncement.put(noteId, now);
-        path.get().ifPresent(resolved -> announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_UPDATED, noteId, resolved));
+        path.get().ifPresent(resolved -> announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_UPDATED, noteId, resolved, NoteKind.NOTE));
     }
 
     /**
@@ -107,24 +126,27 @@ public class VaultAnnouncementService {
      * Empfaenger eine Notiz, die fuer ihre eigenen Anfragen noch nicht existiert - ihr sofortiger
      * JOIN wurde still verworfen und die Verbindung wartete bis zum Timeout.
      */
-    private void announce(VaultId vaultId, byte messageType, NoteId noteId, String path) {
+    private void announce(VaultId vaultId, byte messageType, NoteId noteId, String path, NoteKind kind) {
         if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
             org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
                 new org.springframework.transaction.support.TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
-                        sendNow(vaultId, messageType, noteId, path);
+                        sendNow(vaultId, messageType, noteId, path, kind);
                     }
                 });
             return;
         }
-        sendNow(vaultId, messageType, noteId, path);
+        sendNow(vaultId, messageType, noteId, path, kind);
     }
 
-    private void sendNow(VaultId vaultId, byte messageType, NoteId noteId, String path) {
+    private void sendNow(VaultId vaultId, byte messageType, NoteId noteId, String path, NoteKind kind) {
         for (var subscriber : subscribers.getOrDefault(vaultId, Set.of())) {
             try {
-                if (messageType == SyncFrame.TYPE_VAULT_NOTE_UPDATED
+                if (kind == NoteKind.FILE && !subscriber.wantsFileEvents()) {
+                    continue;
+                }
+                if (kind == NoteKind.NOTE && messageType == SyncFrame.TYPE_VAULT_NOTE_UPDATED
                         && (!subscriber.wantsContentUpdates() || subscriber.hasJoined(noteId))) {
                     continue;
                 }

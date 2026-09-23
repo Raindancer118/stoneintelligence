@@ -11,7 +11,11 @@ import de.raindancer118.stoneintelligence.domain.notelevel.NoteLevel;
  */
 public interface NoteRepository {
 
-    Note create(VaultId vaultId, String path, NoteLevel level, String createdBy);
+    default Note create(VaultId vaultId, String path, NoteLevel level, String createdBy) {
+        return create(vaultId, path, level, createdBy, NoteKind.NOTE);
+    }
+
+    Note create(VaultId vaultId, String path, NoteLevel level, String createdBy, NoteKind kind);
 
     /**
      * Vault-gescopt (Mandanten-Isolation, Plan.md Abschnitt 8.2): liefert nur eine Note, die
@@ -35,7 +39,13 @@ public interface NoteRepository {
      * Wert aus {@link ReconciliationPage#nextCursor()} der vorherigen Seite, oder {@code null}
      * fuer die erste Seite eines neuen Durchlaufs.
      */
-    ReconciliationPage list(VaultId vaultId, String cursorToken, int pageSize);
+    /** Nur Notizen - so sehen aeltere Clients, die Dateien nicht kennen, auch keine (ADR 0009 Punkt 5). */
+    default ReconciliationPage list(VaultId vaultId, String cursorToken, int pageSize) {
+        return list(vaultId, cursorToken, pageSize, java.util.Set.of(NoteKind.NOTE));
+    }
+
+    /** Wie {@link #list(VaultId, String, int)}, aber nur Eintraege der angegebenen Arten. */
+    ReconciliationPage list(VaultId vaultId, String cursorToken, int pageSize, java.util.Set<NoteKind> kinds);
 
     /**
      * Idempotent ueber {@code operationId}: ein wiederholter Aufruf mit derselben

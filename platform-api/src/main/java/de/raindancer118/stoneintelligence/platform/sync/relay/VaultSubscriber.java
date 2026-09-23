@@ -29,6 +29,11 @@ public interface VaultSubscriber {
         return false;
     }
 
+    /** Ob diese Verbindung Datei-Ankuendigungen ausdruecklich abonniert hat (s. SyncFrame Typ 13). */
+    default boolean wantsFileEvents() {
+        return false;
+    }
+
     /** Ob diese Verbindung die Notiz gerade gejoint hat (und Updates damit ohnehin direkt bekommt). */
     default boolean hasJoined(NoteId noteId) {
         return false;

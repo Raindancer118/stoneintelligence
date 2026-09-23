@@ -21,7 +21,8 @@ public class JdbcNoteRepository implements NoteRepository {
         rs.getString("path"),
         NoteLevel.of(rs.getInt("note_level")),
         rs.getString("created_by"),
-        rs.getTimestamp("created_at").toInstant()
+        rs.getTimestamp("created_at").toInstant(),
+        NoteKind.valueOf(rs.getString("kind"))
     );
 
     private record NoteWithSequence(Note note, long sequence) {
@@ -48,17 +49,18 @@ public class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
-    public Note create(VaultId vaultId, String path, NoteLevel level, String createdBy) {
+    public Note create(VaultId vaultId, String path, NoteLevel level, String createdBy, NoteKind kind) {
         var id = NoteId.newId();
         jdbcClient.sql("""
-                INSERT INTO platform.notes (id, vault_id, path, note_level, created_by)
-                VALUES (:id, :vaultId, :path, :level, :createdBy)
+                INSERT INTO platform.notes (id, vault_id, path, note_level, created_by, kind)
+                VALUES (:id, :vaultId, :path, :level, :createdBy, :kind)
                 """)
             .param("id", id.value())
             .param("vaultId", vaultId.value())
             .param("path", path)
             .param("level", level.value())
             .param("createdBy", createdBy)
+            .param("kind", kind.name())
             .update();
         return findById(vaultId, id).orElseThrow(() -> new IllegalStateException("just-inserted note not found: " + id));
     }
@@ -94,7 +96,7 @@ public class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
-    public ReconciliationPage list(VaultId vaultId, String cursorToken, int pageSize) {
+    public ReconciliationPage list(VaultId vaultId, String cursorToken, int pageSize, java.util.Set<NoteKind> kinds) {
         var cursor = ReconciliationCursor.decode(cursorToken);
         var epochId = cursor.map(ReconciliationCursor::epochId).orElseGet(UUID::randomUUID);
         var lastSeenSequence = cursor.flatMap(ReconciliationCursor::lastSeenSequence).orElse(0L);
@@ -105,12 +107,13 @@ public class JdbcNoteRepository implements NoteRepository {
         // Seite faelschlich complete=true meldet.
         List<NoteWithSequence> rows = jdbcClient.sql("""
                 SELECT * FROM platform.notes
-                WHERE vault_id = :vaultId AND sequence > :lastSeenSequence
+                WHERE vault_id = :vaultId AND sequence > :lastSeenSequence AND kind IN (:kinds)
                 ORDER BY sequence
                 LIMIT :limit
                 """)
             .param("vaultId", vaultId.value())
             .param("lastSeenSequence", lastSeenSequence)
+            .param("kinds", kinds.stream().map(NoteKind::name).toList())
             .param("limit", pageSize + 1)
             .query(NOTE_WITH_SEQUENCE_MAPPER)
             .list();
