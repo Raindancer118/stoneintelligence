@@ -13,6 +13,8 @@ import java.util.List;
  * @param skippedPages page numbers that were deliberately not read (image pages without vision)
  * @param truncated  whether reading stopped at the configured page limit
  * @param sha256     hash of the file, so a re-run recognises the same document
+ * @param unreadablePages image pages the vision model could not read (provider unavailable) -
+ *                   unlike skipped pages these hold content that is missing from the notes
  */
 public record SourceDocument(Path file,
                              String title,
@@ -20,11 +22,18 @@ public record SourceDocument(Path file,
                              List<Page> pages,
                              List<Integer> skippedPages,
                              boolean truncated,
-                             String sha256) {
+                             String sha256,
+                             List<Integer> unreadablePages) {
 
     public SourceDocument {
         pages = List.copyOf(pages);
         skippedPages = List.copyOf(skippedPages);
+        unreadablePages = List.copyOf(unreadablePages);
+    }
+
+    public SourceDocument(Path file, String title, DocumentKind kind, List<Page> pages, List<Integer> skippedPages,
+                          boolean truncated, String sha256) {
+        this(file, title, kind, pages, skippedPages, truncated, sha256, List.of());
     }
 
     public String fullText() {

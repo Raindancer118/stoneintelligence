@@ -204,6 +204,8 @@ public final class StoneAiConfig {
         private double temperature = 0.2;
         private int maxTokensPerRun = 400_000;
         private int maxOutputTokens = 16_384;
+        private int retryAttempts = 4;
+        private int retryBackoffSeconds = 20;
         private boolean visionEnabled = true;
 
         public String language() {
@@ -244,6 +246,22 @@ public final class StoneAiConfig {
 
         public void temperature(double value) {
             this.temperature = value;
+        }
+
+        public int retryAttempts() {
+            return retryAttempts;
+        }
+
+        public void retryAttempts(int value) {
+            this.retryAttempts = value;
+        }
+
+        public int retryBackoffSeconds() {
+            return retryBackoffSeconds;
+        }
+
+        public void retryBackoffSeconds(int value) {
+            this.retryBackoffSeconds = value;
         }
 
         public int maxOutputTokens() {

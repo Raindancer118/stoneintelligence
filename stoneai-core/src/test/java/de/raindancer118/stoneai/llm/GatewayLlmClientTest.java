@@ -101,4 +101,88 @@ class GatewayLlmClientTest {
 
         assertThat(lokal.maxTokens).containsExactly(16_384, 4_096);
     }
+
+    /** Fails with the given exceptions first, then answers. */
+    private static final class FlakyProvider implements AiProvider {
+        private final java.util.Deque<io.github.raindancer118.aigateway.AiProviderException> failures;
+        int calls;
+
+        FlakyProvider(io.github.raindancer118.aigateway.AiProviderException... failures) {
+            this.failures = new java.util.ArrayDeque<>(List.of(failures));
+        }
+
+        @Override
+        public String name() {
+            return "gemini";
+        }
+
+        @Override
+        public ChatResponse chat(String model, ChatRequest request) throws io.github.raindancer118.aigateway.AiProviderException {
+            calls++;
+            if (!failures.isEmpty()) {
+                throw failures.pollFirst();
+            }
+            return new ChatResponse("antwort", "gemini", model, new Usage(1, 2, 3));
+        }
+
+        @Override
+        public double availability() {
+            return 1.0;
+        }
+
+        @Override
+        public List<ChamberStats> keyPoolStatus() {
+            return List.of();
+        }
+    }
+
+    private static StoneAiConfig oneRoute() {
+        StoneAiConfig config = StoneAiConfig.defaults();
+        ConfigSchema.byPath("llm.fastChain").set(config, "gemini:m");
+        ConfigSchema.byPath("llm.smartChain").set(config, "gemini:m");
+        ConfigSchema.byPath("llm.visionChain").set(config, "gemini:m");
+        return config;
+    }
+
+    // Gemini answered 503 "high demand" for minutes at a time - one failed call used to end a
+    // 200-slide run. Overload passes; waiting is cheaper than starting over.
+    @Test
+    @DisplayName("should wait and try again while every provider is overloaded")
+    void should_retryWithBackoff_whenProvidersAreOverloaded() {
+        FlakyProvider gemini = new FlakyProvider(new io.github.raindancer118.aigateway.RetryableAiException("HTTP 503"),
+                new io.github.raindancer118.aigateway.RetryableAiException("HTTP 503"));
+        List<java.time.Duration> waits = new ArrayList<>();
+        GatewayLlmClient client = GatewayLlmClient.withProviders(oneRoute(), Map.of("gemini", gemini)).sleepingWith(waits::add);
+
+        assertThat(client.complete(Tier.FAST, "s", "t").text()).isEqualTo("antwort");
+        assertThat(waits).containsExactly(java.time.Duration.ofSeconds(20), java.time.Duration.ofSeconds(60));
+    }
+
+    @Test
+    @DisplayName("should give up after the configured attempts")
+    void should_giveUp_afterTheLastAttempt() {
+        StoneAiConfig config = oneRoute();
+        ConfigSchema.byPath("llm.retryAttempts").set(config, "2");
+        FlakyProvider gemini = new FlakyProvider(new io.github.raindancer118.aigateway.RetryableAiException("HTTP 503"),
+                new io.github.raindancer118.aigateway.RetryableAiException("HTTP 503"),
+                new io.github.raindancer118.aigateway.RetryableAiException("HTTP 503"));
+        List<java.time.Duration> waits = new ArrayList<>();
+        GatewayLlmClient client = GatewayLlmClient.withProviders(config, Map.of("gemini", gemini)).sleepingWith(waits::add);
+
+        assertThatThrownBy(() -> client.complete(Tier.FAST, "s", "t")).isInstanceOf(IllegalStateException.class);
+        assertThat(gemini.calls).isEqualTo(2);
+        assertThat(waits).hasSize(1);
+    }
+
+    // A request that is too large or a model that does not exist stays so - waiting changes nothing.
+    @Test
+    @DisplayName("should not wait when no provider failed for a passing reason")
+    void should_notRetry_whenTheFailureIsPermanent() {
+        FlakyProvider gemini = new FlakyProvider(new io.github.raindancer118.aigateway.AiProviderException("HTTP 413 Request too large"));
+        List<java.time.Duration> waits = new ArrayList<>();
+        GatewayLlmClient client = GatewayLlmClient.withProviders(oneRoute(), Map.of("gemini", gemini)).sleepingWith(waits::add);
+
+        assertThatThrownBy(() -> client.complete(Tier.FAST, "s", "t")).isInstanceOf(IllegalStateException.class);
+        assertThat(waits).isEmpty();
+    }
 }
