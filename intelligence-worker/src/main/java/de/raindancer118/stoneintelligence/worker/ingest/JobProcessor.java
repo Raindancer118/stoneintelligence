@@ -66,7 +66,7 @@ final class JobProcessor {
             } else if (report.notesWritten() == 0 && !report.failures().isEmpty()) {
                 platform.fail(job.jobId(), "Die Antworten des Modells waren nicht auswertbar", true);
             } else {
-                platform.progress(job.jobId(), report.notesWritten() + " Notizen geschrieben", 100);
+                platform.progress(job.jobId(), summary(report), 100);
                 platform.complete(job.jobId());
             }
         } catch (PlatformRefusedException refused) {
@@ -79,6 +79,17 @@ final class JobProcessor {
             heartbeat.shutdownNow();
             delete(workDir);
         }
+    }
+
+    /** Fertig heisst nicht vollstaendig: was fehlt, steht in der Meldung (und in der Quellnotiz). */
+    static String summary(de.raindancer118.stoneai.pipeline.IngestReport report) {
+        var done = report.notesWritten() + " Notizen geschrieben";
+        var gaps = report.gaps();
+        if (gaps.isEmpty()) {
+            return done;
+        }
+        var listed = String.join("; ", gaps.size() > 5 ? gaps.subList(0, 5) : gaps) + (gaps.size() > 5 ? " …" : "");
+        return done + " – nicht verarbeitet: " + listed;
     }
 
     private void beat(ClaimedJob job) {

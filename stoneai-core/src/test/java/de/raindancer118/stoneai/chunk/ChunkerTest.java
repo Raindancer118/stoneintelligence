@@ -100,19 +100,45 @@ class ChunkerTest {
         @Test
         @DisplayName("should record the page a chunk came from")
         void should_carryPageNumber_when_documentIsPaged() {
-            List<Chunk> chunks = new Chunker(2000, 100).split(pdf("Seite eins Inhalt", "Seite zwei Inhalt"));
+            List<Chunk> chunks = new Chunker(20, 0).split(pdf("Seite eins Inhalt", "Seite zwei Inhalt"));
 
             assertThat(chunks).hasSize(2);
             assertThat(chunks.get(0).provenance().page()).isEqualTo(1);
             assertThat(chunks.get(1).provenance().page()).isEqualTo(2);
         }
 
+        // A slide holds a few lines: 200 slides as 200 calls ran out of budget and gave the model
+        // no context. The topic plan keeps a chunk's topics apart, not the chunk boundary.
         @Test
-        @DisplayName("should never merge text from two different pages into one chunk")
-        void should_keepPagesApart_when_pagesAreShort() {
+        @DisplayName("should pack short pages into one chunk and cite the page range")
+        void should_packShortPages_andCiteTheRange() {
             List<Chunk> chunks = new Chunker(100_000, 0).split(pdf("Erste", "Zweite", "Dritte"));
 
-            assertThat(chunks).hasSize(3);
+            assertThat(chunks).singleElement().satisfies(chunk -> {
+                assertThat(chunk.text()).contains("Erste").contains("Zweite").contains("Dritte");
+                assertThat(chunk.provenance().page()).isEqualTo(1);
+                assertThat(chunk.provenance().lastPage()).isEqualTo(3);
+                assertThat(chunk.provenance().label()).isEqualTo("Skript, S. 1–3");
+            });
+        }
+
+        @Test
+        @DisplayName("should start a new chunk at a page boundary once the budget is reached")
+        void should_cutAtPageBoundaries_whenPagesExceedTheBudget() {
+            String page = "x".repeat(40);
+
+            List<Chunk> chunks = new Chunker(100, 0).split(pdf(page, page, page, page));
+
+            assertThat(chunks).extracting(chunk -> chunk.provenance().label())
+                    .containsExactly("Skript, S. 1–2", "Skript, S. 3–4");
+        }
+
+        @Test
+        @DisplayName("should mark in the text where each page begins, so a note can cite it")
+        void should_markPageStarts() {
+            List<Chunk> chunks = new Chunker(100_000, 0).split(pdf("Erste", "Zweite"));
+
+            assertThat(chunks.getFirst().text()).contains("[S. 1]").contains("[S. 2]");
         }
 
         @Test

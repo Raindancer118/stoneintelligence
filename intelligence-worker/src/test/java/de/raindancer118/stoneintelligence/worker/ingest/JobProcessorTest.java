@@ -103,6 +103,28 @@ class JobProcessorTest {
         assertThat(platform.events).last().isEqualTo("complete");
     }
 
+    // Ein Lauf, der nicht alles lesen konnte, meldet sich fertig - aber sagt, was fehlt.
+    @Test
+    void should_sayWhatWasLeftUnread_whenTheBudgetRanOut() {
+        var llm = new LlmClient() {
+            @Override
+            public LlmAnswer complete(Tier tier, String system, String user) {
+                return new LlmAnswer(system.contains("Themenplan") ? PLAN : ANSWER, 500_000, "fake/model");
+            }
+
+            @Override
+            public LlmAnswer readImage(byte[] pngImage, String prompt) {
+                return new LlmAnswer("", 0, "fake/vision");
+            }
+        };
+        var section = "Licht ".repeat(2_000);
+
+        processor(llm).process(job("Skript.md", "# Teil 1\n\n" + section + "\n\n# Teil 2\n\n" + section));
+
+        assertThat(platform.events).anySatisfy(event -> assertThat(event).startsWith("progress 100").contains("nicht verarbeitet").contains("Teil 2"));
+        assertThat(platform.events).last().isEqualTo("complete");
+    }
+
     // Ein als privat markiertes Dokument erreicht nie einen Anbieter - und ein erneuter Versuch aendert daran nichts.
     @Test
     void should_failPermanently_whenTheDocumentIsProtected() {

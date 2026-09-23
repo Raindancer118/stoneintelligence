@@ -82,12 +82,18 @@ public final class Consolidator {
         return keys;
     }
 
+    /** Input per merge call - small enough that the merged text always fits into one answer. */
+    static final int MERGE_INPUT_LIMIT = 12_000;
+    /** A merge shorter than this share of its input was most likely cut off, not condensed. */
+    private static final double MIN_MERGE_SHARE = 0.25;
+
     private DraftNote merge(List<ExtractedConcept> group) {
         ExtractedConcept best = group.stream()
                 .max(Comparator.comparingDouble(ExtractedConcept::confidence))
                 .orElseThrow();
 
-        String body = mergedBody(group).orElseGet(() -> concatenate(group));
+        List<Part> parts = group.stream().map(concept -> new Part(concept.provenance().label(), concept.body())).toList();
+        String body = mergedBody(group.get(0).title(), parts);
 
         return new DraftNote(best.title(), union(group, ExtractedConcept::aliases),
                 best.definition(), body, union(group, ExtractedConcept::tags),
@@ -95,12 +101,55 @@ public final class Consolidator {
                 best.confidence(), group.stream().map(ExtractedConcept::provenance).toList());
     }
 
-    /** Asks the model to fuse the texts; empty when it could not or would not. */
-    private java.util.Optional<String> mergedBody(List<ExtractedConcept> group) {
-        StringBuilder parts = new StringBuilder();
-        for (ExtractedConcept concept : group) {
-            parts.append("\n\n--- ").append(concept.provenance().label()).append(" ---\n")
-                    .append(concept.body());
+    private record Part(String label, String text) {
+    }
+
+    /**
+     * Fuses the parts in rounds: batches that fit into one call are merged, then the results
+     * again, until one text is left. A batch the model cannot or will not merge - or whose merge
+     * comes back suspiciously short - keeps its parts side by side: nothing is ever dropped.
+     */
+    private String mergedBody(String title, List<Part> parts) {
+        List<Part> current = parts;
+        while (current.size() > 1) {
+            List<List<Part>> batches = batches(current);
+            if (batches.size() == current.size()) {
+                return concatenate(current);
+            }
+            List<Part> next = new ArrayList<>();
+            for (List<Part> batch : batches) {
+                String label = batch.size() == 1 ? batch.get(0).label() : "zusammengeführt";
+                next.add(new Part(label, batch.size() == 1 ? batch.get(0).text() : mergeBatch(title, batch)));
+            }
+            current = next;
+        }
+        return current.get(0).text();
+    }
+
+    private static List<List<Part>> batches(List<Part> parts) {
+        List<List<Part>> batches = new ArrayList<>();
+        List<Part> batch = new ArrayList<>();
+        int size = 0;
+        for (Part part : parts) {
+            int length = part.text().length() + part.label().length() + 10;
+            if (!batch.isEmpty() && size + length > MERGE_INPUT_LIMIT) {
+                batches.add(batch);
+                batch = new ArrayList<>();
+                size = 0;
+            }
+            batch.add(part);
+            size += length;
+        }
+        if (!batch.isEmpty()) {
+            batches.add(batch);
+        }
+        return batches;
+    }
+
+    private String mergeBatch(String title, List<Part> batch) {
+        StringBuilder texts = new StringBuilder();
+        for (Part part : batch) {
+            texts.append("\n\n--- ").append(part.label()).append(" ---\n").append(part.text());
         }
         String user = """
                 Thema: %s
@@ -111,25 +160,25 @@ public final class Consolidator {
                 der Ebene 1 oder 2, kein Frontmatter, keine Quellenmarker. Behalte jeden Fakt und
                 jeden [[Verweis]]. Nimm nichts hinzu, was nicht in den Teilen steht. Antworte nur
                 mit dem Text.
-                %s""".formatted(group.get(0).title(), parts);
-
+                %s""".formatted(title, texts);
+        int input = batch.stream().mapToInt(part -> part.text().length()).sum();
         try {
             LlmAnswer answer = llm.complete(Tier.SMART,
                     "Du führst Textfassungen zusammen, ohne Inhalt zu erfinden oder zu verlieren.", user);
             String text = answer.text() == null ? "" : answer.text().strip();
-            return text.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(text);
+            return text.length() < input * MIN_MERGE_SHARE ? concatenate(batch) : text;
         } catch (RuntimeException e) {
-            return java.util.Optional.empty();
+            return concatenate(batch);
         }
     }
 
-    private static String concatenate(List<ExtractedConcept> group) {
+    private static String concatenate(List<Part> parts) {
         StringBuilder body = new StringBuilder();
-        for (ExtractedConcept concept : group) {
+        for (Part part : parts) {
             if (body.length() > 0) {
                 body.append("\n\n");
             }
-            body.append(concept.body());
+            body.append(part.text());
         }
         return body.toString();
     }

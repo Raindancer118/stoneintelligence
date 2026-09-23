@@ -45,9 +45,13 @@ public final class ExtractionService {
         int used = 0;
         boolean exhausted = false;
 
-        for (Chunk chunk : chunks) {
+        List<String> unprocessed = new ArrayList<>();
+        for (int index = 0; index < chunks.size(); index++) {
+            Chunk chunk = chunks.get(index);
             if (used >= budget) {
                 exhausted = true;
+                // Named, not just counted: the source note tells the reader what is missing.
+                chunks.subList(index, chunks.size()).forEach(rest -> unprocessed.add(rest.provenance().label()));
                 break;
             }
             LlmAnswer answer = llm.complete(Tier.FAST, system, Prompts.extractionUser(chunk, plan));
@@ -60,6 +64,7 @@ public final class ExtractionService {
                 if (used >= budget) {
                     failures.add(failure(chunk, first.getMessage() + " (Budget vor Reparatur erschöpft)"));
                     exhausted = true;
+                    chunks.subList(index + 1, chunks.size()).forEach(rest -> unprocessed.add(rest.provenance().label()));
                     break;
                 }
                 LlmAnswer repaired = llm.complete(Tier.FAST, system,
@@ -73,7 +78,7 @@ public final class ExtractionService {
             }
         }
 
-        return new ExtractionResult(concepts, failures, used, exhausted);
+        return new ExtractionResult(concepts, failures, used, exhausted, unprocessed.stream().distinct().toList());
     }
 
     private List<ExtractedConcept> fitted(List<ExtractedConcept> parsed, TopicPlan plan, boolean mayAddTopics) {

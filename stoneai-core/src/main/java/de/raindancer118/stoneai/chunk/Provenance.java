@@ -8,13 +8,18 @@ import java.nio.file.Path;
  *
  * @param page        one-based page number, or {@code null} for documents without pages
  * @param headingPath the chain of Markdown headings, e.g. {@code "Relationen > Äquivalenzrelation"}
+ * @param lastPage    the last page when the text spans several (slides packed together), else {@code null}
  */
-public record Provenance(String documentTitle, Path file, Integer page, String headingPath) {
+public record Provenance(String documentTitle, Path file, Integer page, String headingPath, Integer lastPage) {
 
-    /** A short human reference like {@code "Skript, S. 42"} or {@code "Notiz — Relationen"}. */
+    public Provenance(String documentTitle, Path file, Integer page, String headingPath) {
+        this(documentTitle, file, page, headingPath, null);
+    }
+
+    /** A short human reference like {@code "Skript, S. 42"}, {@code "Folien, S. 12–18"} or {@code "Notiz — Relationen"}. */
     public String label() {
         if (page != null) {
-            return documentTitle + ", S. " + page;
+            return documentTitle + ", S. " + page + (lastPage != null && !lastPage.equals(page) ? "–" + lastPage : "");
         }
         return headingPath == null || headingPath.isBlank()
                 ? documentTitle

@@ -186,6 +186,42 @@ class ConsolidatorTest {
         }
     }
 
+    @Nested
+    @DisplayName("Merging a topic spread over a long document")
+    class LargeTopics {
+
+        // Thirty sections of a lecture about one concept do not fit into one answer - merged in
+        // one call, the note came back cut off without anyone noticing.
+        @Test
+        @DisplayName("should merge in batches that each fit into one answer")
+        void should_mergeInBatches() {
+            List<ExtractedConcept> parts = new ArrayList<>();
+            for (int page = 1; page <= 10; page++) {
+                parts.add(concept("Target Costing", "Abschnitt " + page + " " + "x".repeat(3_000), page));
+            }
+            String batch = "Zusammengefasst " + "y".repeat(3_000);
+            ScriptedLlm llm = new ScriptedLlm(batch, batch, batch, batch, "Gesamter Text " + "z".repeat(6_000));
+
+            List<DraftNote> notes = new Consolidator(config, llm).consolidate(parts);
+
+            assertThat(llm.prompts).allSatisfy(prompt -> assertThat(prompt.length()).isLessThan(16_000));
+            assertThat(llm.calls()).isGreaterThan(1);
+            assertThat(notes.getFirst().body()).startsWith("Gesamter Text");
+        }
+
+        @Test
+        @DisplayName("should keep the parts when a merge comes back suspiciously short")
+        void should_keepTheParts_whenTheMergeLooksCutOff() {
+            ScriptedLlm llm = new ScriptedLlm("Kurz.");
+
+            List<DraftNote> notes = new Consolidator(config, llm).consolidate(List.of(
+                    concept("Benchmarking", "Erster Teil " + "a".repeat(2_000), 1),
+                    concept("Benchmarking", "Zweiter Teil " + "b".repeat(2_000), 2)));
+
+            assertThat(notes.getFirst().body()).contains("Erster Teil").contains("Zweiter Teil");
+        }
+    }
+
     private static final class ScriptedLlm implements LlmClient {
 
         private final Deque<String> answers = new ArrayDeque<>();

@@ -53,6 +53,16 @@ public final class SourceNoteWriter {
 
     /** @param noteLinks wikilinks to the notes of this run - already resolved to existing files */
     public Path write(SourceDocument document, List<String> noteLinks, Path attachment) throws IOException {
+        return write(document, noteLinks, attachment, List.of(), List.of());
+    }
+
+    /**
+     * @param unread   parts the run did not get to (token budget) - named so nobody takes the
+     *                 notes for the whole document
+     * @param unusable parts whose model answers stayed unusable after a repair round
+     */
+    public Path write(SourceDocument document, List<String> noteLinks, Path attachment,
+                      List<String> unread, List<String> unusable) throws IOException {
         Path file = fileFor(document);
         String today = clock.get().toString();
 
@@ -79,6 +89,14 @@ public final class SourceNoteWriter {
         if (document.truncated()) {
             block.append("> Nur die ersten ").append(document.pages().size())
                     .append(" Seiten gelesen (`ingest.maxPages`).\n\n");
+        }
+        if (!unread.isEmpty()) {
+            block.append("> [!warning] Nicht verarbeitet (Token-Budget des Laufs erschöpft): ")
+                    .append(String.join("; ", unread)).append("\n\n");
+        }
+        if (!unusable.isEmpty()) {
+            block.append("> [!warning] Nicht auswertbar (Antwort des Modells unbrauchbar): ")
+                    .append(String.join("; ", unusable)).append("\n\n");
         }
         if (!document.skippedPages().isEmpty()) {
             block.append("> Übersprungene Seiten: ").append(document.skippedPages()).append("\n\n");
