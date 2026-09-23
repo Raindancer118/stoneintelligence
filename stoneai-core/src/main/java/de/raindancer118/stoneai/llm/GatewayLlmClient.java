@@ -108,7 +108,8 @@ public final class GatewayLlmClient implements LlmClient {
 
     @Override
     public LlmAnswer complete(Tier tier, String system, String user) {
-        ChatRequest.Builder request = ChatRequest.builder().temperature(config.llm().temperature());
+        ChatRequest.Builder request = ChatRequest.builder().temperature(config.llm().temperature())
+                .maxTokens(config.llm().maxOutputTokens());
         if (system != null && !system.isBlank()) {
             request.system(system);
         }
@@ -121,6 +122,7 @@ public final class GatewayLlmClient implements LlmClient {
         ChatRequest request = ChatRequest.builder()
                 .message(ChatMessage.userWithImage(prompt, "image/png", pngImage))
                 .temperature(0.0)
+                .maxTokens(config.llm().maxOutputTokens())
                 .build();
         return answer(ModelTier.BALANCED, request);
     }

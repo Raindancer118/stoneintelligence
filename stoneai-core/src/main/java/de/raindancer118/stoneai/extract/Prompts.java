@@ -139,7 +139,8 @@ final class Prompts {
                 ---
 
                 Gib denselben Inhalt erneut aus, diesmal als reines, gültiges JSON im vereinbarten
-                Format. Kein Fließtext, keine Code-Fence, keine Kommentare.""".formatted(problem, previousAnswer);
+                Format. Kein Fließtext, keine Code-Fence, keine Kommentare. Brach die Antwort
+                mittendrin ab, fasse die Texte knapper, statt Fakten wegzulassen.""".formatted(problem, previousAnswer);
     }
 
     static String ocr(int pageNumber, String language) {

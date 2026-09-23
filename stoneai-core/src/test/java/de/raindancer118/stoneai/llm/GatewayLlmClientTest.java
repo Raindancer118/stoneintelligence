@@ -25,6 +25,7 @@ class GatewayLlmClientTest {
     private static final class EchoProvider implements AiProvider {
         private final String name;
         final List<String> models = new ArrayList<>();
+        final List<Integer> maxTokens = new ArrayList<>();
 
         EchoProvider(String name) {
             this.name = name;
@@ -38,6 +39,7 @@ class GatewayLlmClientTest {
         @Override
         public ChatResponse chat(String model, ChatRequest request) {
             models.add(model);
+            maxTokens.add(request.maxTokens());
             return new ChatResponse("antwort von " + name, name, model, new Usage(1, 2, 3));
         }
 
@@ -79,5 +81,24 @@ class GatewayLlmClientTest {
         StoneAiConfig config = StoneAiConfig.defaults();
 
         assertThatThrownBy(() -> GatewayLlmClient.withProviders(config, Map.of())).isInstanceOf(IllegalStateException.class);
+    }
+
+    // Rich notes are long, and reasoning models spend part of the budget thinking: a provider's
+    // default limit cut answers off mid-JSON.
+    @Test
+    @DisplayName("should ask for a generous, configurable answer length")
+    void should_setTheOutputLimit() {
+        StoneAiConfig config = StoneAiConfig.defaults();
+        ConfigSchema.byPath("llm.fastChain").set(config, "lokal:m");
+        ConfigSchema.byPath("llm.smartChain").set(config, "lokal:m");
+        ConfigSchema.byPath("llm.visionChain").set(config, "lokal:m");
+        EchoProvider lokal = new EchoProvider("lokal");
+        GatewayLlmClient client = GatewayLlmClient.withProviders(config, Map.of("lokal", lokal));
+
+        client.complete(Tier.FAST, "s", "t");
+        ConfigSchema.byPath("llm.maxOutputTokens").set(config, "4096");
+        client.complete(Tier.FAST, "s", "t");
+
+        assertThat(lokal.maxTokens).containsExactly(16_384, 4_096);
     }
 }
