@@ -203,6 +203,7 @@ public final class StoneAiConfig {
                 "gemini:gemini-2.5-pro"));
         private double temperature = 0.2;
         private int maxTokensPerRun = 400_000;
+        private int maxOutputTokens = 16_384;
         private boolean visionEnabled = true;
 
         public String language() {
@@ -243,6 +244,14 @@ public final class StoneAiConfig {
 
         public void temperature(double value) {
             this.temperature = value;
+        }
+
+        public int maxOutputTokens() {
+            return maxOutputTokens;
+        }
+
+        public void maxOutputTokens(int value) {
+            this.maxOutputTokens = value;
         }
 
         public int maxTokensPerRun() {
