@@ -6,6 +6,7 @@
   import Sidebar from "./lib/components/Sidebar.svelte";
   import InviteLanding from "./lib/components/InviteLanding.svelte";
   import ObsidianSetup from "./lib/components/ObsidianSetup.svelte";
+  import PrivacyPolicy from "./lib/components/PrivacyPolicy.svelte";
 
   /** Nur relative App-Pfade als Rücksprungziel - nie eine fremde Adresse aus dem Login-State. */
   function safeReturnPath(value: unknown): string | null {
@@ -26,6 +27,20 @@
   let authBusy = $state(false);
   let inviteToken = $state<string | null>(null);
   let setupPage = $state(false);
+  /** Datenschutzerklaerung - ohne Anmeldung erreichbar (DSGVO Art. 13). */
+  let privacyPage = $state(false);
+  const IMPRINT_URL = "https://tstieh.de/impressum";
+  function openPrivacy(event?: MouseEvent) {
+    event?.preventDefault();
+    if (!privacyPage && !mayLeave()) return;
+    window.history.pushState({}, "", "/datenschutz");
+    privacyPage = true;
+  }
+  function leavePrivacy(event?: MouseEvent) {
+    event?.preventDefault();
+    window.history.pushState({}, "", "/");
+    privacyPage = false;
+  }
 
   /** Einrichtungsseite ohne Neuladen öffnen/verlassen - der Zurück-Knopf des Browsers funktioniert trotzdem. */
   function openSetup(event?: MouseEvent) {
@@ -79,6 +94,7 @@
         }
         inviteToken = inviteTokenFrom(window.location.pathname);
         setupPage = window.location.pathname === "/setup";
+        privacyPage = window.location.pathname === "/datenschutz";
         const signedIn = await getUser();
         if (!alive) return;
         user = signedIn;
@@ -86,7 +102,7 @@
       } catch (e) { if (alive) error = e instanceof Error ? e.message : "Das Dashboard konnte nicht geladen werden."; }
       finally { if (alive) loading = false; }
     })();
-    const onPopState = () => { setupPage = window.location.pathname === "/setup"; };
+    const onPopState = () => { setupPage = window.location.pathname === "/setup"; privacyPage = window.location.pathname === "/datenschutz"; };
     window.addEventListener("popstate", onPopState);
     return () => { alive = false; window.removeEventListener("popstate", onPopState); };
   });
@@ -94,15 +110,20 @@
 
 <svelte:head><title>{selected ? `${selected.name} · ` : ""}StoneIntelligence</title><meta name="description" content="Deine Notizen lesen, bearbeiten und gemeinsam organisieren." /></svelte:head>
 {#if loading}<div class="boot" role="status"><img src="/logo.png" alt="" width="48" height="48" /><p>Dein Arbeitsplatz wird geladen…</p></div>
+{:else if privacyPage}
+  <main class="standalone"><a class="gate-brand home" href="/" onclick={leavePrivacy}><img src="/logo.png" alt="" width="40" height="40" /><span>StoneIntelligence</span></a><PrivacyPolicy onBack={leavePrivacy} /></main>
+  <footer class="legal-links"><a href={IMPRINT_URL} rel="noopener">Impressum</a></footer>
 {:else if inviteToken}
   <InviteLanding token={inviteToken} signedIn={user !== null} onLogin={() => authenticate()} onJoined={joined} />
 {:else if setupPage && !user}
   <main class="standalone"><a class="gate-brand home" href="/" onclick={leaveSetup}><img src="/logo.png" alt="" width="40" height="40" /><span>StoneIntelligence</span></a><ObsidianSetup vaults={[]} signedIn={false} onLogin={() => authenticate()} /></main>
+  <footer class="legal-links"><a href="/datenschutz" onclick={openPrivacy}>Datenschutz</a><a href={IMPRINT_URL} rel="noopener">Impressum</a></footer>
 {:else if !user}
   <main class="gate"><div class="gate-brand"><img src="/logo.png" alt="" width="48" height="48" /><span>StoneIntelligence</span></div><h1>Ein Platz für dein Wissen.</h1><p>Lies und bearbeite deine Obsidian-Notizen im Browser. Deine Vaults und ihre Zugriffsrechte bleiben an einem Ort.</p>{#if error}<p class="feedback error" role="alert">{error}</p>{/if}<button class="primary" disabled={authBusy} onclick={() => authenticate()}>{authBusy ? "Anmeldung wird geöffnet…" : "Mit Authentik anmelden"}</button><p class="hint">Melde dich mit deinem bestehenden Konto an. Du willst in Obsidian arbeiten? <a href="/setup" onclick={openSetup}>Obsidian einrichten</a></p></main>
+  <footer class="legal-links"><a href="/datenschutz" onclick={openPrivacy}>Datenschutz</a><a href={IMPRINT_URL} rel="noopener">Impressum</a></footer>
 {:else}
   <div class="shell">
-    <header class="app-header"><div class="brand"><img src="/logo.png" alt="" width="30" height="30" /><span>StoneIntelligence</span></div><div class="account"><a class="setup-link" href="/setup" onclick={openSetup}>Obsidian einrichten</a><span>{preferredUsername(user)}</span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></header>
+    <header class="app-header"><div class="brand"><img src="/logo.png" alt="" width="30" height="30" /><span>StoneIntelligence</span></div><div class="account"><a class="setup-link" href="/setup" onclick={openSetup}>Obsidian einrichten</a><a class="quiet-link" href="/datenschutz" onclick={openPrivacy}>Datenschutz</a><a class="quiet-link" href={IMPRINT_URL} rel="noopener">Impressum</a><span>{preferredUsername(user)}</span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></header>
     {#if error}<div class="app-error feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={() => { error = ""; void refreshVaults().catch(e => error = e.message); }}>Erneut versuchen</button></div>{/if}
     <div class="body"><aside><Sidebar {vaults} selectedId={selected?.id ?? null} onSelect={choose} onCreated={refreshVaults} canCreate={() => mayLeave()} /></aside>
       <main id="workspace">
@@ -138,6 +159,8 @@
   nav { display: flex; gap: .4rem; border-bottom: 1px solid var(--line); max-width: 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; } nav button { flex: none; white-space: nowrap; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink-dim); padding: .6rem 1rem; } nav button.active { color: var(--forest); border-color: var(--forest); font-weight: 700; }
   .standalone { max-width: 50rem; margin: clamp(2.5rem, 8vh, 6rem) auto; padding: 2rem; } .home { color: var(--ink); text-decoration: none; margin-bottom: 3rem; display: inline-flex; }
   .setup-link { color: var(--forest); font-weight: 500; text-decoration: none; min-height: 48px; display: inline-flex; align-items: center; } .setup-link:hover { text-decoration: underline; }
+  .legal-links { display: flex; gap: 1.25rem; justify-content: center; padding: 1.5rem 1rem 2rem; font-size: .8rem; }
+  .legal-links a, .quiet-link { color: var(--ink-dim); text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; } .legal-links a:hover, .quiet-link:hover { color: var(--ink); text-decoration: underline; }
   .management { max-width: 62rem; } .app-error { margin: 1rem 2rem; } .first-vault { padding: 4rem 0; max-width: 44rem; } .first-vault h1 { font-size: 2.5rem; } .first-vault p { max-width: 58ch; color: var(--ink-dim); }
   @media (max-width: 1100px) { .body { grid-template-columns: 11.5rem minmax(0, 1fr); } }
   @media (max-width: 850px) { .body { display: block; } aside { border-right: 0; border-bottom: 1px solid var(--line); } #workspace { padding-top: 1.5rem; } .app-header { padding: .6rem 1rem; } }

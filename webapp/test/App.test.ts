@@ -31,6 +31,39 @@ describe("dashboard startup", () => {
   });
 });
 
+// Pflichtangaben (DSGVO Art. 13, § 5 DDG): von jeder Seite erreichbar, ohne Anmeldung lesbar.
+describe("Rechtliches", () => {
+  it("shows the privacy policy without login, and links it and the imprint from the login page", async () => {
+    vi.mocked(getUser).mockResolvedValue(null);
+    render(App);
+
+    const privacy = await screen.findByRole("link", { name: "Datenschutz" });
+    expect(screen.getByRole("link", { name: "Impressum" }).getAttribute("href")).toBe("https://tstieh.de/impressum");
+    await fireEvent.click(privacy);
+
+    await screen.findByRole("heading", { name: "Datenschutzerklärung", level: 1 });
+    expect(screen.getByText("Groq, Inc.")).toBeTruthy();
+    expect(window.location.pathname).toBe("/datenschutz");
+  });
+
+  it("opens the privacy policy directly by its address", async () => {
+    window.history.replaceState({}, "", "/datenschutz");
+    vi.mocked(getUser).mockResolvedValue(null);
+    render(App);
+
+    await screen.findByRole("heading", { name: "Datenschutzerklärung", level: 1 });
+  });
+
+  it("links both from the signed-in workspace", async () => {
+    vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(api.listVaults).mockResolvedValue([]);
+    render(App);
+
+    await screen.findByRole("link", { name: "Datenschutz" });
+    expect(screen.getByRole("link", { name: "Impressum" })).toBeTruthy();
+  });
+});
+
 describe("KI-Bereich", () => {
   it("opens the AI area of the selected vault", async () => {
     vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
