@@ -548,6 +548,36 @@ describe("MultiplexedTransport", () => {
     });
   });
 
+  describe("Ordner-Ankuendigungen", () => {
+    it("should_subscribeToFolderAnnouncements_afterConnecting", async () => {
+      const socket = new FakeRealSocket();
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => socket, {
+        sleep: vi.fn(), subscribeFolderEvents: true,
+      });
+      transport.start();
+      await waitUntilConnecting(socket);
+      socket.open();
+
+      expect(socket.sent.some((frameBytes) => frameBytes[0] === 11)).toBe(true);
+    });
+
+    // Der Pfad darf nie als Yjs-Update in einer offenen Notiz landen.
+    it("should_reportFolderChanges_asVaultEvents", async () => {
+      const socket = new FakeRealSocket();
+      const events: Array<[number, string, string]> = [];
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => socket, {
+        sleep: vi.fn(), onVaultEvent: (type, noteId, path) => events.push([type, noteId, path]),
+      });
+      transport.start();
+      await waitUntilConnecting(socket);
+      socket.open();
+
+      socket.deliver(vaultFrame(12, "00000000-0000-0000-0000-000000000000", "Projekt/Alt"));
+
+      expect(events).toEqual([[12, "00000000-0000-0000-0000-000000000000", "Projekt/Alt"]]);
+    });
+  });
+
   describe("Dauerverbindung fuer Vault-Ereignisse", () => {
     // Ohne gejointe Notiz gab es bisher gar keine Verbindung - und damit auch keine vault-weiten
     // Bestandsereignisse. Ein Geraet ohne offene Notiz erfuhr von Anlage/Loeschung/Umbenennung

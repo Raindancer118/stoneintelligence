@@ -38,9 +38,11 @@ public class NoteController {
     private final VaultAccessGuard access;
     private final VaultAnnouncementService announcements;
     private final SnapshotStore snapshots;
+    private final FolderRegistry folders;
 
     public NoteController(NoteRepository notes, SyncRelayService relay, AuditService audit, VaultAccessGuard access,
-                          VaultAnnouncementService announcements, SnapshotStore snapshots) {
+                          VaultAnnouncementService announcements, SnapshotStore snapshots, FolderRegistry folders) {
+        this.folders = folders;
         this.notes = notes;
         this.snapshots = snapshots;
         this.relay = relay;
@@ -65,6 +67,7 @@ public class NoteController {
         // Sofort an alle verbundenen Geraete des Vaults - ohne das erfuehren sie von einer auf
         // einem anderen Geraet angelegten Notiz erst beim naechsten vollstaendigen Abgleich.
         announcements.announceNoteCreated(vId, note.id(), note.path());
+        folders.ensureParentsOf(vId, note.path(), actor);
         return NoteResponse.from(note);
     }
 
@@ -144,6 +147,7 @@ public class NoteController {
         var note = notes.rename(vId, nId, request.path());
         audit.record(vId, nId, actor, "note.renamed", java.util.Map.of("from", String.valueOf(before), "to", note.path()));
         announcements.announceNoteRenamed(vId, nId, note.path());
+        folders.ensureParentsOf(vId, note.path(), actor);
         return NoteResponse.from(note);
     }
 

@@ -47,6 +47,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     private final Map<String, Set<NoteId>> joinedNotesBySession = new ConcurrentHashMap<>();
     /** Verbindungen, die Inhalts-Ankuendigungen (Typ 9) abonniert haben. */
     private final Set<String> contentUpdateSessions = ConcurrentHashMap.newKeySet();
+    private final Set<String> folderEventSessions = ConcurrentHashMap.newKeySet();
     /**
      * Pro Session die gejointen Notizen, fuer die der Actor zusaetzlich {@link Permission#WRITE}
      * hat - getrennt von {@link #joinedNotesBySession} (das nur READ voraussetzt), weil sonst
@@ -88,6 +89,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             case SyncFrame.TYPE_JOIN -> handleJoin(session, frame.noteId(), syncSession);
             case SyncFrame.TYPE_LEAVE -> handleLeave(session, frame.noteId(), syncSession);
             case SyncFrame.TYPE_SUBSCRIBE_CONTENT_UPDATES -> contentUpdateSessions.add(session.getId());
+            case SyncFrame.TYPE_SUBSCRIBE_FOLDER_EVENTS -> folderEventSessions.add(session.getId());
             case SyncFrame.TYPE_AWARENESS -> {
                 if (hasJoined(session, frame.noteId())) {
                     relay.onAwarenessUpdate(frame.noteId(), syncSession, frame.payload());
@@ -168,6 +170,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         announcements.unsubscribe(vaultIdOf(session), new WebSocketSyncSession(session));
         writableNotesBySession.remove(session.getId());
         contentUpdateSessions.remove(session.getId());
+        folderEventSessions.remove(session.getId());
         var joined = joinedNotesBySession.remove(session.getId());
         if (joined == null) {
             return;
@@ -254,6 +257,11 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         @Override
         public boolean wantsContentUpdates() {
             return contentUpdateSessions.contains(session.getId());
+        }
+
+        @Override
+        public boolean wantsFolderEvents() {
+            return folderEventSessions.contains(session.getId());
         }
 
         @Override

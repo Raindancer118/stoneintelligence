@@ -284,4 +284,44 @@ describe("NoteApiClient", () => {
       expect(fakeFetch.mock.calls[0][0]).toBe("https://platform.example/api/v1/vaults/v/permissions");
     });
   });
+  describe("folders", () => {
+    const clientWith = (fakeFetch: ReturnType<typeof vi.fn>) =>
+      new NoteApiClient("https://platform.example", async () => "t", fakeFetch as unknown as typeof fetch);
+
+    it("should_listTheVaultsFolders", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ["A", "A/B"] });
+
+      await expect(clientWith(fakeFetch).listFolders("v1")).resolves.toEqual(["A", "A/B"]);
+      expect(fakeFetch).toHaveBeenCalledWith("https://platform.example/api/v1/vaults/v1/folders",
+        expect.objectContaining({ headers: { Authorization: "Bearer t" } }));
+    });
+
+    // Ein Server vor der Ordner-Synchronisation kennt den Endpunkt nicht - dann gibt es sie eben nicht.
+    it("should_reportAServerWithoutFolderSupport_asNull", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+
+      await expect(clientWith(fakeFetch).listFolders("v1")).resolves.toBeNull();
+    });
+
+    it("should_createRenameAndDeleteFolders", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+      const client = clientWith(fakeFetch);
+
+      await client.createFolder("v1", "A/B");
+      await client.renameFolder("v1", "A", "Z/A");
+      await client.deleteFolder("v1", "Z/A b");
+
+      expect(fakeFetch.mock.calls.map(([url, init]) => [url, init.method, init.body])).toEqual([
+        ["https://platform.example/api/v1/vaults/v1/folders", "POST", JSON.stringify({ path: "A/B" })],
+        ["https://platform.example/api/v1/vaults/v1/folders/rename", "POST", JSON.stringify({ from: "A", to: "Z/A" })],
+        ["https://platform.example/api/v1/vaults/v1/folders?path=Z%2FA+b", "DELETE", undefined],
+      ]);
+    });
+
+    it("should_throwWithStatus_whenAFolderOperationIsRejected", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status: 403 });
+
+      await expect(clientWith(fakeFetch).createFolder("v1", "A")).rejects.toMatchObject({ status: 403 });
+    });
+  });
 });

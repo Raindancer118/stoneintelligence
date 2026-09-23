@@ -394,6 +394,57 @@ class PlatformApiEndToEndIT {
         assertThat(response.headers().firstValue("Access-Control-Allow-Origin")).contains("https://kb.tstieh.de");
     }
 
+    private List<Object> folders(String base, Map<String, String> auth) throws Exception {
+        var response = get(base + "/folders", auth);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        return json.readValue(response.body(), new com.fasterxml.jackson.core.type.TypeReference<List<Object>>() { });
+    }
+
+    private static String encoded(String value) {
+        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    // Ordner sind eigene Objekte: leer angelegte Ordner kommen bei allen an, ein geloeschter
+    // verschwindet ueberall, statt auf den anderen Geraeten leer liegen zu bleiben.
+    @Test
+    void should_syncFolders_includingEmptyOnes_andAnnounceChangesToSubscribedDevices() throws Exception {
+        var auth = bearerAuth("folder-editor");
+        var vault = post("/api/v1/vaults", auth, Map.of("name", "Ordner"), Map.class);
+        var base = "/api/v1/vaults/" + vault.get("id");
+        var modern = new CapturingHandler();
+        var legacy = new CapturingHandler();
+        var wsClient = new StandardWebSocketClient();
+        var modernSession = wsClient.execute(modern, wsUrl(post(base + "/sync-tickets", auth, null, Map.class))).get(5, TimeUnit.SECONDS);
+        var legacySession = wsClient.execute(legacy, wsUrl(post(base + "/sync-tickets", auth, null, Map.class))).get(5, TimeUnit.SECONDS);
+        modernSession.sendMessage(new BinaryMessage(frame((byte) 11, new UUID(0, 0).toString(), new byte[0])));
+        Thread.sleep(200);
+
+        assertThat(post(base + "/folders", auth, Map.of("path", "Leer/Unter"), Map.class)).containsEntry("path", "Leer/Unter");
+        post(base + "/notes", auth, Map.of("path", "Projekt/A.md", "noteLevel", 1), Map.class);
+        assertThat(folders(base, auth)).containsExactly("Leer", "Leer/Unter", "Projekt");
+        var announced = modern.awaitNextFrame();
+        assertThat(announced.type()).isEqualTo((byte) 12);
+        assertThat(new String(announced.payload(), StandardCharsets.UTF_8)).isEqualTo("Leer/Unter");
+
+        assertThat(postRaw(base + "/folders/rename", auth, Map.of("from", "Leer", "to", "Archiv/Leer")).statusCode()).isEqualTo(200);
+        assertThat(folders(base, auth)).containsExactly("Archiv", "Archiv/Leer", "Archiv/Leer/Unter", "Projekt");
+        assertThat(delete(base + "/folders?path=" + encoded("Archiv"), auth).statusCode()).isEqualTo(200);
+        assertThat(folders(base, auth)).containsExactly("Projekt");
+
+        for (var path : List.of("../raus", ".obsidian", "a//b", "")) {
+            assertThat(postRaw(base + "/folders", auth, Map.of("path", path)).statusCode()).as(path).isEqualTo(400);
+        }
+        assertThat(postRaw(base + "/folders/rename", auth, Map.of("from", "Projekt", "to", "Projekt/In")).statusCode()).isEqualTo(400);
+        assertThat(postRaw(base + "/folders", bearerAuth("mallory"), Map.of("path", "X")).statusCode()).isEqualTo(403);
+        post(base + "/path-rules", auth, Map.of("pathPrefix", "Geheim/", "scopeSubject", "folder-editor", "effect", "DENY"), Map.class);
+        assertThat(postRaw(base + "/folders", auth, Map.of("path", "Geheim/X")).statusCode()).isEqualTo(403);
+
+        // Aeltere Plugins behandeln unbekannte Nachrichtentypen als Yjs-Update - nie zustellen.
+        assertThat(legacy.received.stream().map(ReceivedFrame::type)).doesNotContain((byte) 12);
+        modernSession.close();
+        legacySession.close();
+    }
+
     @Test
     void should_syncCreateEditRenameDelete_endToEnd_acrossTwoRealWebSocketClients() throws Exception {
         var actorHeader = bearerAuth("tom");

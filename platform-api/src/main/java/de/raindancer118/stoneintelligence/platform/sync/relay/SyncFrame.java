@@ -59,6 +59,19 @@ public record SyncFrame(byte messageType, NoteId noteId, byte[] payload) {
      * als Yjs-Update behandeln, ihn nie bekommen.
      */
     public static final byte TYPE_SUBSCRIBE_CONTENT_UPDATES = 10;
+    /**
+     * Client->Server (NoteId-Feld ohne Bedeutung): diese Verbindung versteht
+     * {@link #TYPE_VAULT_FOLDERS_CHANGED}. Opt-in aus demselben Grund wie Typ 10.
+     */
+    public static final byte TYPE_SUBSCRIBE_FOLDER_EVENTS = 11;
+    /**
+     * Server->Client: Ordner unter diesem Pfad angelegt, geloescht oder verschoben (Payload: der
+     * Pfad, NoteId-Feld = {@link #NO_NOTE}). Der Client holt daraufhin die Ordnerliste.
+     */
+    public static final byte TYPE_VAULT_FOLDERS_CHANGED = 12;
+    /** Platzhalter im NoteId-Feld fuer Nachrichten, die keine Notiz betreffen. */
+    public static final de.raindancer118.stoneintelligence.domain.id.NoteId NO_NOTE =
+        de.raindancer118.stoneintelligence.domain.id.NoteId.of(new java.util.UUID(0, 0));
 
     public static final int NOTE_ID_LENGTH = 36;
     private static final int HEADER_LENGTH = 1 + NOTE_ID_LENGTH;

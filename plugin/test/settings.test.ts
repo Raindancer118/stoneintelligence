@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_SETTINGS, emptyVaultState, isExcluded, migrateSettings, queueDelete, queueRename, wsUrlFor,
+  DEFAULT_SETTINGS, emptyVaultState, isExcluded, isExcludedFolder, migrateSettings, queueDelete, queueFolderOp, queueRename,
+  wsUrlFor,
 } from "../src/settings";
 
 describe("migrateSettings", () => {
@@ -75,5 +76,48 @@ describe("pending operations", () => {
     queueDelete(state, "n1", "b.md", "op-1");
 
     expect(state.pendingOps).toEqual([{ kind: "delete", noteId: "n1", path: "b.md", operationId: "op-1" }]);
+  });
+});
+
+describe("Ordner", () => {
+  // Nach dem Update gab es noch keinen Ordnerabgleich - das muss der Plan erkennen koennen.
+  it("should_startWithoutKnownFolders_forExistingInstallations", () => {
+    const settings = migrateSettings({ vaultId: "v1", vaults: { v1: { noteIds: {}, noteMeta: {}, pendingOps: [], blockedPaths: {} } } });
+
+    expect(settings.vaults.v1.knownFolders).toBeNull();
+  });
+
+  // Frisch verbunden: alles hier ist neu - auch leere Ordner werden hochgeladen, nicht weggeraeumt.
+  it("should_knowNoFoldersYet_forAFreshlyConnectedVault", () => {
+    expect(emptyVaultState().knownFolders).toEqual([]);
+  });
+
+  it("should_queueFolderOperations_inOrder_andForgetDeletedFolders", () => {
+    const state = { ...emptyVaultState(), knownFolders: ["A", "A/B", "AB"] };
+
+    queueFolderOp(state, { kind: "folderCreate", path: "Neu" });
+    queueFolderOp(state, { kind: "folderRename", path: "Neu", to: "Alt/Neu" });
+    queueFolderOp(state, { kind: "folderDelete", path: "A" });
+
+    expect(state.pendingOps).toEqual([
+      { kind: "folderCreate", path: "Neu" },
+      { kind: "folderRename", path: "Neu", to: "Alt/Neu" },
+      { kind: "folderDelete", path: "A" },
+    ]);
+    expect(state.knownFolders).toEqual(["AB"]);
+  });
+
+  it("should_moveKnownFoldersAlong_whenRenaming", () => {
+    const state = { ...emptyVaultState(), knownFolders: ["A", "A/B", "C"] };
+
+    queueFolderOp(state, { kind: "folderRename", path: "A", to: "Z/A" });
+
+    expect(state.knownFolders).toEqual(["C", "Z/A", "Z/A/B"]);
+  });
+
+  it("should_treatAnExcludedFolderItself_asExcluded", () => {
+    expect(isExcludedFolder("Privat", ["Privat"])).toBe(true);
+    expect(isExcludedFolder("Privat/Tief", ["Privat"])).toBe(true);
+    expect(isExcludedFolder("Privatsache", ["Privat"])).toBe(false);
   });
 });

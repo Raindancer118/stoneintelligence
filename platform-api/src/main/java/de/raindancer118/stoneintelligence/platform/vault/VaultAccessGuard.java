@@ -40,6 +40,13 @@ public class VaultAccessGuard {
         return notes.stream().filter(note -> PathRules.resolve(rules, note.path(), actor) != RuleEffect.DENY).toList();
     }
 
+    /** Nur die Pfade, die {@code actor} sehen darf; {@code asRulePath} bildet z. B. Ordner auf {@code <ordner>/} ab. */
+    public java.util.List<String> readablePaths(VaultId vaultId, String actor, java.util.List<String> paths,
+                                                java.util.function.UnaryOperator<String> asRulePath) {
+        var rules = authorization.listPathRules(vaultId);
+        return paths.stream().filter(path -> PathRules.resolve(rules, asRulePath.apply(path), actor) != RuleEffect.DENY).toList();
+    }
+
     public void require(VaultId vaultId, String actor, Permission permission, String path) {
         require(vaultId, actor, permission);
         if (PathRules.resolve(authorization.listPathRules(vaultId), path, actor) == RuleEffect.DENY) {

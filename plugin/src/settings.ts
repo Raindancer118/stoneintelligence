@@ -2,9 +2,19 @@ import type { StoredTokens } from "./sync/AuthentikAuthClient";
 import type { NoteMeta } from "./sync/reconcilePlan";
 
 /** Eine lokal ausgefuehrte Loeschung/Umbenennung, die der Server noch nicht bestaetigt hat. */
-export type PendingOp =
+export type PendingOp = NoteOp | FolderOp;
+export type NoteOp =
   | { kind: "delete"; noteId: string; path: string; operationId: string }
   | { kind: "rename"; noteId: string; path: string };
+/** Ordner sind eigene Objekte auf dem Server - auch leere und geloeschte muessen ueberall ankommen. */
+export type FolderOp =
+  | { kind: "folderCreate"; path: string }
+  | { kind: "folderDelete"; path: string }
+  | { kind: "folderRename"; path: string; to: string };
+
+export function isNoteOp(op: PendingOp): op is NoteOp {
+  return op.kind === "delete" || op.kind === "rename";
+}
 
 /** Alles, was zu EINEM Vault gehoert - ein Vault-Wechsel darf keine fremden NoteIds weiterverwenden. */
 export interface VaultSyncState {
@@ -15,6 +25,8 @@ export interface VaultSyncState {
   pendingOps: PendingOp[];
   /** Pfad -> Grund, warum der Server ihn abgelehnt hat (bis zur naechsten lokalen Aenderung). */
   blockedPaths: Record<string, string>;
+  /** Server-Ordner beim letzten Ordnerabgleich; `null` = noch nie abgeglichen. */
+  knownFolders: string[] | null;
 }
 
 export interface StoneIntelligenceSettings {
@@ -59,7 +71,7 @@ export const DEFAULT_SETTINGS: StoneIntelligenceSettings = {
 };
 
 export function emptyVaultState(): VaultSyncState {
-  return { noteIds: {}, noteMeta: {}, pendingOps: [], blockedPaths: {} };
+  return { noteIds: {}, noteMeta: {}, pendingOps: [], blockedPaths: {}, knownFolders: [] };
 }
 
 /** Laedt gespeicherte Daten beliebigen (auch alten) Formats in die aktuelle Struktur. */
@@ -88,7 +100,8 @@ export function migrateSettings(raw: unknown): StoneIntelligenceSettings {
     settings.vaults[settings.vaultId] = state;
   }
   for (const [vaultId, state] of Object.entries(settings.vaults)) {
-    settings.vaults[vaultId] = { ...emptyVaultState(), ...state };
+    // Vor der Ordner-Synchronisation gespeichert: noch nie abgeglichen (`null`, s. planFolders).
+    settings.vaults[vaultId] = { ...emptyVaultState(), knownFolders: null, ...(state as Partial<VaultSyncState>) };
   }
   return settings;
 }
@@ -107,6 +120,26 @@ export function isExcluded(path: string, folders: string[]): boolean {
   });
 }
 
+/** Wie {@link isExcluded}, aber fuer einen Ordner: der ausgeschlossene Ordner selbst zaehlt mit. */
+export function isExcludedFolder(path: string, folders: string[]): boolean {
+  return isExcluded(`${path}/`, folders);
+}
+
+const insideFolder = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`);
+
+/** Merkt eine lokale Ordneroperation vor und zieht den bekannten Ordnerstand gleich mit. */
+export function queueFolderOp(state: VaultSyncState, op: FolderOp): void {
+  state.pendingOps.push(op);
+  if (state.knownFolders === null || op.kind === "folderCreate") {
+    return;
+  }
+  const moved = state.knownFolders.filter((path) => insideFolder(path, op.path));
+  const rest = state.knownFolders.filter((path) => !insideFolder(path, op.path));
+  state.knownFolders = op.kind === "folderRename"
+    ? [...rest, ...moved.map((path) => op.to + path.slice(op.path.length))].sort()
+    : rest;
+}
+
 export function queueRename(state: VaultSyncState, noteId: string, path: string): void {
   if (state.pendingOps.some((op) => op.kind === "delete" && op.noteId === noteId)) {
     return;
@@ -116,6 +149,6 @@ export function queueRename(state: VaultSyncState, noteId: string, path: string)
 }
 
 export function queueDelete(state: VaultSyncState, noteId: string, path: string, operationId: string): void {
-  state.pendingOps = state.pendingOps.filter((op) => op.noteId !== noteId);
+  state.pendingOps = state.pendingOps.filter((op) => !isNoteOp(op) || op.noteId !== noteId);
   state.pendingOps.push({ kind: "delete", noteId, path, operationId });
 }

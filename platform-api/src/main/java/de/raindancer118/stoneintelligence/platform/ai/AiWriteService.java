@@ -18,6 +18,7 @@ import de.raindancer118.stoneintelligence.platform.sync.relay.SyncRelayService;
 import de.raindancer118.stoneintelligence.platform.sync.relay.UpdateRecord;
 import de.raindancer118.stoneintelligence.platform.sync.relay.VaultAnnouncementService;
 import de.raindancer118.stoneintelligence.platform.sync.yjs.YjsBridge;
+import de.raindancer118.stoneintelligence.platform.vault.FolderRegistry;
 import de.raindancer118.stoneintelligence.platform.vault.Note;
 import de.raindancer118.stoneintelligence.platform.vault.NotePaths;
 import de.raindancer118.stoneintelligence.platform.vault.NoteRepository;
@@ -41,6 +42,7 @@ public class AiWriteService {
     private final SyncRelayService relay;
     private final YjsBridge yjs;
     private final VaultAnnouncementService announcements;
+    private final FolderRegistry folders;
     private final AiAuditRecorder audit;
     private final AiServiceDirectory services;
     private final AiChangeSetRepository changeSets;
@@ -48,13 +50,15 @@ public class AiWriteService {
     private final NoteLevelPolicyResolver levels = NoteLevelPolicyResolver.withDefaults();
 
     public AiWriteService(NoteRepository notes, SnapshotStore snapshots, SyncRelayService relay, YjsBridge yjs,
-                          VaultAnnouncementService announcements, AiAuditRecorder audit, AiServiceDirectory services,
+                          VaultAnnouncementService announcements, FolderRegistry folders, AiAuditRecorder audit,
+                          AiServiceDirectory services,
                           AiChangeSetRepository changeSets, Supplier<Instant> clock) {
         this.notes = notes;
         this.snapshots = snapshots;
         this.relay = relay;
         this.yjs = yjs;
         this.announcements = announcements;
+        this.folders = folders;
         this.audit = audit;
         this.services = services;
         this.changeSets = changeSets;
@@ -85,6 +89,7 @@ public class AiWriteService {
         var note = notes.create(vaultId, path, level, service.agent());
         audit.record(vaultId, note.id(), service.agent(), "note.created", Map.of("path", path, "changeSet", changeSetId.toString()));
         announcements.announceNoteCreated(vaultId, note.id(), path);
+        folders.ensureParentsOf(vaultId, path, service.agent());
         try {
             writeText(note, text, service.agent());
         } catch (RuntimeException failure) {

@@ -24,6 +24,11 @@ public interface VaultSubscriber {
         return false;
     }
 
+    /** Ob diese Verbindung Ordner-Ankuendigungen ausdruecklich abonniert hat (s. SyncFrame Typ 11). */
+    default boolean wantsFolderEvents() {
+        return false;
+    }
+
     /** Ob diese Verbindung die Notiz gerade gejoint hat (und Updates damit ohnehin direkt bekommt). */
     default boolean hasJoined(NoteId noteId) {
         return false;

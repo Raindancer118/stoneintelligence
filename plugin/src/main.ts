@@ -3,9 +3,10 @@ import type { EditorView } from "@codemirror/view";
 import { MarkdownView, Notice, Platform, Plugin, setIcon, TAbstractFile, TFile, TFolder } from "obsidian";
 import * as Y from "yjs";
 import {
-  isExcluded, migrateSettings, queueDelete, queueRename, type StoneIntelligenceSettings, type VaultSyncState, emptyVaultState,
-  wsUrlFor,
+  type FolderOp, isExcluded, isExcludedFolder, isNoteOp, migrateSettings, queueDelete, queueFolderOp, queueRename,
+  type StoneIntelligenceSettings, type VaultSyncState, emptyVaultState, wsUrlFor,
 } from "./settings";
+import { isInsideFolder, isSyncableFolderPath, planFolders } from "./sync/folderPlan";
 import { actorDisplayNameFromAccessToken, displayNameFromClaims, pickUserColor } from "./sync/actorIdentity";
 import { AuthentikAuthClient, TokenRefreshRejectedError, type StoredTokens } from "./sync/AuthentikAuthClient";
 import { dedupeInFlight } from "./sync/dedupeInFlight";
@@ -18,7 +19,7 @@ import {
   openAuthorizationUrlMobile, type PendingAuthCallback,
 } from "./sync/mobileAuthRedirect";
 import {
-  MultiplexedTransport, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED,
+  MultiplexedTransport, VAULT_FOLDERS_CHANGED, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED,
 } from "./sync/multiplexedTransport";
 import { HttpError, NoteApiClient, type VaultSummary } from "./sync/NoteApiClient";
 import {
@@ -55,6 +56,11 @@ const RECONCILE_INTERVAL_MS = 30_000;
 const REMOTE_CHANGE_DEBOUNCE_MS = 2_500;
 /** Nach einer angekuendigten Neuanlage: der Inhalt folgt beim anlegenden Geraet kurz danach. */
 const CREATED_FOLLOW_UP_MS = 3_000;
+/**
+ * Nach einer Ordner- oder Loesch-Ankuendigung kurz warten: die einzelnen Notiz-Loeschungen eines
+ * geloeschten Ordners kommen nacheinander an, erst danach ist der Ordner hier leer.
+ */
+const FOLDER_PASS_DEBOUNCE_MS = 600;
 /**
  * Aeltere Server liefern keine Revisionen - dann liesse sich ohne Join nicht erkennen, ob sich
  * eine Notiz geaendert hat. Damit nicht alle 30s JEDE Notiz gejoint wird, laeuft der volle
@@ -178,6 +184,11 @@ export default class StoneIntelligencePlugin extends Plugin {
   private passRunning = false;
   private passRequested = false;
   private flushingOps = false;
+  private folderPassRunning = false;
+  private folderPassRequested = false;
+  private folderPassTimer: number | null = null;
+  /** Server ohne Ordner-Synchronisation (Endpunkt fehlt) - dann gar nicht erst versuchen. */
+  private folderSyncUnsupported = false;
   private settingsSaveTimer: number | null = null;
   /** Loeschkonflikte werden nacheinander gefragt, nie mehrere Dialoge uebereinander. */
   private decisionQueue: Promise<void> = Promise.resolve();
@@ -814,6 +825,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         },
         onConnected: () => this.requestPass(),
         subscribeContentUpdates: true,
+        subscribeFolderEvents: true,
       });
     }
     return this.transport;
@@ -876,7 +888,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         .map((file) => ({ path: file.path, mtime: file.stat.mtime, size: file.stat.size })),
       noteIds: Object.fromEntries(Object.entries(state.noteIds).filter(([path]) => !isExcluded(path, excluded))),
       meta: state.noteMeta,
-      pendingNoteIds: new Set(state.pendingOps.map((op) => op.noteId)),
+      pendingNoteIds: new Set(state.pendingOps.filter(isNoteOp).map((op) => op.noteId)),
       livePaths: new Set([...this.live.keys(), ...this.liveStarting]),
       blockedPaths: state.blockedPaths,
     });
@@ -901,6 +913,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       await this.saveSettings();
       this.activity.endPass(vaultId === this.settings.vaultId);
     }
+    await this.reconcileFolders();
   }
 
   private async executeAction(action: ReconcileAction): Promise<void> {
@@ -978,8 +991,137 @@ export default class StoneIntelligencePlugin extends Plugin {
   private async ensureFolder(path: string): Promise<void> {
     const folder = parentFolder(path);
     if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
-      await this.app.vault.createFolder(folder).catch(() => undefined);
+      await this.createFolderFromServer(folder);
     }
+  }
+
+  /** Legt einen Ordner (samt Eltern) an, ohne dass der `create`-Event ihn zurueckmeldet. */
+  private async createFolderFromServer(folder: string): Promise<void> {
+    const chain = folder.split("/").map((_, index, parts) => parts.slice(0, index + 1).join("/"));
+    chain.forEach((path) => this.serverDrivenPaths.add(path));
+    try {
+      await this.app.vault.createFolder(folder).catch(() => undefined);
+    } finally {
+      chain.forEach((path) => this.serverDrivenPaths.delete(path));
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Ordner
+
+  private isTrackableFolder(path: string): boolean {
+    return this.isReady() && !this.folderSyncUnsupported && isSyncableFolderPath(path)
+      && !isExcludedFolder(path, this.settings.excludedFolders);
+  }
+
+  /** Nach Ordner- oder Loesch-Ankuendigungen: gebuendelt einen Ordnerabgleich anstossen. */
+  private scheduleFolderPass(): void {
+    if (this.folderPassTimer !== null) {
+      window.clearTimeout(this.folderPassTimer);
+    }
+    this.folderPassTimer = window.setTimeout(() => {
+      this.folderPassTimer = null;
+      void this.reconcileFolders();
+    }, FOLDER_PASS_DEBOUNCE_MS);
+  }
+
+  private hasFilesInside(folder: TFolder): boolean {
+    return folder.children.some((child) => child instanceof TFile || (child instanceof TFolder && this.hasFilesInside(child)));
+  }
+
+  private localFolders(): TFolder[] {
+    return this.app.vault.getAllLoadedFiles()
+      .filter((file): file is TFolder => file instanceof TFolder && this.isTrackableFolder(file.path));
+  }
+
+  /**
+   * Ordner mit der Server-Liste abgleichen (s. {@link planFolders}): fehlende anlegen, hier neue
+   * hochladen, anderswo geloeschte entfernen, sobald sie leer sind. Laeuft nie parallel zu sich selbst.
+   */
+  private async reconcileFolders(): Promise<void> {
+    if (this.folderPassRunning) {
+      this.folderPassRequested = true;
+      return;
+    }
+    this.folderPassRunning = true;
+    try {
+      do {
+        this.folderPassRequested = false;
+        await this.reconcileFoldersOnce();
+      } while (this.folderPassRequested && this.isReady());
+    } finally {
+      this.folderPassRunning = false;
+    }
+  }
+
+  private async reconcileFoldersOnce(): Promise<void> {
+    if (!this.isReady() || this.folderSyncUnsupported) {
+      return;
+    }
+    const vaultId = this.settings.vaultId;
+    await this.flushPendingOps();
+    let serverFolders: string[] | null;
+    try {
+      serverFolders = await this.noteApiClient.listFolders(vaultId);
+    } catch (error) {
+      console.debug("StoneIntelligence: Ordnerliste nicht abrufbar", error);
+      return;
+    }
+    if (serverFolders === null) {
+      this.folderSyncUnsupported = true;
+      return;
+    }
+    if (vaultId !== this.settings.vaultId || !this.isReady()) {
+      return;
+    }
+    const state = this.vaultState();
+    const plan = planFolders({
+      serverFolders: serverFolders.filter((path) => this.isTrackableFolder(path)),
+      knownFolders: state.knownFolders,
+      localFolders: this.localFolders().map((folder) => ({ path: folder.path, hasFiles: this.hasFilesInside(folder) })),
+      busyPaths: state.pendingOps.flatMap((op) => op.kind === "folderRename" ? [op.path, op.to]
+        : op.kind === "folderCreate" || op.kind === "folderDelete" ? [op.path] : []),
+    });
+
+    for (const path of plan.createLocal) {
+      if (!this.app.vault.getAbstractFileByPath(path)) {
+        await this.createFolderFromServer(path);
+      }
+    }
+    const failedUploads: string[] = [];
+    for (const path of plan.upload) {
+      try {
+        await this.noteApiClient.createFolder(vaultId, path);
+      } catch (error) {
+        failedUploads.push(path);
+        this.reportFailure(path, error);
+      }
+    }
+    for (const path of plan.removeLocal) {
+      const folder = this.app.vault.getAbstractFileByPath(path);
+      // Zwischen Plan und jetzt kann etwas hineingekommen sein - dann bleibt der Ordner.
+      if (!(folder instanceof TFolder) || this.hasFilesInside(folder)) {
+        continue;
+      }
+      this.serverDrivenPaths.add(path);
+      try {
+        await this.app.fileManager.trashFile(folder);
+        this.activity.log("deleted", path, "Ordner auf einem anderen Gerät gelöscht");
+      } catch (error) {
+        console.debug(`StoneIntelligence: Ordner "${path}" nicht entfernbar`, error);
+      } finally {
+        this.serverDrivenPaths.delete(path);
+      }
+    }
+    // Nicht hochgeladene Ordner nicht als "bekannt" merken - sonst hielte der naechste Abgleich
+    // sie fuer anderswo geloescht und raeumte sie weg.
+    state.knownFolders = plan.known.filter((path) => !failedUploads.some((failed) => isInsideFolder(path, failed)));
+    await this.saveSettings();
+  }
+
+  private queueLocalFolderOp(op: FolderOp): void {
+    queueFolderOp(this.vaultState(), op);
+    void this.saveSettings().then(() => this.flushPendingOps());
   }
 
   /** Auf dem Server vorhanden, lokal nicht: leere Datei anlegen, Inhalt abgleichen. */
@@ -1338,8 +1480,14 @@ export default class StoneIntelligencePlugin extends Plugin {
         try {
           if (op.kind === "delete") {
             await this.noteApiClient.deleteNote(vaultId, op.noteId, op.operationId);
-          } else {
+          } else if (op.kind === "rename") {
             await this.noteApiClient.renameNote(vaultId, op.noteId, op.path);
+          } else if (op.kind === "folderCreate") {
+            await this.noteApiClient.createFolder(vaultId, op.path);
+          } else if (op.kind === "folderRename") {
+            await this.noteApiClient.renameFolder(vaultId, op.path, op.to);
+          } else {
+            await this.noteApiClient.deleteFolder(vaultId, op.path);
           }
         } catch (error) {
           const permanent = error instanceof HttpError && error.status >= 400 && error.status < 500
@@ -1349,6 +1497,13 @@ export default class StoneIntelligencePlugin extends Plugin {
           }
           if (op.kind === "rename" && (error as HttpError).status === 404) {
             // Note inzwischen anderswo geloescht - der Abgleich erledigt den Rest.
+          } else if (!isNoteOp(op)) {
+            if ((error as HttpError).status === 404) {
+              // Server ohne Ordner-Synchronisation.
+              this.folderSyncUnsupported = true;
+            } else {
+              this.activity.reportProblem(op.path, "Ordneränderung vom Server abgelehnt – der Server-Stand wird wiederhergestellt.");
+            }
           } else {
             this.activity.reportProblem(op.path, op.kind === "delete"
               ? "Löschen vom Server abgelehnt – die Notiz wird wiederhergestellt."
@@ -1371,8 +1526,12 @@ export default class StoneIntelligencePlugin extends Plugin {
     if (!this.isReady() || isExcluded(path, this.settings.excludedFolders)) {
       return;
     }
+    if (messageType === VAULT_FOLDERS_CHANGED) {
+      this.scheduleFolderPass();
+      return;
+    }
     const state = this.vaultState();
-    if (state.pendingOps.some((op) => op.noteId === noteId)) {
+    if (state.pendingOps.some((op) => isNoteOp(op) && op.noteId === noteId)) {
       return;
     }
     try {
@@ -1401,10 +1560,13 @@ export default class StoneIntelligencePlugin extends Plugin {
         if (localPath && localPath !== path) {
           await this.applyRemoteRename(noteId, localPath, path);
         }
+        // Der alte Ordner kann jetzt leer und anderswo schon geloescht sein.
+        this.scheduleFolderPass();
       } else if (messageType === VAULT_NOTE_DELETED) {
         if (localPath) {
           await this.applyRemoteDeletion(noteId, localPath, await this.hasUnsyncedEdits(noteId, localPath));
         }
+        this.scheduleFolderPass();
       }
       await this.saveSettings();
     } catch (error) {
@@ -1426,6 +1588,15 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   private handleLocalCreate(file: TAbstractFile): void {
+    if (file instanceof TFolder) {
+      // Beim Laden des Vaults meldet Obsidian jeden vorhandenen Ordner als "angelegt" - das ist
+      // Sache des Ordnerabgleichs, der zwischen neu und anderswo geloescht unterscheiden kann.
+      const known = this.vaultState().knownFolders ?? [];
+      if (this.app.workspace.layoutReady && !this.serverDrivenPaths.has(file.path) && this.isTrackableFolder(file.path) && !known.includes(file.path)) {
+        this.queueLocalFolderOp({ kind: "folderCreate", path: file.path });
+      }
+      return;
+    }
     if (!(file instanceof TFile) || file.extension !== "md" || this.serverDrivenPaths.has(file.path)) {
       return;
     }
@@ -1500,6 +1671,12 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     const state = this.vaultState();
+    // War das der letzte Inhalt eines anderswo geloeschten Ordners (z. B. ein Anhang), kann der
+    // Ordner jetzt weg.
+    if (!(file instanceof TFolder) && parentFolder(file.path)
+      && state.knownFolders?.includes(parentFolder(file.path))) {
+      this.scheduleFolderPass();
+    }
     if (state.blockedPaths[file.path] === DELETION_DECISION_PENDING) {
       // Die offene Frage hat sich erledigt - die Person hat selbst geloescht.
       delete state.blockedPaths[file.path];
@@ -1524,6 +1701,12 @@ export default class StoneIntelligencePlugin extends Plugin {
       this.activity.log("deleted", path, "Gelöscht");
       changed = true;
     }
+    if (file instanceof TFolder && this.isTrackableFolder(file.path)) {
+      // Nach den Notiz-Loeschungen: der Server entfernt den Ordner samt allem darunter, die anderen
+      // Geraete raeumen ihn weg, sobald ihre Notizen darin geloescht sind.
+      queueFolderOp(state, { kind: "folderDelete", path: file.path });
+      changed = true;
+    }
     if (changed) {
       await this.saveSettings();
       void this.flushPendingOps();
@@ -1540,6 +1723,16 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     const state = this.vaultState();
+    let folderChanged = false;
+    if (file instanceof TFolder) {
+      const from = this.isTrackableFolder(oldPath);
+      const to = this.isTrackableFolder(file.path);
+      if (from || to) {
+        queueFolderOp(state, from && to ? { kind: "folderRename", path: oldPath, to: file.path }
+          : to ? { kind: "folderCreate", path: file.path } : { kind: "folderDelete", path: oldPath });
+        folderChanged = true;
+      }
+    }
     const moves: Array<[string, string]> = file instanceof TFolder
       ? Object.keys(state.noteIds)
         .filter((path) => path.startsWith(`${oldPath}/`))
@@ -1566,7 +1759,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       }
       changed = true;
     }
-    if (changed) {
+    if (changed || folderChanged) {
       await this.saveSettings();
       void this.flushPendingOps();
     }

@@ -45,7 +45,10 @@ class AiWriteServiceTest {
     private final SyncRelayService relay = new SyncRelayService(snapshots, new SyncRoomRegistry());
     private final List<String> audit = new ArrayList<>();
     private final FakeAiChangeSetRepository changeSets = new FakeAiChangeSetRepository();
+    private final de.raindancer118.stoneintelligence.platform.vault.FakeFolderRepository folders =
+        new de.raindancer118.stoneintelligence.platform.vault.FakeFolderRepository();
     private final AiWriteService service = new AiWriteService(notes, snapshots, relay, yjs, new VaultAnnouncementService(),
+        new de.raindancer118.stoneintelligence.platform.vault.FolderRegistry(folders, new VaultAnnouncementService()),
         (vault, note, actor, action, payload) -> audit.add(actor + " " + action), new AiServiceDirectory(List.of(EXTERN, LOKAL)), changeSets, () -> Instant.parse("2026-09-23T12:00:00Z"));
 
     private AiChangeSet newChangeSet() {
@@ -76,6 +79,7 @@ class AiWriteServiceTest {
             assertThat(service.readText(vaultId, written.noteId(), EXTERN)).isEqualTo("# Photosynthese\n\nText.\n");
             assertThat(notes.findById(vaultId, written.noteId()).orElseThrow().createdBy()).isEqualTo(AGENT);
             assertThat(audit).contains(AGENT + " note.created", AGENT + " note.content-updated");
+            assertThat(folders.list(vaultId)).containsExactly("Wissen");
         }
 
         @Test
@@ -148,6 +152,7 @@ class AiWriteServiceTest {
         void should_stopWriting_whenTheServiceIsNoLongerConfigured() {
             var changeSet = newChangeSet();
             var afterRestart = new AiWriteService(notes, snapshots, relay, yjs, new VaultAnnouncementService(),
+                new de.raindancer118.stoneintelligence.platform.vault.FolderRegistry(folders, new VaultAnnouncementService()),
                 (vault, note, actor, action, payload) -> { }, new AiServiceDirectory(List.of(LOKAL)), changeSets, Instant::now);
 
             assertThatThrownBy(() -> afterRestart.createNote(vaultId, changeSet.id(), "X.md", "x\n", NoteLevel.of(1)))
