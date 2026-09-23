@@ -90,8 +90,10 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         var configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(ALLOWED_ORIGINS);
-        configuration.setAllowedMethods(List.of("GET", "POST", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Operation-Id"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Operation-Id", "If-Match"));
+        // Datei-Downloads (ADR 0009): Fassung, Hash und Name muss das Dashboard lesen koennen.
+        configuration.setExposedHeaders(List.of("ETag", "X-Content-SHA256", "X-Current-Revision", "Content-Disposition"));
         configuration.setMaxAge(3600L);
 
         // /ws/sync braucht KEINE CORS-Durchsetzung: der Handshake ist ueber das Single-Use-Ticket

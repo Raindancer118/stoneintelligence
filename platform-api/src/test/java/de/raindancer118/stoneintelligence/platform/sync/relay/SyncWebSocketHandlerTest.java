@@ -106,6 +106,25 @@ class SyncWebSocketHandlerTest {
         assertThat(snapshotStore.listSince(note.id(), 0)).hasSize(1);
     }
 
+    // Dateien haben keinen Yjs-Inhalt (ADR 0009): nie joinbar, nie beschreibbar ueber den Sync-Kanal.
+    @Test
+    void should_neitherJoinNorAcceptUpdatesForAFile() {
+        var vaultId = VaultId.newId();
+        var file = notes.create(vaultId, "Skript.pdf", NoteLevel.of(1), "creator",
+            de.raindancer118.stoneintelligence.platform.vault.NoteKind.FILE);
+        var role = authorization.createRole(vaultId, "writer", Set.of(Permission.READ, Permission.WRITE));
+        var group = authorization.createGroup(vaultId, "writers");
+        authorization.assignRole(group.id(), role.id());
+        authorization.addMember(group.id(), "writer-actor");
+
+        var writer = connect(vaultId, "writer-actor");
+        send(writer, SyncFrame.TYPE_JOIN, file.id(), new byte[0]);
+        send(writer, SyncFrame.TYPE_DOC_UPDATE, file.id(), "yjs".getBytes());
+
+        assertThat(snapshotStore.listSince(file.id(), 0)).isEmpty();
+        assertThat(writer.sentMessages).isEmpty();
+    }
+
     @Test
     void should_notAcceptFurtherDocUpdates_forANoteAfterItWasDeleted() {
         // Regression (Codex-Verifikationsreview des Security-Fixes, s.

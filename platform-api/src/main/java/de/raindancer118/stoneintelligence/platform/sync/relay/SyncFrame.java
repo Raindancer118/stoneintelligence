@@ -69,6 +69,12 @@ public record SyncFrame(byte messageType, NoteId noteId, byte[] payload) {
      * Pfad, NoteId-Feld = {@link #NO_NOTE}). Der Client holt daraufhin die Ordnerliste.
      */
     public static final byte TYPE_VAULT_FOLDERS_CHANGED = 12;
+    /**
+     * Client->Server (NoteId-Feld ohne Bedeutung): diese Verbindung kennt Dateien (ADR 0009) und
+     * bekommt deren Anlage/Loeschung/Umbenennung/Aenderung in den Frames 6-9. Aeltere Plugins
+     * wuerden eine Datei sonst als leere Notiz anlegen.
+     */
+    public static final byte TYPE_SUBSCRIBE_FILE_EVENTS = 13;
     /** Platzhalter im NoteId-Feld fuer Nachrichten, die keine Notiz betreffen. */
     public static final de.raindancer118.stoneintelligence.domain.id.NoteId NO_NOTE =
         de.raindancer118.stoneintelligence.domain.id.NoteId.of(new java.util.UUID(0, 0));

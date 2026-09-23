@@ -71,6 +71,44 @@ public abstract class NoteRepositoryContractTest {
         }
     }
 
+    // Dateien (ADR 0009) sind Eintraege derselben Tabelle - aeltere Clients bekommen sie nie zu sehen.
+    @Nested
+    class Files {
+
+        @Test
+        void should_createAFile_thatIsFindableWithItsKind() {
+            var repository = repository();
+            var vaultId = newVault();
+
+            var file = repository.create(vaultId, "Anhänge/Skript.pdf", NoteLevel.of(1), "tom", NoteKind.FILE);
+
+            assertThat(repository.findById(vaultId, file.id())).get().extracting(Note::kind).isEqualTo(NoteKind.FILE);
+            assertThat(repository.create(vaultId, "a.md", NoteLevel.of(1), "tom").kind()).isEqualTo(NoteKind.NOTE);
+        }
+
+        @Test
+        void should_listFilesOnlyWhenAskedFor() {
+            var repository = repository();
+            var vaultId = newVault();
+            var note = repository.create(vaultId, "a.md", NoteLevel.of(1), "tom");
+            var file = repository.create(vaultId, "b.pdf", NoteLevel.of(1), "tom", NoteKind.FILE);
+
+            assertThat(repository.list(vaultId, null, 10).notes()).containsExactly(note);
+            assertThat(repository.list(vaultId, null, 10, java.util.Set.of(NoteKind.NOTE, NoteKind.FILE)).notes())
+                .containsExactly(note, file);
+            assertThat(repository.list(vaultId, null, 10, java.util.Set.of(NoteKind.FILE)).notes()).containsExactly(file);
+        }
+
+        @Test
+        void should_keepTheKind_whenRenaming() {
+            var repository = repository();
+            var vaultId = newVault();
+            var file = repository.create(vaultId, "b.pdf", NoteLevel.of(1), "tom", NoteKind.FILE);
+
+            assertThat(repository.rename(vaultId, file.id(), "Archiv/b.pdf").kind()).isEqualTo(NoteKind.FILE);
+        }
+    }
+
     @Nested
     class Reconciliation {
 

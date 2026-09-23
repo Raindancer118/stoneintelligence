@@ -39,10 +39,13 @@ public class NoteController {
     private final VaultAnnouncementService announcements;
     private final SnapshotStore snapshots;
     private final FolderRegistry folders;
+    private final de.raindancer118.stoneintelligence.platform.files.FileVersionRepository fileVersions;
 
     public NoteController(NoteRepository notes, SyncRelayService relay, AuditService audit, VaultAccessGuard access,
-                          VaultAnnouncementService announcements, SnapshotStore snapshots, FolderRegistry folders) {
+                          VaultAnnouncementService announcements, SnapshotStore snapshots, FolderRegistry folders,
+                          de.raindancer118.stoneintelligence.platform.files.FileVersionRepository fileVersions) {
         this.folders = folders;
+        this.fileVersions = fileVersions;
         this.notes = notes;
         this.snapshots = snapshots;
         this.relay = relay;
@@ -117,16 +120,34 @@ public class NoteController {
         @PathVariable String vaultId,
         @RequestParam(required = false) String cursor,
         @RequestParam(defaultValue = "100") int pageSize,
+        @RequestParam(defaultValue = "note") String kinds,
         Authentication authentication
     ) {
         var vId = VaultId.of(vaultId);
         access.require(vId, authentication.getName(), Permission.READ);
-        var page = notes.list(vId, cursor, pageSize);
+        var page = notes.list(vId, cursor, pageSize, parseKinds(kinds));
         var readable = access.readableNotes(vId, authentication.getName(), page.notes());
-        var revisions = snapshots.latestRevisions(readable.stream().map(Note::id).toList());
+        var revisions = snapshots.latestRevisions(readable.stream().filter(note -> !note.isFile()).map(Note::id).toList());
+        var files = fileVersions.current(readable.stream().filter(Note::isFile).map(Note::id).toList());
         return new ReconciliationResponse(
             page.epochId(), page.complete(), page.nextCursor().orElse(null),
-            readable.stream().map(note -> ListedNoteResponse.from(note, revisions.getOrDefault(note.id(), 0L))).toList());
+            readable.stream().map(note -> note.isFile()
+                ? ListedNoteResponse.fromFile(note, files.get(note.id()))
+                : ListedNoteResponse.from(note, revisions.getOrDefault(note.id(), 0L))).toList());
+    }
+
+    /** {@code note} (Standard, auch fuer aeltere Clients) oder {@code note,file} - ADR 0009 Punkt 5. */
+    private static java.util.Set<NoteKind> parseKinds(String kinds) {
+        var parsed = java.util.EnumSet.noneOf(NoteKind.class);
+        for (var kind : kinds.split(",")) {
+            switch (kind.strip().toLowerCase(java.util.Locale.ROOT)) {
+                case "note" -> parsed.add(NoteKind.NOTE);
+                case "file" -> parsed.add(NoteKind.FILE);
+                default -> throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "Unknown kind: " + kind);
+            }
+        }
+        return parsed;
     }
 
     @PatchMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
@@ -140,13 +161,22 @@ public class NoteController {
         var actor = authentication.getName();
         var vId = VaultId.of(vaultId);
         var nId = NoteId.of(noteId);
-        validatePath(request.path());
-        var before = notes.findById(vId, nId).map(Note::path).orElse(null);
+        var existing = notes.findById(vId, nId);
+        // Eine Notiz bleibt Markdown, eine Datei wird nie zu Markdown (ADR 0009).
+        if (existing.map(Note::isFile).orElse(false)) {
+            if (!de.raindancer118.stoneintelligence.platform.files.FilePaths.isValid(request.path())) {
+                throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "Invalid file path");
+            }
+        } else {
+            validatePath(request.path());
+        }
+        var before = existing.map(Note::path).orElse(null);
         access.require(vId, actor, Permission.WRITE, before != null ? before : request.path());
         access.require(vId, actor, Permission.WRITE, request.path());
         var note = notes.rename(vId, nId, request.path());
         audit.record(vId, nId, actor, "note.renamed", java.util.Map.of("from", String.valueOf(before), "to", note.path()));
-        announcements.announceNoteRenamed(vId, nId, note.path());
+        announcements.announceNoteRenamed(vId, nId, note.path(), note.kind());
         folders.ensureParentsOf(vId, note.path(), actor);
         return NoteResponse.from(note);
     }
@@ -162,7 +192,8 @@ public class NoteController {
         var actor = authentication.getName();
         var vId = VaultId.of(vaultId);
         var nId = NoteId.of(noteId);
-        var path = notes.findById(vId, nId).map(Note::path).orElse(null);
+        var existing = notes.findById(vId, nId);
+        var path = existing.map(Note::path).orElse(null);
         if (path != null) {
             access.require(vId, actor, Permission.DELETE, path);
         } else {
@@ -179,7 +210,7 @@ public class NoteController {
         // vault-weite Ankuendigung ist der Weg, auf dem die Loeschung die anderen Geraete
         // ueberhaupt erreicht.
         if (path != null) {
-            announcements.announceNoteDeleted(vId, nId, path);
+            announcements.announceNoteDeleted(vId, nId, path, existing.get().kind());
         }
         return TombstoneResponse.from(tombstone);
     }
@@ -202,11 +233,12 @@ public class NoteController {
     public record RenameNoteRequest(String path) {
     }
 
-    public record NoteResponse(String id, String vaultId, String path, int noteLevel, String createdBy, Instant createdAt) {
-        static NoteResponse from(Note note) {
+    public record NoteResponse(String id, String vaultId, String path, int noteLevel, String createdBy, Instant createdAt,
+                               NoteKind kind) {
+        public static NoteResponse from(Note note) {
             return new NoteResponse(
                 note.id().value().toString(), note.vaultId().value().toString(),
-                note.path(), note.level().value(), note.createdBy(), note.createdAt());
+                note.path(), note.level().value(), note.createdBy(), note.createdAt(), note.kind());
         }
     }
 
@@ -219,12 +251,20 @@ public class NoteController {
     }
 
     /** Wie {@link NoteResponse}, plus {@code revision}: hoechste gespeicherte Update-Sequenz (0 = noch kein Inhalt). */
+    /** Fuer Dateien ist {@code revision} die Fassung (0 = noch kein Inhalt), dazu Hash und Groesse. */
     public record ListedNoteResponse(String id, String vaultId, String path, int noteLevel, String createdBy,
-                                     Instant createdAt, long revision) {
+                                     Instant createdAt, long revision, NoteKind kind, String sha256, Long size) {
         static ListedNoteResponse from(Note note, long revision) {
             return new ListedNoteResponse(
                 note.id().value().toString(), note.vaultId().value().toString(),
-                note.path(), note.level().value(), note.createdBy(), note.createdAt(), revision);
+                note.path(), note.level().value(), note.createdBy(), note.createdAt(), revision, note.kind(), null, null);
+        }
+
+        static ListedNoteResponse fromFile(Note note, de.raindancer118.stoneintelligence.platform.files.FileVersion version) {
+            return new ListedNoteResponse(
+                note.id().value().toString(), note.vaultId().value().toString(), note.path(), note.level().value(),
+                note.createdBy(), note.createdAt(), version == null ? 0 : version.revision(), note.kind(),
+                version == null ? null : version.sha256(), version == null ? null : version.size());
         }
     }
 

@@ -46,6 +46,9 @@ public class NoteContentController {
         access.require(vId, auth.getName(), Permission.READ);
         var note = notes.findById(vId, nId).orElseThrow(() -> new NoteNotFoundException(vId, nId));
         access.require(vId, auth.getName(), permission, note.path());
+        if (note.isFile()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Files have no note content - use the file endpoints");
+        }
         if (note.level().value() == 101) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Encrypted notes require the Obsidian client");
         }
