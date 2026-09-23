@@ -36,6 +36,9 @@ final class Prompts {
                 - Gehört ein Thema zu einer schon vorhandenen Notiz (derselbe Vorgang, dieselbe
                   Person, dieselbe Figur), übernimm deren Titel exakt - das Dokument ergänzt dann
                   diese Notiz.
+                - Sagt das Dokument Neues über jemanden oder etwas, zu dem es schon eine Notiz
+                  gibt (neue Angaben zu einer beteiligten Person, Organisation, Figur), nimm diese
+                  Notiz mit ihrem Titel in den Plan auf - auch wenn sie nicht das Hauptthema ist.
                 - Titel sind eindeutig und auch ohne das Dokument verständlich:
                   "Verkehrsunfall am 05.06.2026" statt "Unfall", Personen mit vollem Namen. Kein
                   Satz, keine Frage, keine Dateiendung, nicht die Art ("kind") in Klammern. Nimm in
