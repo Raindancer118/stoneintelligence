@@ -32,4 +32,11 @@ public final class FakeSnapshotStore implements SnapshotStore {
             .filter(record -> record.serverSequence() > afterServerSequence)
             .toList();
     }
+
+    @Override
+    public synchronized Map<NoteId, Long> latestRevisions(java.util.Collection<NoteId> noteIds) {
+        var revisions = new java.util.HashMap<NoteId, Long>();
+        noteIds.forEach(id -> revisions.put(id, (long) updatesByNote.getOrDefault(id, List.of()).size()));
+        return revisions;
+    }
 }
