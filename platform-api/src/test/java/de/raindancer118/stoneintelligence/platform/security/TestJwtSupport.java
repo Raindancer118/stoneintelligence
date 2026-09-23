@@ -46,10 +46,16 @@ public class TestJwtSupport {
     }
 
     public static String signedJwtFor(String preferredUsername) {
+        return signedJwtFor(preferredUsername, null);
+    }
+
+    /** Wie {@link #signedJwtFor(String)}, zusaetzlich mit {@code email}-Claim (wie Authentik ihn ausstellt). */
+    public static String signedJwtFor(String preferredUsername, String email) {
         try {
             var claims = new JWTClaimsSet.Builder()
                 .subject(preferredUsername)
                 .claim("preferred_username", preferredUsername)
+                .claim("email", email)
                 .issueTime(Date.from(Instant.now()))
                 .expirationTime(Date.from(Instant.now().plusSeconds(300)))
                 .build();

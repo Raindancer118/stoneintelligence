@@ -57,7 +57,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * direktem SQL-Insert.
  */
 @Testcontainers
-@Import(TestJwtSupport.class)
+@Import({TestJwtSupport.class, PlatformApiEndToEndIT.RecordingMailConfig.class})
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class PlatformApiEndToEndIT {
 
@@ -207,6 +207,70 @@ class PlatformApiEndToEndIT {
      * muesste es dafuer JEDE Notiz joinen und ihre komplette Historie laden, nur um festzustellen,
      * dass sich nichts geaendert hat.
      */
+    @org.springframework.boot.test.context.TestConfiguration
+    static class RecordingMailConfig {
+        static final java.util.List<de.raindancer118.stoneintelligence.platform.invitation.OutgoingMail> SENT =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @org.springframework.context.annotation.Bean
+        @org.springframework.context.annotation.Primary
+        de.raindancer118.stoneintelligence.platform.invitation.Mailer recordingMailer() {
+            return SENT::add;
+        }
+    }
+
+    private String lastInviteToken(String email) {
+        var mail = RecordingMailConfig.SENT.stream().filter(sent -> sent.to().equals(email)).reduce((a, b) -> b).orElseThrow();
+        var matcher = java.util.regex.Pattern.compile("/invite/([A-Za-z0-9_-]+)").matcher(mail.text());
+        assertThat(matcher.find()).isTrue();
+        return matcher.group(1);
+    }
+
+    /**
+     * Einladen per E-Mail bis zur Mitarbeit: Einladung ansehen ohne Login, annehmen mit Login,
+     * danach Zugriff. Zweitverwendung und Einladen ohne Verwaltungsrecht werden abgewiesen.
+     */
+    @Test
+    void should_inviteByEmail_showTheInvitationPublicly_andGrantAccessOnAccept() throws Exception {
+        var owner = bearerAuth("inviting-owner");
+        var vault = post("/api/v1/vaults", owner, Map.of("name", "Einladungs-Vault"), Map.class);
+        var base = "/api/v1/vaults/" + vault.get("id");
+
+        var invited = post(base + "/invitations", owner, Map.of("email", "Neu.Person@example.org", "access", "EDIT"), Map.class);
+        assertThat(invited.get("status")).isEqualTo("INVITED");
+        var token = lastInviteToken("neu.person@example.org");
+
+        var publicView = get("/api/v1/invitations/" + token, Map.of());
+        assertThat(publicView.statusCode()).as(publicView.body()).isEqualTo(200);
+        var info = json.readTree(publicView.body());
+        assertThat(info.get("state").asText()).isEqualTo("PENDING");
+        assertThat(info.get("vaultName").asText()).isEqualTo("Einladungs-Vault");
+        assertThat(info.get("maskedEmail").asText()).isEqualTo("n***@example.org");
+        assertThat(json.readTree(get(base + "/invitations", owner).body()).size()).isEqualTo(1);
+
+        var newcomer = bearerAuth("newcomer");
+        assertThat(get(base + "/notes", newcomer).statusCode()).isEqualTo(403);
+        var accepted = postRaw("/api/v1/invitations/" + token + "/accept", newcomer, null);
+        assertThat(accepted.statusCode()).as(accepted.body()).isEqualTo(200);
+        assertThat(get(base + "/notes", newcomer).statusCode()).isEqualTo(200);
+        assertThat(postRaw(base + "/invitations", newcomer, Map.of("email", "x@example.org")).statusCode())
+            .as("Mitbearbeiter duerfen nicht selbst einladen").isEqualTo(403);
+        assertThat(postRaw("/api/v1/invitations/" + token + "/accept", bearerAuth("mallory"), null).statusCode()).isEqualTo(422);
+        assertThat(postRaw("/api/v1/invitations/" + token + "/accept", Map.of(), null).statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void should_joinAutomatically_whenTheInvitedEmailSignsIn() throws Exception {
+        var owner = bearerAuth("auto-owner");
+        var vault = post("/api/v1/vaults", owner, Map.of("name", "Auto-Vault"), Map.class);
+        post("/api/v1/vaults/" + vault.get("id") + "/invitations", owner, Map.of("email", "auto@example.org"), Map.class);
+
+        var signedIn = Map.of("Authorization", "Bearer " + TestJwtSupport.signedJwtFor("auto-user", "auto@example.org"));
+        var vaults = json.readTree(get("/api/v1/vaults", signedIn).body());
+
+        assertThat(vaults).extracting(node -> node.get("name").asText()).contains("Auto-Vault");
+    }
+
     @Test
     void should_reportContentRevision_perNote_inReconciliationList() throws Exception {
         var auth = bearerAuth("revision-reader");
