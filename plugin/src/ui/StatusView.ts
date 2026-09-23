@@ -170,6 +170,13 @@ export class StatusView extends ItemView {
       const row = this.fileRow(section, problem.path, "alert-triangle");
       row.addClass("is-problem");
       row.createDiv({ cls: "stoneintelligence-row-detail", text: problem.message });
+      if (problem.actions?.length) {
+        const actions = row.createDiv({ cls: "stoneintelligence-row-actions" });
+        for (const action of problem.actions) {
+          const button = actions.createEl("button", { text: action.label });
+          button.onclick = () => action.run();
+        }
+      }
     }
   }
 

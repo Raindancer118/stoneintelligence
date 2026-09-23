@@ -34,10 +34,17 @@ export interface ActivityEntry {
   detail?: string;
 }
 
+/** Eine Entscheidung, die die Person zu einem Problem direkt in der Seitenleiste treffen kann. */
+export interface ProblemAction {
+  label: string;
+  run: () => void;
+}
+
 export interface Problem {
   path: string;
   message: string;
   at: number;
+  actions?: ProblemAction[];
 }
 
 interface Flags {
@@ -116,8 +123,8 @@ export class SyncActivity {
     return this.lastSynced;
   }
 
-  reportProblem(path: string, message: string): void {
-    this.problemsByPath.set(path, { path, message, at: this.now() });
+  reportProblem(path: string, message: string, actions?: ProblemAction[]): void {
+    this.problemsByPath.set(path, { path, message, at: this.now(), ...(actions ? { actions } : {}) });
     this.changed();
   }
 

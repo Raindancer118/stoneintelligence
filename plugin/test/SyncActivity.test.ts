@@ -64,6 +64,18 @@ describe("SyncActivity", () => {
     });
   });
 
+  it("should_carryDecisionActions_withAProblem", () => {
+    const activity = ready();
+    const keep = vi.fn();
+    activity.reportProblem("a.md", "Anderswo gelöscht", [{ label: "Behalten", run: keep }]);
+
+    const [problem] = activity.problems();
+    problem.actions?.[0].run();
+
+    expect(problem.actions?.map((action) => action.label)).toEqual(["Behalten"]);
+    expect(keep).toHaveBeenCalled();
+  });
+
   it("should_clearAProblem_onceThatPathSyncsAgain", () => {
     const activity = ready();
     activity.reportProblem("a.md", "Fehler");
