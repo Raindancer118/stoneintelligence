@@ -41,6 +41,20 @@ export interface InvitationInfo {
   state: "PENDING" | "ACCEPTED" | "EXPIRED" | "REVOKED"; vaultName: string; invitedBy: string; maskedEmail: string;
   access: InviteAccess; expiresAt: string; enrollmentUrl: string | null;
 }
+export interface AiService { id: string; name: string; levels: number[]; }
+export type AiJobStatus = "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+export interface AiJob {
+  id: string; service: string; requestedBy: string; fileName: string; size: number; level: number; status: AiJobStatus;
+  progress: string | null; percent: number | null; error: string | null; changeSetId: string | null; createdAt: string;
+  finishedAt: string | null;
+}
+export interface AiChangeSet {
+  id: string; service: string; agent: string; requestedBy: string; label: string; createdAt: string; revertedAt: string | null;
+}
+export interface AiChange { noteId: string; path: string; kind: "CREATED" | "UPDATED"; at: string; }
+export interface AiChangeSetDetail { changeSet: AiChangeSet; changes: AiChange[]; }
+export interface AiRevertReport { reverted: number; conflicts: { path: string; reason: string }[]; }
+
 export class ApiError extends Error {
   constructor(public status: number, detail?: string) {
     super(detail ?? ({ 401: "Deine Anmeldung ist abgelaufen. Bitte melde dich erneut an.",
@@ -75,7 +89,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     signal: AbortSignal.timeout(20_000),
     ...options,
     headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      // Nur JSON-Koerper bekommen den JSON-Typ - bei FormData setzt der Browser Typ und Boundary selbst.
+      ...(typeof options.body === "string" ? { "Content-Type": "application/json" } : {}),
       Authorization: `Bearer ${token}`,
       ...options.headers,
     },
@@ -140,6 +155,23 @@ export const api = {
   describeInvitation: (token: string) => publicRequest<InvitationInfo>(`/api/v1/invitations/${encodeURIComponent(token)}`),
   acceptInvitation: (token: string) =>
     request<{ vaultId: string; vaultName: string }>(`/api/v1/invitations/${encodeURIComponent(token)}/accept`, { method: "POST" }),
+
+  aiServices: () => request<AiService[]>("/api/v1/ai/services"),
+  listAiJobs: (vaultId: string) => request<AiJob[]>(`/api/v1/vaults/${vaultId}/ai/jobs`),
+  /** Eine Datei je Anfrage - so bleibt jede unter dem Server-Limit und scheitert einzeln. */
+  uploadAiDocument: (vaultId: string, service: string, level: number, file: File) => {
+    const form = new FormData();
+    form.append("service", service);
+    form.append("level", String(level));
+    form.append("files", file, file.name);
+    return request<AiJob[]>(`/api/v1/vaults/${vaultId}/ai/jobs`, { method: "POST", body: form, signal: AbortSignal.timeout(120_000) });
+  },
+  cancelAiJob: (vaultId: string, jobId: string) => request<AiJob>(`/api/v1/vaults/${vaultId}/ai/jobs/${jobId}/cancel`, { method: "POST" }),
+  listChangeSets: (vaultId: string) => request<AiChangeSet[]>(`/api/v1/vaults/${vaultId}/ai/change-sets`),
+  changeSet: (vaultId: string, changeSetId: string) =>
+    request<AiChangeSetDetail>(`/api/v1/vaults/${vaultId}/ai/change-sets/${changeSetId}`),
+  revertChangeSet: (vaultId: string, changeSetId: string) =>
+    request<AiRevertReport>(`/api/v1/vaults/${vaultId}/ai/change-sets/${changeSetId}/revert`, { method: "POST" }),
 
   listPathRules: (vaultId: string) => request<PathRule[]>(`/api/v1/vaults/${vaultId}/path-rules`),
   createPathRule: (vaultId: string, pathPrefix: string, scopeSubject: string | null, effect: "ALLOW" | "DENY") =>

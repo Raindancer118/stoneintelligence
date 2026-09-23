@@ -20,4 +20,23 @@ describe("API responses", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("broken")));
     await expect(api.listVaults()).rejects.toThrow();
   });
+  // Hochladen ist multipart: der Browser setzt Content-Type samt Boundary selbst - ein JSON-Header waere falsch.
+  it("uploads a document as multipart form data", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json([{ id: "j1" }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File(["%PDF-1.7"], "Vorlesung.pdf", { type: "application/pdf" });
+
+    await api.uploadAiDocument("vault", "lokal", 2, file);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/api\/v1\/vaults\/vault\/ai\/jobs$/);
+    expect(init.method).toBe("POST");
+    const form = init.body as FormData;
+    expect(form.get("service")).toBe("lokal");
+    expect(form.get("level")).toBe("2");
+    expect((form.get("files") as File).name).toBe("Vorlesung.pdf");
+    expect(init.headers["Content-Type"]).toBeUndefined();
+    expect(init.headers.Authorization).toBe("Bearer test-token");
+  });
 });
+

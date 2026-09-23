@@ -105,6 +105,13 @@ public class AiController {
             .orElseThrow(() -> new AiWriteRefusedException("Job nicht gefunden"));
     }
 
+    /** Die Texte sind fuer Menschen geschrieben und verraten nichts Internes - direkt anzeigen lassen. */
+    @org.springframework.web.bind.annotation.ExceptionHandler(AiWriteRefusedException.class)
+    public org.springframework.http.ProblemDetail refused(AiWriteRefusedException refused) {
+        return org.springframework.http.ProblemDetail.forStatusAndDetail(
+            org.springframework.http.HttpStatus.UNPROCESSABLE_CONTENT, refused.getMessage());
+    }
+
     public record JobResponse(UUID id, String service, String requestedBy, String fileName, long size, int level, String status,
                               String progress, Integer percent, String error, UUID changeSetId, Instant createdAt,
                               Instant finishedAt) {

@@ -9,6 +9,7 @@ vi.mock("../src/lib/auth", () => ({
 }));
 vi.mock("../src/lib/api", () => ({ api: {
   listVaults: vi.fn(), permissions: vi.fn(), listNotes: vi.fn(), describeInvitation: vi.fn(), acceptInvitation: vi.fn(),
+  aiServices: vi.fn(), listAiJobs: vi.fn(), listChangeSets: vi.fn(),
 } }));
 beforeEach(() => { vi.resetAllMocks(); window.history.replaceState({}, "", "/"); });
 afterEach(cleanup);
@@ -27,6 +28,25 @@ describe("dashboard startup", () => {
     render(App);
     await screen.findByRole("heading", { name: "My notes", level: 1 });
     expect(api.listVaults).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("KI-Bereich", () => {
+  it("opens the AI area of the selected vault", async () => {
+    vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(api.listVaults).mockResolvedValue([{ id: "vault", name: "My notes", createdAt: "" }]);
+    vi.mocked(api.permissions).mockResolvedValue(["READ", "CREATE"]);
+    vi.mocked(api.listNotes).mockResolvedValue({ epochId: "epoch", notes: [], complete: true, nextCursor: null });
+    vi.mocked(api.aiServices).mockResolvedValue([{ id: "gemini", name: "Gemini", levels: [1] }]);
+    vi.mocked(api.listAiJobs).mockResolvedValue([]);
+    vi.mocked(api.listChangeSets).mockResolvedValue([]);
+    render(App);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "KI-Wissen" }));
+
+    await screen.findByRole("heading", { name: "Wissen aus Dokumenten" });
+    expect(screen.getByRole("button", { name: "KI-Wissen" }).getAttribute("aria-pressed")).toBe("true");
+    expect(api.listAiJobs).toHaveBeenCalledWith("vault");
   });
 });
 

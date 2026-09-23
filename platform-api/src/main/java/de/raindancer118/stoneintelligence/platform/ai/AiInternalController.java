@@ -164,6 +164,13 @@ public class AiInternalController {
         return text;
     }
 
+    /** Die Texte sind fuer Menschen geschrieben und verraten nichts Internes - direkt anzeigen lassen. */
+    @org.springframework.web.bind.annotation.ExceptionHandler(AiWriteRefusedException.class)
+    public org.springframework.http.ProblemDetail refused(AiWriteRefusedException refused) {
+        return org.springframework.http.ProblemDetail.forStatusAndDetail(
+            org.springframework.http.HttpStatus.UNPROCESSABLE_CONTENT, refused.getMessage());
+    }
+
     public record StartChangeSetRequest(String service, String requestedBy, String label) { }
     public record ChangeSetCreated(UUID id) { }
     public record CreateNoteRequest(String path, String text, Integer level) { }
