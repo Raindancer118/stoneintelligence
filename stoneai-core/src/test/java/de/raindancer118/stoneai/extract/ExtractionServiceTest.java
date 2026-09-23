@@ -182,6 +182,62 @@ class ExtractionServiceTest {
     }
 
     /** Hands out canned answers in order and records what it was asked. */
+    @Nested
+    @DisplayName("Writing the planned topics")
+    class Planned {
+
+        private final TopicPlan plan = new TopicPlan(List.of(
+                new TopicPlan.Topic("Verkehrsunfall am 06.06.2026", "ereignis", "Hergang", List.of()),
+                new TopicPlan.Topic("Tom Stieh", "person", "Rolle", List.of())), true);
+
+        // The prompt shows each topic with its kind - models tend to copy that into the title.
+        @Test
+        @DisplayName("should drop a kind the model appended to a title")
+        void should_stripTheKind_fromTitles() {
+            ScriptedLlm llm = new ScriptedLlm("""
+                    {"concepts":[{"title":"Tom Stieh (person)","body":"Fahrer."}]}""");
+
+            ExtractionResult result = new ExtractionService(config, llm).extract(List.of(chunk("Text")), plan);
+
+            assertThat(result.concepts()).extracting(ExtractedConcept::title).containsExactly("Tom Stieh");
+        }
+
+        // A two-page letter comes in two chunks, but the planner read all of it: nothing new may appear.
+        @Test
+        @DisplayName("should fold unplanned notes into the main topic when the planner read the whole document")
+        void should_foldUnplannedNotes_acrossChunks_whenThePlanIsComplete() {
+            ScriptedLlm llm = new ScriptedLlm(
+                    "{\"concepts\":[{\"title\":\"Verkehrsunfall am 06.06.2026\",\"body\":\"Seite eins.\"}]}",
+                    "{\"concepts\":[{\"title\":\"Schleudertrauma\",\"body\":\"Seite zwei.\"}]}");
+
+            ExtractionResult result = new ExtractionService(config, llm).extract(List.of(chunk("Eins"), chunk("Zwei")), plan);
+
+            assertThat(result.concepts()).extracting(ExtractedConcept::title)
+                    .containsOnly("Verkehrsunfall am 06.06.2026");
+        }
+
+        @Test
+        @DisplayName("should let a chunk add a topic when the planner only saw excerpts")
+        void should_keepANewTopic_whenThePlanIsPartial() {
+            TopicPlan partial = new TopicPlan(plan.topics(), false);
+            ScriptedLlm llm = new ScriptedLlm("{\"concepts\":[{\"title\":\"Photosynthese\",\"body\":\"Kapitel neun.\"}]}");
+
+            ExtractionResult result = new ExtractionService(config, llm).extract(List.of(chunk("Neun")), partial);
+
+            assertThat(result.concepts()).extracting(ExtractedConcept::title).containsExactly("Photosynthese");
+        }
+
+        @Test
+        @DisplayName("should not show the topics in a form the model mistakes for the title")
+        void should_quoteTheTitles_inThePrompt() {
+            ScriptedLlm llm = new ScriptedLlm("{\"concepts\":[]}");
+
+            new ExtractionService(config, llm).extract(List.of(chunk("Text")), plan);
+
+            assertThat(llm.prompts().getFirst()).contains("„Tom Stieh“").doesNotContain("Tom Stieh (person)");
+        }
+    }
+
     private static final class ScriptedLlm implements LlmClient {
 
         private final Deque<String> answers = new ArrayDeque<>();

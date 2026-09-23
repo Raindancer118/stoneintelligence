@@ -31,7 +31,7 @@ public final class ExtractionService {
     }
 
     /**
-     * Extracts the planned topics. When the planner read the whole document (a single chunk), a
+     * Extracts the planned topics. When the planner read the whole document, a
      * note outside the plan is a detail the model split off after all - it is folded into the
      * topic it resembles, or else the main topic. Only in a long document, where the planner saw
      * excerpts, may a chunk add a topic of its own.
@@ -39,7 +39,7 @@ public final class ExtractionService {
     public ExtractionResult extract(List<Chunk> chunks, TopicPlan plan) {
         List<ExtractedConcept> concepts = new ArrayList<>();
         List<ChunkFailure> failures = new ArrayList<>();
-        boolean mayAddTopics = plan.isEmpty() || chunks.size() > 1;
+        boolean mayAddTopics = plan.isEmpty() || !plan.complete();
         String system = Prompts.extractionSystem(config.llm().language(), mayAddTopics);
         int budget = config.llm().maxTokensPerRun();
         int used = 0;
@@ -82,7 +82,10 @@ public final class ExtractionService {
         }
         double threshold = config.notes().similarityThreshold();
         List<ExtractedConcept> fitted = new ArrayList<>();
-        for (ExtractedConcept concept : parsed) {
+        for (ExtractedConcept raw : parsed) {
+            ExtractedConcept concept = new ExtractedConcept(TopicPlan.withoutKind(raw.title()), raw.aliases(), raw.definition(),
+                    raw.body(), raw.tags(), raw.entities(), raw.related().stream().map(TopicPlan::withoutKind).toList(),
+                    raw.confidence(), raw.provenance());
             TopicPlan.Topic topic = plan.topics().stream()
                     .filter(candidate -> matches(candidate, concept, threshold))
                     .findFirst().orElse(null);
