@@ -1,159 +1,100 @@
-# StoneIntelligence
+<div align="center">
+  <img src="webapp/public/logo.png" alt="StoneIntelligence-Logo" width="112" height="112">
 
-Enterprise-Grade Kollaborations- und Wissensmanagement-Plattform für Obsidian: Live-Sync,
-Note-Level-Policies, Rollen/Gruppen/ACLs und (ab Phase 5) KI-gestützte Wissens-Ingestion.
+  # StoneIntelligence
 
-Architektur- und Phasenplanung: [`Plan.md`](Plan.md). Laufender Entwicklungsstand: [`Project.md`](Project.md).
+  **Gemeinsam denken. In Obsidian schreiben. Überall weiterarbeiten.**
 
-Diese Anleitung deckt zwei unabhängige Installationen ab:
+  Live synchronisierte Notizen, gemeinsame Vaults und klare Zugriffsrechte —
+  mit einem Arbeitsplatz im Browser und einem Plugin für Obsidian.
 
-- **Server** — die drei Spring-Boot-Deployables (`platform-api`, `intelligence-worker`,
-  `mcp-adapter`) + Postgres, per Docker Compose.
-- **Client** — das Obsidian-Plugin (`plugin/`), das sich mit einem laufenden Server verbindet.
+  [Dashboard](https://kb.tstieh.de) · [Obsidian einrichten](https://kb.tstieh.de/setup) · [Plugin-Releases](https://github.com/Raindancer118/stoneintelligence/releases) · [Architektur](Plan.md)
 
-## Server-Installation
+  [![CI](https://github.com/Raindancer118/stoneintelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/Raindancer118/stoneintelligence/actions/workflows/ci.yml)
+  [![Latest release](https://img.shields.io/github/v/release/Raindancer118/stoneintelligence?label=Obsidian-Plugin)](https://github.com/Raindancer118/stoneintelligence/releases)
+</div>
 
-### Voraussetzungen
+---
 
-- Docker + Docker Compose
-- Ein Postgres-Passwort für `STONEINTELLIGENCE_DB_PASSWORD` (siehe unten)
+StoneIntelligence verbindet einen Obsidian-Vault mit einem gemeinsamen Server. Änderungen an
+geöffneten Notizen erscheinen live bei anderen; der restliche Vault wird im Hintergrund
+abgeglichen. Im Browser lassen sich Notizen lesen und bearbeiten sowie Mitglieder und Rechte
+verwalten.
 
-### Schnellstart
+| In Obsidian | Im Browser | Im Team |
+| :--- | :--- | :--- |
+| Live-Bearbeitung mit sichtbaren Cursorn | Notizen lesen, bearbeiten und organisieren | Vaults, Einladungen und Mitglieder verwalten |
+| Hintergrundabgleich für Notizen und Ordner | Änderungen speichern und Konflikte erkennen | Rollen und Pfadrechte vergeben |
+| Offline weiterarbeiten und später abgleichen | Plugin direkt aus dem Vault heraus verbinden | Änderungen im Audit nachvollziehen |
 
-```bash
-git clone git@github.com:Raindancer118/stoneintelligence.git
-cd stoneintelligence
+> **Projektstand:** Sync, Dashboard und Rechteverwaltung sind nutzbar. Die KI-Ingestion wird
+> derzeit entwickelt; Worker und MCP-Adapter sind noch keine fertigen, produktiv betriebenen
+> Funktionen. Die geplanten Bausteine stehen in [Plan.md](Plan.md).
 
-# Passwort setzen (Pflicht - docker-compose.yml bricht ohne dieses ab)
-export STONEINTELLIGENCE_DB_PASSWORD="<sicheres-passwort>"
+## In Obsidian starten
 
-docker compose up -d --build
-```
+1. [Obsidian installieren](https://obsidian.md/download) und einen Vault öffnen. Für einen
+   gemeinsamen Vault empfiehlt sich ein neuer, leerer Obsidian-Vault: Inhalte eines bestehenden
+   Vaults werden beim Verbinden mit den anderen Mitgliedern geteilt.
+2. Die [Einrichtungsseite](https://kb.tstieh.de/setup) öffnen. Sie führt durch die Installation
+   von [BRAT](https://github.com/TfTHacker/obsidian42-brat) und des StoneIntelligence-Plugins.
+3. Im [Dashboard](https://kb.tstieh.de) anmelden, einen Vault anlegen oder eine Einladung
+   annehmen und im Vault den Reiter **„In Obsidian“** öffnen. Dort verbindet ein Klick den
+   Obsidian-Vault.
 
-`docker-compose.yml` startet:
+Das Plugin ist auf die gehostete Instanz voreingestellt. Für einen eigenen Server lassen sich
+API-Adresse und OIDC-Anmeldung unter **Einstellungen → StoneIntelligence → Erweitert** ändern.
+Obsidian **1.6.6 oder neuer** wird benötigt; das Plugin läuft auch auf Mobilgeräten.
 
-| Service | Port | Beschreibung |
-|---|---|---|
-| `postgres` | `127.0.0.1:5432` (nur lokal gebunden) | `pgvector/pgvector:pg17`, Datenbank `stoneintelligence` |
-| `platform-api` | `8080` | Sync-Kern (WebSocket-Relay), Note-CRUD, Rollen/Gruppen/ACLs, Audit |
-| `intelligence-worker` | `8081` | Ingestion/Knowledge-Graph (Phase 5+, aktuell nur Job-Outbox) |
-| `mcp-adapter` | `8082` | Dünner MCP-Adapter über `platform-api`/`intelligence-worker` |
+Wer BRAT manuell einrichtet, trägt dort `Raindancer118/stoneintelligence` als Plugin-Repository
+ein. Die [GitHub-Releases](https://github.com/Raindancer118/stoneintelligence/releases) enthalten
+`manifest.json`, `main.js` und `styles.css` für eine manuelle Installation unter
+`.obsidian/plugins/stoneintelligence/`.
 
-Datenbankschemata (`platform`, `worker`) werden beim Start von `platform-api` bzw.
-`intelligence-worker` automatisch per Flyway migriert — kein manueller Migrationsschritt nötig.
+## Für die Entwicklung
 
-### Umgebungsvariablen
-
-| Variable | Pflicht | Default | Bedeutung |
-|---|---|---|---|
-| `STONEINTELLIGENCE_DB_USER` | nein | `stoneintelligence` | Postgres-Benutzer |
-| `STONEINTELLIGENCE_DB_PASSWORD` | **ja** | — | Postgres-Passwort (Compose bricht ohne Wert ab) |
-| `STONEINTELLIGENCE_OIDC_ISSUER_URI` | nein | leer | OIDC-Issuer für `platform-api` (Phase 3, Durchsetzung noch nicht scharf geschaltet) |
-
-Für einen produktiven Betrieb diese Variablen über eine `.env`-Datei neben `docker-compose.yml`
-setzen (von Compose automatisch geladen) — **niemals ins Repo committen**.
-
-### Ohne Docker (lokale Entwicklung)
-
-Voraussetzungen: JDK 25, Maven (oder `./mvnw`), ein laufendes Postgres (z. B. via
-`docker compose up -d postgres`).
-
-```bash
-export STONEINTELLIGENCE_DB_URL="jdbc:postgresql://localhost:5432/stoneintelligence"
-export STONEINTELLIGENCE_DB_USER="stoneintelligence"
-export STONEINTELLIGENCE_DB_PASSWORD="<passwort>"
-
-./mvnw -pl platform-api spring-boot:run
-```
-
-Analog für `intelligence-worker` und `mcp-adapter` (jeweils `-pl <modul> spring-boot:run`).
-
-### Build & Tests
+Das Repository enthält eine Java-API, ein Obsidian-Plugin und eine Svelte-Webapp. Für die
+Java-Module werden **JDK 25** und Maven (`./mvnw`) benötigt, für Plugin und Webapp **Node.js 22**.
+Integrationstests verwenden PostgreSQL über Testcontainers und brauchen Docker.
 
 ```bash
-./mvnw test      # Unit-Tests (Fakes, kein Docker nötig)
-./mvnw verify    # zusätzlich Integrationstests gegen echtes Postgres (Testcontainers, braucht laufenden Docker-Daemon)
-```
+# Java: Unit- und Integrationstests
+./mvnw verify
 
-## Client-Installation (Obsidian-Plugin)
-
-### Voraussetzungen
-
-- Node.js (für den Build)
-- Ein laufender StoneIntelligence-Server (s. o.), erreichbar von dem Rechner, auf dem Obsidian läuft
-- Obsidian ≥ 1.5.0
-
-### Bauen
-
-```bash
+# Obsidian-Plugin: Tests und Bundle
 cd plugin
-npm install
+npm ci
+npm test
 npm run build
+
+# Webapp: siehe webapp/README.md für die lokale Konfiguration
+cd ../webapp
+npm ci
+npm run check
+npm test
+npm run dev
 ```
 
-Das erzeugt `plugin/main.js` neben dem bereits vorhandenen `manifest.json` und `styles.css`.
+Für lokale Builds der Java-Module werden die privaten Maven-Abhängigkeiten aus
+`packages.tstieh.de` benötigt. Der CI-Workflow zeigt die dafür verwendete Maven-Konfiguration.
 
-### In einen Obsidian-Vault installieren
+Der mitgelieferte [`docker-compose.yml`](docker-compose.yml) definiert PostgreSQL, API, Worker
+und MCP-Adapter. Für eine eigene API-Instanz sind mindestens ein Datenbankpasswort und ein
+passender OIDC-Issuer nötig. Der Worker und der MCP-Adapter befinden sich noch im Aufbau; für
+die aktuelle Sync-Anwendung reichen PostgreSQL und `platform-api`. Die Browser-App benötigt
+zusätzlich einen passenden OIDC-Client und eine erlaubte Origin in der API-Konfiguration.
 
-Im Ziel-Vault (der Obsidian-Vault, der synchronisiert werden soll) einen Ordner
-`.obsidian/plugins/stoneintelligence/` anlegen und folgende Dateien aus `plugin/` hineinkopieren:
+## Was wo liegt
 
-```
-manifest.json
-main.js
-styles.css
-```
+| Pfad | Aufgabe |
+| :--- | :--- |
+| [`platform-api/`](platform-api/) | REST-API, Yjs-Relay, Rechte, Audit und persistierte Notizen |
+| [`plugin/`](plugin/) | Obsidian-Plugin für Live- und Hintergrund-Sync |
+| [`webapp/`](webapp/) | Dashboard, Notizeditor und Verwaltung |
+| [`domain-core/`](domain-core/) | Gemeinsame Domänenregeln ohne Framework-Abhängigkeit |
+| [`stoneai-core/`](stoneai-core/), [`intelligence-worker/`](intelligence-worker/) | KI-Ingestion im Aufbau |
+| [`mcp-adapter/`](mcp-adapter/) | Geplanter Agent-Zugang |
+| [`docs/adr/`](docs/adr/) | Architekturentscheidungen |
 
-Danach in Obsidian: Einstellungen → Community-Plugins → „StoneIntelligence“ aktivieren.
-
-### Alternativ: Installation über BRAT
-
-Ab dem ersten Versions-Tag (`X.Y.Z`) baut eine GitHub Action automatisch ein Release mit
-`manifest.json` + `main.js` + `styles.css` als Assets (`.github/workflows/plugin-release.yml`).
-Damit lässt sich das Plugin auch über [BRAT](https://github.com/TfTHacker/obsidian42-brat)
-installieren:
-
-1. BRAT-Plugin in Obsidian installieren und aktivieren.
-2. In BRAT: „Add Beta plugin“ → `Raindancer118/stoneintelligence` eintragen.
-3. BRAT lädt die Release-Assets vom neuesten Release und hält sie automatisch aktuell.
-
-### Plugin konfigurieren
-
-In den Plugin-Einstellungen (Einstellungen → StoneIntelligence) folgende Felder setzen:
-
-| Feld | Beschreibung | Beispiel |
-|---|---|---|
-| Platform API URL | HTTP-Adresse von `platform-api` | `http://localhost:8080` |
-| Platform WS URL | WebSocket-Adresse von `platform-api` (gleicher Host/Port, anderes Schema) | `ws://localhost:8080` |
-| Vault-ID | ID des Vaults auf dem Server (muss dort bereits angelegt sein) | — |
-| Actor | Anzeigename/Kennung, unter der Änderungen dieses Clients im Audit-Trail erscheinen | `tom` |
-
-Ohne gültige Vault-ID und einen erreichbaren Server bleibt die Live-Synchronisation inaktiv;
-lokales Bearbeiten von Notizen im Vault funktioniert davon unabhängig weiterhin normal.
-
-### Status & Befehle
-
-Das Plugin zeigt seinen Verbindungsstatus in der Statusleiste unten rechts an
-(z. B. `● StoneIntelligence: 2/3`, `⚠ StoneIntelligence: 1 Fehler` oder
-`○ StoneIntelligence: nicht angemeldet`). Ein Klick darauf öffnet die
-Status-Ansicht in der rechten Seitenleiste: sie zeigt Anmeldestatus,
-konfigurierten Vault und pro Notiz den Live-Sync-Status (verbindet…,
-synchronisiert, getrennt, Fehler).
-
-Über die Befehlspalette (`Strg/Cmd+P`) stehen außerdem zur Verfügung:
-
-- **StoneIntelligence: Status anzeigen** — öffnet die Status-Ansicht
-- **StoneIntelligence: Anmelden** — startet den Login-Flow
-- **StoneIntelligence: Alle Notizen neu synchronisieren**
-- **StoneIntelligence: Aktive Notiz neu synchronisieren**
-
-## Repo-Struktur
-
-| Verzeichnis | Inhalt |
-|---|---|
-| `domain-core` | Framework-freie Domänenlogik (IDs, Note-Level-Policies) |
-| `platform-api` | Sync-Kern, Identity/Authorization, Audit — Spring Boot 4 |
-| `intelligence-worker` | Ingestion/Knowledge-Graph (im Aufbau) — Spring Boot 4 |
-| `mcp-adapter` | MCP-Adapter über die beiden obigen Services — Spring Boot 4 (WebFlux) |
-| `plugin/` | Obsidian-Plugin (TypeScript) |
-| `docs/adr/` | Architecture Decision Records |
+Die vollständigen Ziele und Architekturentscheidungen stehen in [Anforderungen.md](Anforderungen.md)
+und [Plan.md](Plan.md). Die Webapp hat eine eigene [Entwickleranleitung](webapp/README.md).
