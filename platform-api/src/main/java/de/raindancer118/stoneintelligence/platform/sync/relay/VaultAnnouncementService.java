@@ -28,7 +28,20 @@ import org.springframework.stereotype.Component;
 @Component
 public class VaultAnnouncementService {
 
+    /** Mindestabstand zweier Inhalts-Ankuendigungen je Notiz - jeder Tastendruck ist ein Update. */
+    static final long UPDATE_ANNOUNCE_INTERVAL_NANOS = 1_000_000_000L;
+
     private final Map<VaultId, Set<VaultSubscriber>> subscribers = new ConcurrentHashMap<>();
+    private final Map<NoteId, Long> lastUpdateAnnouncement = new ConcurrentHashMap<>();
+    private final java.util.function.LongSupplier nanoClock;
+
+    public VaultAnnouncementService() {
+        this(System::nanoTime);
+    }
+
+    VaultAnnouncementService(java.util.function.LongSupplier nanoClock) {
+        this.nanoClock = nanoClock;
+    }
 
     public void subscribe(VaultId vaultId, VaultSubscriber subscriber) {
         subscribers.computeIfAbsent(vaultId, id -> new CopyOnWriteArraySet<>()).add(subscriber);
@@ -46,6 +59,7 @@ public class VaultAnnouncementService {
     }
 
     public void announceNoteDeleted(VaultId vaultId, NoteId noteId, String path) {
+        lastUpdateAnnouncement.remove(noteId);
         announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_DELETED, noteId, path);
     }
 
@@ -62,9 +76,34 @@ public class VaultAnnouncementService {
      * <p>Der Pfad wird nur an Empfaenger ausgeliefert, die die Notiz auch lesen duerfen - sonst
      * waere die Ankuendigung selbst ein Informationsleck ueber Existenz und Ablage fremder Notizen.
      */
+    /**
+     * Inhalt geaendert: Geraete, die die Notiz gerade NICHT offen haben, gleichen sie sofort ab
+     * statt erst beim naechsten periodischen Durchlauf. Hoechstens einmal je
+     * {@link #UPDATE_ANNOUNCE_INTERVAL_NANOS} und Notiz; der Pfad (DB-Lookup) wird nur dann
+     * aufgeloest. Das Plugin wartet nach einer Ankuendigung laenger als dieses Intervall, bevor es
+     * abgleicht - so ist auch das letzte, nicht mehr angekuendigte Update eines Schwalls dabei.
+     */
+    public void announceNoteUpdated(VaultId vaultId, NoteId noteId, java.util.function.Supplier<java.util.Optional<String>> path) {
+        var vaultSubscribers = subscribers.getOrDefault(vaultId, Set.of());
+        if (vaultSubscribers.stream().noneMatch(subscriber -> subscriber.wantsContentUpdates() && !subscriber.hasJoined(noteId))) {
+            return;
+        }
+        var now = nanoClock.getAsLong();
+        var previous = lastUpdateAnnouncement.get(noteId);
+        if (previous != null && now - previous < UPDATE_ANNOUNCE_INTERVAL_NANOS) {
+            return;
+        }
+        lastUpdateAnnouncement.put(noteId, now);
+        path.get().ifPresent(resolved -> announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_UPDATED, noteId, resolved));
+    }
+
     private void announce(VaultId vaultId, byte messageType, NoteId noteId, String path) {
         for (var subscriber : subscribers.getOrDefault(vaultId, Set.of())) {
             try {
+                if (messageType == SyncFrame.TYPE_VAULT_NOTE_UPDATED
+                        && (!subscriber.wantsContentUpdates() || subscriber.hasJoined(noteId))) {
+                    continue;
+                }
                 if (!subscriber.mayRead(path)) {
                     continue;
                 }

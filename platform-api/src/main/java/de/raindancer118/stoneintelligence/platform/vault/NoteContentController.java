@@ -8,6 +8,7 @@ import de.raindancer118.stoneintelligence.platform.identity.Permission;
 import de.raindancer118.stoneintelligence.platform.sync.relay.SnapshotStore;
 import de.raindancer118.stoneintelligence.platform.sync.relay.SyncRelayService;
 import de.raindancer118.stoneintelligence.platform.sync.relay.UpdateRecord;
+import de.raindancer118.stoneintelligence.platform.sync.relay.VaultAnnouncementService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,9 +28,11 @@ public class NoteContentController {
     private final SyncRelayService relay;
     private final VaultAccessGuard access;
     private final AuditService audit;
+    private final VaultAnnouncementService announcements;
 
     public NoteContentController(NoteRepository notes, SnapshotStore snapshots, SyncRelayService relay,
-                                 VaultAccessGuard access, AuditService audit) {
+                                 VaultAccessGuard access, AuditService audit, VaultAnnouncementService announcements) {
+        this.announcements = announcements;
         this.notes = notes;
         this.snapshots = snapshots;
         this.relay = relay;
@@ -72,6 +75,7 @@ public class NoteContentController {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Note changed; reload before saving"));
         audit.record(note.vaultId(), note.id(), auth.getName(), "note.content-updated",
             java.util.Map.of("revision", saved.serverSequence()));
+        announcements.announceNoteUpdated(note.vaultId(), note.id(), () -> java.util.Optional.of(note.path()));
         return new SavedResponse(saved.serverSequence());
     }
 

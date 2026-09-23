@@ -19,5 +19,15 @@ public interface VaultSubscriber {
     /** Darf der Actor dieser Verbindung die Notiz unter diesem Pfad ueberhaupt sehen? */
     boolean mayRead(String path);
 
+    /** Ob diese Verbindung Inhalts-Ankuendigungen ausdruecklich abonniert hat (s. SyncFrame Typ 10). */
+    default boolean wantsContentUpdates() {
+        return false;
+    }
+
+    /** Ob diese Verbindung die Notiz gerade gejoint hat (und Updates damit ohnehin direkt bekommt). */
+    default boolean hasJoined(NoteId noteId) {
+        return false;
+    }
+
     void sendVaultEvent(byte messageType, NoteId noteId, String path);
 }

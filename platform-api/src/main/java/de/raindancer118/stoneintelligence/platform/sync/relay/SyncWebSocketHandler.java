@@ -9,6 +9,7 @@ import de.raindancer118.stoneintelligence.domain.id.NoteId;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
 import de.raindancer118.stoneintelligence.platform.identity.Permission;
 import de.raindancer118.stoneintelligence.platform.vault.ForbiddenException;
+import de.raindancer118.stoneintelligence.platform.vault.Note;
 import de.raindancer118.stoneintelligence.platform.vault.NoteRepository;
 import de.raindancer118.stoneintelligence.platform.vault.VaultAccessGuard;
 import org.springframework.stereotype.Component;
@@ -44,6 +45,8 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
 
     /** Pro Session (WS-Verbindung) die aktuell gejointen Notiz-Raeume - Grundlage fuer Autorisierung und Cleanup. */
     private final Map<String, Set<NoteId>> joinedNotesBySession = new ConcurrentHashMap<>();
+    /** Verbindungen, die Inhalts-Ankuendigungen (Typ 9) abonniert haben. */
+    private final Set<String> contentUpdateSessions = ConcurrentHashMap.newKeySet();
     /**
      * Pro Session die gejointen Notizen, fuer die der Actor zusaetzlich {@link Permission#WRITE}
      * hat - getrennt von {@link #joinedNotesBySession} (das nur READ voraussetzt), weil sonst
@@ -84,6 +87,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         switch (frame.messageType()) {
             case SyncFrame.TYPE_JOIN -> handleJoin(session, frame.noteId(), syncSession);
             case SyncFrame.TYPE_LEAVE -> handleLeave(session, frame.noteId(), syncSession);
+            case SyncFrame.TYPE_SUBSCRIBE_CONTENT_UPDATES -> contentUpdateSessions.add(session.getId());
             case SyncFrame.TYPE_AWARENESS -> {
                 if (hasJoined(session, frame.noteId())) {
                     relay.onAwarenessUpdate(frame.noteId(), syncSession, frame.payload());
@@ -92,6 +96,9 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             default -> {
                 if (hasWriteAccess(session, frame.noteId())) {
                     relay.onUpdate(frame.noteId(), syncSession, frame.payload(), isCiphertextNote(frame.noteId()));
+                    var vaultId = vaultIdOf(session);
+                    announcements.announceNoteUpdated(vaultId, frame.noteId(),
+                        () -> notes.findById(vaultId, frame.noteId()).map(Note::path));
                 }
             }
         }
@@ -160,6 +167,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         announcements.unsubscribe(vaultIdOf(session), new WebSocketSyncSession(session));
         writableNotesBySession.remove(session.getId());
+        contentUpdateSessions.remove(session.getId());
         var joined = joinedNotesBySession.remove(session.getId());
         if (joined == null) {
             return;
@@ -243,6 +251,17 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
          * Geprueft wird gegen den PFAD (nicht die NoteId): bei einer Loeschung ist die Notiz
          * bereits weg, eine Id-basierte Pruefung liefe ins Leere.
          */
+        @Override
+        public boolean wantsContentUpdates() {
+            return contentUpdateSessions.contains(session.getId());
+        }
+
+        @Override
+        public boolean hasJoined(NoteId noteId) {
+            var joined = joinedNotesBySession.get(session.getId());
+            return joined != null && joined.contains(noteId);
+        }
+
         @Override
         public boolean mayRead(String path) {
             return hasPermission(vaultIdOf(session), actorOf(session), Permission.READ, path);
