@@ -61,6 +61,7 @@ describe("invitation links", () => {
 
     await screen.findByRole("heading", { name: "Team-Notizen", level: 1 });
     expect(window.location.pathname).toBe("/");
+    expect(screen.getByRole("button", { name: "In Obsidian" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("returns to the invitation after the login callback", async () => {
@@ -74,3 +75,54 @@ describe("invitation links", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/invite/tok123"));
   });
 });
+
+describe("setup page", () => {
+  it("is reachable without login", async () => {
+    window.history.replaceState({}, "", "/setup");
+    vi.mocked(getUser).mockResolvedValue(null);
+    render(App);
+
+    await screen.findByRole("heading", { name: "Obsidian einrichten", level: 1 });
+    expect(api.listVaults).not.toHaveBeenCalled();
+  });
+
+  it("shows the connect links for the signed-in person's vaults", async () => {
+    window.history.replaceState({}, "", "/setup");
+    vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(api.listVaults).mockResolvedValue([{ id: "2f719285-2483-4e59-89e0-334af2813a70", name: "Team", createdAt: "" }]);
+    render(App);
+
+    await screen.findByRole("link", { name: "Mit „Team“ verbinden" });
+  });
+
+  it("links to the setup from the dashboard", async () => {
+    vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(api.listVaults).mockResolvedValue([{ id: "v", name: "My notes", createdAt: "" }]);
+    vi.mocked(api.permissions).mockResolvedValue(["READ"]);
+    vi.mocked(api.listNotes).mockResolvedValue({ epochId: "e", notes: [], complete: true, nextCursor: null });
+    render(App);
+
+    await fireEvent.click(await screen.findByRole("link", { name: "Obsidian einrichten" }));
+
+    await screen.findByRole("heading", { name: "Obsidian einrichten", level: 1 });
+    expect(window.location.pathname).toBe("/setup");
+  });
+
+  it("sets up Obsidian for the selected vault right from the vault", async () => {
+    vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(api.listVaults).mockResolvedValue([
+      { id: "2f719285-2483-4e59-89e0-334af2813a70", name: "My notes", createdAt: "" },
+      { id: "11111111-2222-4333-8444-555555555555", name: "Other", createdAt: "" },
+    ]);
+    vi.mocked(api.permissions).mockResolvedValue(["READ"]);
+    vi.mocked(api.listNotes).mockResolvedValue({ epochId: "e", notes: [], complete: true, nextCursor: null });
+    render(App);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "In Obsidian" }));
+
+    const links = await screen.findAllByRole("link", { name: "Mit „My notes“ verbinden" });
+    expect(links[0].getAttribute("href")).toContain("stoneVault=2f719285-2483-4e59-89e0-334af2813a70");
+    expect(screen.queryByRole("link", { name: "Mit „Other“ verbinden" })).toBeNull();
+  });
+});
+

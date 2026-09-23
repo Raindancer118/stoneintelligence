@@ -261,3 +261,8 @@
   font-size: var(--font-ui-small);
   color: var(--text-muted);
 }
+
+/* Verbinden-Dialog */
+.stoneintelligence-connect-warning {
+  color: var(--text-warning);
+}

@@ -137,7 +137,7 @@
 
 <section>
   <h3>Plugin-Verbindung</h3>
-  <p class="hint">Konfiguration fürs Obsidian-Plugin - dort unter „Verbindungsdaten einfügen".</p>
+  <p class="hint">Für die gehostete Instanz reicht der Reiter „In Obsidian“ – ein Klick verbindet das Plugin. Diese Konfiguration brauchst du nur für einen eigenen Server (Plugin: Erweitert → Verbindungsdaten einfügen).</p>
   <button class="secondary" onclick={copyConfig}>{configCopied ? "Kopiert" : "Konfiguration kopieren"}</button>
 </section>
 

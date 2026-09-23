@@ -139,3 +139,12 @@ test("invite an existing account and an email address from the members page", as
   await expect(page.getByRole("status")).toHaveText("Einladung an neu@example.org verschickt.");
   await expect(page.getByRole("button", { name: "Einladung an neu@example.org zurückziehen" })).toBeVisible();
 });
+
+test("connect the selected vault to Obsidian from the vault", async ({ page }, testInfo) => {
+  await openNote(page);
+  await page.getByRole("button", { name: "In Obsidian", exact: true }).click();
+  const connect = page.getByRole("link", { name: "Mit „Team-Wissen“ verbinden" }).first();
+  await expect(connect).toHaveAttribute("href", /^obsidian:\/\/stoneintelligence-connect\?stoneVault=[0-9a-f-]{36}&name=Team-Wissen$/);
+  await expect(page.getByRole("link", { name: "StoneIntelligence installieren" })).toHaveAttribute("href", "obsidian://brat?plugin=Raindancer118%2Fstoneintelligence");
+  await page.screenshot({ path: testInfo.outputPath("vault-in-obsidian.png"), fullPage: true });
+});

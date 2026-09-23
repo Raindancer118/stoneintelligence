@@ -5,10 +5,11 @@
   import { api, type Vault } from "./lib/api";
   import Sidebar from "./lib/components/Sidebar.svelte";
   import InviteLanding from "./lib/components/InviteLanding.svelte";
+  import ObsidianSetup from "./lib/components/ObsidianSetup.svelte";
 
   /** Nur relative App-Pfade als Rücksprungziel - nie eine fremde Adresse aus dem Login-State. */
   function safeReturnPath(value: unknown): string | null {
-    return typeof value === "string" && /^\/invite\/[A-Za-z0-9_-]+$/.test(value) ? value : null;
+    return typeof value === "string" && (/^\/invite\/[A-Za-z0-9_-]+$/.test(value) || value === "/setup") ? value : null;
   }
   function inviteTokenFrom(pathname: string): string | null {
     return pathname.match(/^\/invite\/([A-Za-z0-9_-]+)$/)?.[1] ?? null;
@@ -19,11 +20,25 @@
   let error = $state("");
   let vaults = $state<Vault[]>([]);
   let selected = $state<Vault | null>(null);
-  let section = $state<"notes" | "manage">("notes");
+  let section = $state<"notes" | "manage" | "obsidian">("notes");
   let dirty = $state(false);
   let canManage = $state(false);
   let authBusy = $state(false);
   let inviteToken = $state<string | null>(null);
+  let setupPage = $state(false);
+
+  /** Einrichtungsseite ohne Neuladen öffnen/verlassen - der Zurück-Knopf des Browsers funktioniert trotzdem. */
+  function openSetup(event?: MouseEvent) {
+    event?.preventDefault();
+    if (!setupPage && !mayLeave()) return;
+    window.history.pushState({}, "", "/setup");
+    setupPage = true;
+  }
+  function leaveSetup(event?: MouseEvent) {
+    event?.preventDefault();
+    window.history.pushState({}, "", "/");
+    setupPage = false;
+  }
   let alive = true;
 
   function mayLeave() { return !dirty || window.confirm("Ungespeicherte Änderungen verwerfen? Speichere oder exportiere deinen Entwurf, wenn du ihn behalten möchtest."); }
@@ -31,7 +46,7 @@
     if (selected?.id === vault.id || !mayLeave()) return;
     selected = vault; section = "notes"; dirty = false; canManage = false;
   }
-  function navigate(next: "notes" | "manage") { if (next !== section && mayLeave()) { section = next; dirty = false; } }
+  function navigate(next: "notes" | "manage" | "obsidian") { if (next !== section && mayLeave()) { section = next; dirty = false; } }
   async function refreshVaults(created?: Vault) {
     const loaded = await api.listVaults();
     if (!alive) return;
@@ -44,11 +59,13 @@
     window.history.replaceState({}, "", "/");
     await refreshVaults();
     selected = vaults.find(v => v.id === vaultId) ?? selected;
+    // Wer gerade eingeladen wurde, will als Nächstes meist in Obsidian mitarbeiten.
+    section = "obsidian";
   }
   async function authenticate(logout = false) {
     if (authBusy || (logout && !mayLeave())) return;
     authBusy = true; error = "";
-    try { if (logout) await startLogout(); else await startLogin(inviteToken ? `/invite/${inviteToken}` : undefined); }
+    try { if (logout) await startLogout(); else await startLogin(inviteToken ? `/invite/${inviteToken}` : setupPage ? "/setup" : undefined); }
     catch (e) { error = e instanceof Error ? e.message : "Die Anmeldung ist gerade nicht erreichbar."; }
     finally { authBusy = false; }
   }
@@ -61,6 +78,7 @@
           window.history.replaceState({}, "", returnTo ?? "/");
         }
         inviteToken = inviteTokenFrom(window.location.pathname);
+        setupPage = window.location.pathname === "/setup";
         const signedIn = await getUser();
         if (!alive) return;
         user = signedIn;
@@ -68,7 +86,9 @@
       } catch (e) { if (alive) error = e instanceof Error ? e.message : "Das Dashboard konnte nicht geladen werden."; }
       finally { if (alive) loading = false; }
     })();
-    return () => { alive = false; };
+    const onPopState = () => { setupPage = window.location.pathname === "/setup"; };
+    window.addEventListener("popstate", onPopState);
+    return () => { alive = false; window.removeEventListener("popstate", onPopState); };
   });
 </script>
 
@@ -76,18 +96,25 @@
 {#if loading}<div class="boot" role="status"><img src="/logo.png" alt="" width="48" height="48" /><p>Dein Arbeitsplatz wird geladen…</p></div>
 {:else if inviteToken}
   <InviteLanding token={inviteToken} signedIn={user !== null} onLogin={() => authenticate()} onJoined={joined} />
+{:else if setupPage && !user}
+  <main class="standalone"><a class="gate-brand home" href="/" onclick={leaveSetup}><img src="/logo.png" alt="" width="40" height="40" /><span>StoneIntelligence</span></a><ObsidianSetup vaults={[]} signedIn={false} onLogin={() => authenticate()} /></main>
 {:else if !user}
-  <main class="gate"><div class="gate-brand"><img src="/logo.png" alt="" width="48" height="48" /><span>StoneIntelligence</span></div><h1>Ein Platz für dein Wissen.</h1><p>Lies und bearbeite deine Obsidian-Notizen im Browser. Deine Vaults und ihre Zugriffsrechte bleiben an einem Ort.</p>{#if error}<p class="feedback error" role="alert">{error}</p>{/if}<button class="primary" disabled={authBusy} onclick={() => authenticate()}>{authBusy ? "Anmeldung wird geöffnet…" : "Mit Authentik anmelden"}</button><p class="hint">Melde dich mit deinem bestehenden Konto an.</p></main>
+  <main class="gate"><div class="gate-brand"><img src="/logo.png" alt="" width="48" height="48" /><span>StoneIntelligence</span></div><h1>Ein Platz für dein Wissen.</h1><p>Lies und bearbeite deine Obsidian-Notizen im Browser. Deine Vaults und ihre Zugriffsrechte bleiben an einem Ort.</p>{#if error}<p class="feedback error" role="alert">{error}</p>{/if}<button class="primary" disabled={authBusy} onclick={() => authenticate()}>{authBusy ? "Anmeldung wird geöffnet…" : "Mit Authentik anmelden"}</button><p class="hint">Melde dich mit deinem bestehenden Konto an. Du willst in Obsidian arbeiten? <a href="/setup" onclick={openSetup}>Obsidian einrichten</a></p></main>
 {:else}
   <div class="shell">
-    <header class="app-header"><div class="brand"><img src="/logo.png" alt="" width="30" height="30" /><span>StoneIntelligence</span></div><div class="account"><span>{preferredUsername(user)}</span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></header>
+    <header class="app-header"><div class="brand"><img src="/logo.png" alt="" width="30" height="30" /><span>StoneIntelligence</span></div><div class="account"><a class="setup-link" href="/setup" onclick={openSetup}>Obsidian einrichten</a><span>{preferredUsername(user)}</span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></header>
     {#if error}<div class="app-error feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={() => { error = ""; void refreshVaults().catch(e => error = e.message); }}>Erneut versuchen</button></div>{/if}
     <div class="body"><aside><Sidebar {vaults} selectedId={selected?.id ?? null} onSelect={choose} onCreated={refreshVaults} canCreate={() => mayLeave()} /></aside>
       <main id="workspace">
-        {#if selected}
-          <div class="workspace-heading"><div><p class="workspace-label">Arbeitsbereich</p><h1>{selected.name}</h1></div><nav aria-label="Vault-Bereiche"><button class:active={section === "notes"} aria-pressed={section === "notes"} onclick={() => navigate("notes")}>Notizen</button>{#if canManage}<button class:active={section === "manage"} aria-pressed={section === "manage"} onclick={() => navigate("manage")}>Mitglieder & Rechte</button>{/if}</nav></div>
+        {#if setupPage}
+          <p><a href="/" onclick={leaveSetup}>← Zurück zu den Notizen</a></p>
+          <ObsidianSetup {vaults} signedIn={true} onLogin={() => authenticate()} />
+        {:else if selected}
+          <div class="workspace-heading"><div><p class="workspace-label">Arbeitsbereich</p><h1>{selected.name}</h1></div><nav aria-label="Vault-Bereiche"><button class:active={section === "notes"} aria-pressed={section === "notes"} onclick={() => navigate("notes")}>Notizen</button><button class:active={section === "obsidian"} aria-pressed={section === "obsidian"} onclick={() => navigate("obsidian")}>In Obsidian</button>{#if canManage}<button class:active={section === "manage"} aria-pressed={section === "manage"} onclick={() => navigate("manage")}>Mitglieder & Rechte</button>{/if}</nav></div>
           {#key selected.id}
-            {#if section === "notes"}
+            {#if section === "obsidian"}
+              <ObsidianSetup vaults={[selected]} signedIn={true} scopedVault={true} onLogin={() => authenticate()} />
+            {:else if section === "notes"}
               {#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
             {:else}
               {#await import("./lib/components/VaultDetail.svelte")}<p role="status">Verwaltung wird geladen…</p>{:then module}<div class="management"><module.default vault={selected} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
@@ -106,6 +133,8 @@
   .body { display: grid; grid-template-columns: 14rem minmax(0, 1fr); min-height: calc(100vh - 76px); } aside { background: var(--surface); border-right: 1px solid var(--line); min-width: 0; }
   #workspace { min-width: 0; padding: 2rem clamp(1rem, 3vw, 3rem) 4rem; } .workspace-heading { display: flex; justify-content: space-between; align-items: end; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem; } .workspace-heading h1 { font-size: 1.9rem; margin: .25rem 0 0; overflow-wrap: anywhere; } .workspace-label { color: var(--ink-dim); font-size: .8rem; margin: 0; }
   nav { display: flex; gap: .4rem; border-bottom: 1px solid var(--line); } nav button { border: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink-dim); padding: .6rem 1rem; } nav button.active { color: var(--forest); border-color: var(--forest); font-weight: 700; }
+  .standalone { max-width: 50rem; margin: clamp(2.5rem, 8vh, 6rem) auto; padding: 2rem; } .home { color: var(--ink); text-decoration: none; margin-bottom: 3rem; display: inline-flex; }
+  .setup-link { color: var(--forest); font-weight: 500; text-decoration: none; min-height: 48px; display: inline-flex; align-items: center; } .setup-link:hover { text-decoration: underline; }
   .management { max-width: 62rem; } .app-error { margin: 1rem 2rem; } .first-vault { padding: 4rem 0; max-width: 44rem; } .first-vault h1 { font-size: 2.5rem; } .first-vault p { max-width: 58ch; color: var(--ink-dim); }
   @media (max-width: 1100px) { .body { grid-template-columns: 11.5rem minmax(0, 1fr); } }
   @media (max-width: 850px) { .body { display: block; } aside { border-right: 0; border-bottom: 1px solid var(--line); } #workspace { padding-top: 1.5rem; } .app-header { padding: .6rem 1rem; } }
