@@ -7,6 +7,7 @@ import de.raindancer118.stoneintelligence.domain.id.VaultId;
 import de.raindancer118.stoneintelligence.domain.notelevel.NoteLevel;
 import de.raindancer118.stoneintelligence.platform.audit.AuditService;
 import de.raindancer118.stoneintelligence.platform.identity.Permission;
+import de.raindancer118.stoneintelligence.platform.sync.relay.SnapshotStore;
 import de.raindancer118.stoneintelligence.platform.sync.relay.SyncRelayService;
 import de.raindancer118.stoneintelligence.platform.sync.relay.VaultAnnouncementService;
 import org.springframework.http.ResponseEntity;
@@ -36,9 +37,12 @@ public class NoteController {
     private final AuditService audit;
     private final VaultAccessGuard access;
     private final VaultAnnouncementService announcements;
+    private final SnapshotStore snapshots;
 
-    public NoteController(NoteRepository notes, SyncRelayService relay, AuditService audit, VaultAccessGuard access, VaultAnnouncementService announcements) {
+    public NoteController(NoteRepository notes, SyncRelayService relay, AuditService audit, VaultAccessGuard access,
+                          VaultAnnouncementService announcements, SnapshotStore snapshots) {
         this.notes = notes;
+        this.snapshots = snapshots;
         this.relay = relay;
         this.audit = audit;
         this.access = access;
@@ -115,9 +119,11 @@ public class NoteController {
         var vId = VaultId.of(vaultId);
         access.require(vId, authentication.getName(), Permission.READ);
         var page = notes.list(vId, cursor, pageSize);
+        var readable = access.readableNotes(vId, authentication.getName(), page.notes());
+        var revisions = snapshots.latestRevisions(readable.stream().map(Note::id).toList());
         return new ReconciliationResponse(
             page.epochId(), page.complete(), page.nextCursor().orElse(null),
-            access.readableNotes(vId, authentication.getName(), page.notes()).stream().map(NoteResponse::from).toList());
+            readable.stream().map(note -> ListedNoteResponse.from(note, revisions.getOrDefault(note.id(), 0L))).toList());
     }
 
     @PatchMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
@@ -211,7 +217,17 @@ public class NoteController {
         }
     }
 
-    public record ReconciliationResponse(java.util.UUID epochId, boolean complete, String nextCursor, List<NoteResponse> notes) {
+    /** Wie {@link NoteResponse}, plus {@code revision}: hoechste gespeicherte Update-Sequenz (0 = noch kein Inhalt). */
+    public record ListedNoteResponse(String id, String vaultId, String path, int noteLevel, String createdBy,
+                                     Instant createdAt, long revision) {
+        static ListedNoteResponse from(Note note, long revision) {
+            return new ListedNoteResponse(
+                note.id().value().toString(), note.vaultId().value().toString(),
+                note.path(), note.level().value(), note.createdBy(), note.createdAt(), revision);
+        }
+    }
+
+    public record ReconciliationResponse(java.util.UUID epochId, boolean complete, String nextCursor, List<ListedNoteResponse> notes) {
     }
 
     public record AuditEventResponse(String actor, String action, java.util.Map<String, Object> payload, Instant occurredAt) {

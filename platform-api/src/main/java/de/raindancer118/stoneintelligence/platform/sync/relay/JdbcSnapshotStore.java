@@ -80,4 +80,23 @@ public class JdbcSnapshotStore implements SnapshotStore {
             .query(RECORD_MAPPER)
             .list();
     }
+
+    @Override
+    public java.util.Map<NoteId, Long> latestRevisions(java.util.Collection<NoteId> noteIds) {
+        var revisions = new java.util.HashMap<NoteId, Long>();
+        noteIds.forEach(id -> revisions.put(id, 0L));
+        if (noteIds.isEmpty()) {
+            return revisions;
+        }
+        jdbcClient.sql("""
+                SELECT note_id, MAX(server_sequence) AS revision FROM platform.note_snapshots
+                WHERE note_id IN (:noteIds)
+                GROUP BY note_id
+                """)
+            .param("noteIds", noteIds.stream().map(NoteId::value).toList())
+            .query((rs, rowNum) -> java.util.Map.entry(NoteId.of(rs.getString("note_id")), rs.getLong("revision")))
+            .list()
+            .forEach(entry -> revisions.put(entry.getKey(), entry.getValue()));
+        return revisions;
+    }
 }

@@ -15,4 +15,11 @@ public interface SnapshotStore {
     java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload);
 
     List<UpdateRecord> listSince(NoteId noteId, long afterServerSequence);
+
+    /**
+     * Hoechste {@code server_sequence} je Note (noch ohne Updates = 0) - EINE Abfrage fuer eine
+     * ganze Listen-Seite, damit Clients Aenderungen erkennen, ohne jede Notiz einzeln joinen und
+     * ihre Historie laden zu muessen.
+     */
+    java.util.Map<NoteId, Long> latestRevisions(java.util.Collection<NoteId> noteIds);
 }

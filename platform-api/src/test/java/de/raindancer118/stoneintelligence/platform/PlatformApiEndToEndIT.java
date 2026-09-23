@@ -202,6 +202,30 @@ class PlatformApiEndToEndIT {
         assertThat(one.listSince(noteId, 0)).hasSize(1);
     }
 
+    /**
+     * Das Plugin gleicht geschlossene Notizen periodisch ab. Ohne Revisionsnummer in der Liste
+     * muesste es dafuer JEDE Notiz joinen und ihre komplette Historie laden, nur um festzustellen,
+     * dass sich nichts geaendert hat.
+     */
+    @Test
+    void should_reportContentRevision_perNote_inReconciliationList() throws Exception {
+        var auth = bearerAuth("revision-reader");
+        var vault = post("/api/v1/vaults", auth, Map.of("name", "Revisions"), Map.class);
+        var base = "/api/v1/vaults/" + vault.get("id") + "/notes";
+        var untouched = post(base, auth, Map.of("path", "untouched.md", "noteLevel", 1), Map.class);
+        var edited = post(base, auth, Map.of("path", "edited.md", "noteLevel", 1), Map.class);
+        var contentPath = base + "/" + edited.get("id") + "/content";
+        assertThat(postRaw(contentPath, auth, Map.of("expectedRevision", 0, "update", "AQID")).statusCode()).isEqualTo(200);
+        assertThat(postRaw(contentPath, auth, Map.of("expectedRevision", 1, "update", "BAUG")).statusCode()).isEqualTo(200);
+
+        var revisions = new java.util.HashMap<String, Long>();
+        json.readTree(get(base, auth).body()).get("notes")
+            .forEach(note -> revisions.put(note.get("id").asText(), note.get("revision").asLong()));
+
+        assertThat(revisions).containsEntry(untouched.get("id").toString(), 0L)
+            .containsEntry(edited.get("id").toString(), 2L);
+    }
+
     @Test
     void should_rejectUnsafePathsDuplicateNames_andMovesIntoDeniedFolders() throws Exception {
         var auth = bearerAuth("path-editor");

@@ -39,6 +39,11 @@ final class InterceptingSnapshotStore implements SnapshotStore {
         return delegate.listSince(noteId, afterServerSequence);
     }
 
+    @Override
+    public java.util.Map<NoteId, Long> latestRevisions(java.util.Collection<NoteId> noteIds) {
+        return delegate.latestRevisions(noteIds);
+    }
+
     /** Blockiert den Aufrufer bis {@link #entered} feuert (spaetestens jedoch mit Timeout, gegen ein haengendes CI). */
     void awaitEnteredListSince() {
         await(entered);
