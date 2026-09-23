@@ -1,0 +1,14 @@
+# Secrets und Server-Konfiguration nie in den Build-Kontext (COPY . . in den Java-Images)
+.env
+.env.*
+worker.env
+maven-settings.xml
+compose.yml
+compose.yml.bak.*
+# Nicht fuer die Java-Builds gebraucht
+.git
+**/target
+**/node_modules
+plugin
+webapp
+codex-research-archive
