@@ -7,6 +7,8 @@ import {
   type StoneIntelligenceSettings, type VaultSyncState, emptyVaultState, wsUrlFor,
 } from "./settings";
 import { isInsideFolder, isSyncableFolderPath, planFolders } from "./sync/folderPlan";
+import { isSyncableFilePath } from "./sync/filePlan";
+import { contentTypeFor, FileSync, type FileVaultPort } from "./sync/fileSync";
 import { actorDisplayNameFromAccessToken, displayNameFromClaims, pickUserColor } from "./sync/actorIdentity";
 import { AuthentikAuthClient, TokenRefreshRejectedError, type StoredTokens } from "./sync/AuthentikAuthClient";
 import { dedupeInFlight } from "./sync/dedupeInFlight";
@@ -21,7 +23,7 @@ import {
 import {
   MultiplexedTransport, VAULT_FOLDERS_CHANGED, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED,
 } from "./sync/multiplexedTransport";
-import { HttpError, NoteApiClient, type VaultSummary } from "./sync/NoteApiClient";
+import { type FileLimits, HttpError, NoteApiClient, type VaultSummary } from "./sync/NoteApiClient";
 import {
   type ContentSyncPorts, type ContentSyncResult, conflictCopyPath, hasUnsyncedLocalEdits, prepareNoteDoc, resolveFirstContact,
   syncNoteContent, textOfState,
@@ -61,6 +63,10 @@ const CREATED_FOLLOW_UP_MS = 3_000;
  * geloeschten Ordners kommen nacheinander an, erst danach ist der Ordner hier leer.
  */
 const FOLDER_PASS_DEBOUNCE_MS = 600;
+/** Grosse Dateien schreibt ein Programm oft in mehreren Schritten - erst nach einer Pause hochladen. */
+const FILE_CHANGE_DEBOUNCE_MS = 1_500;
+/** Grenzen des Servers fuer Dateien nur gelegentlich neu abfragen. */
+const FILE_LIMITS_TTL_MS = 60 * 60_000;
 /**
  * Aeltere Server liefern keine Revisionen - dann liesse sich ohne Join nicht erkennen, ob sich
  * eine Notiz geaendert hat. Damit nicht alle 30s JEDE Notiz gejoint wird, laeuft der volle
@@ -189,6 +195,32 @@ export default class StoneIntelligencePlugin extends Plugin {
   private folderPassTimer: number | null = null;
   /** Server ohne Ordner-Synchronisation (Endpunkt fehlt) - dann gar nicht erst versuchen. */
   private folderSyncUnsupported = false;
+  /** Datei-Synchronisation (ADR 0009): Grenzen des Servers; `null` = Server kennt keine Dateien. */
+  private fileLimits: FileLimits | null | undefined;
+  private fileLimitsAt = 0;
+  private readonly fileChangeTimers = new Map<string, number>();
+  private readonly fileSync = new FileSync({
+    vaultId: () => this.settings.vaultId,
+    vault: this.fileVaultPort(),
+    api: {
+      createFile: (vaultId, path) => this.noteApiClient.createFile(vaultId, path),
+      uploadFile: (vaultId, id, base, bytes, type) => this.noteApiClient.uploadFile(vaultId, id, base, bytes, type),
+      downloadFile: (vaultId, id) => this.noteApiClient.downloadFile(vaultId, id),
+      noteStatus: (vaultId, id) => this.noteApiClient.noteStatus(vaultId, id),
+    },
+    state: () => this.vaultState(),
+    save: () => this.requestSettingsSave(),
+    report: (path, message) => this.activity.reportProblem(path, message),
+    clearProblem: (path) => this.activity.clearProblem(path),
+    log: (kind, path, detail) => this.activity.log(kind, path, detail),
+    now: () => new Date(),
+    askDeletionDecision: (path) => {
+      this.vaultState().blockedPaths[path] = DELETION_DECISION_PENDING;
+      this.requestSettingsSave();
+      this.askDeletionDecision(path);
+    },
+    contentType: contentTypeFor,
+  });
   private settingsSaveTimer: number | null = null;
   /** Loeschkonflikte werden nacheinander gefragt, nie mehrere Dialoge uebereinander. */
   private decisionQueue: Promise<void> = Promise.resolve();
@@ -826,6 +858,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         onConnected: () => this.requestPass(),
         subscribeContentUpdates: true,
         subscribeFolderEvents: true,
+        subscribeFileEvents: true,
       });
     }
     return this.transport;
@@ -870,8 +903,13 @@ export default class StoneIntelligencePlugin extends Plugin {
     await this.flushPendingOps();
 
     let serverNotes;
+    let serverFiles: import("./sync/filePlan").ServerFile[] = [];
+    const limits = await this.currentFileLimits();
     try {
-      serverNotes = await this.noteApiClient.listAllNotes(vaultId);
+      const entries = limits ? await this.noteApiClient.listAllEntries(vaultId) : await this.noteApiClient.listAllNotes(vaultId);
+      serverNotes = entries.filter((entry) => entry.kind !== "FILE");
+      serverFiles = entries.filter((entry) => entry.kind === "FILE")
+        .map((entry) => ({ id: entry.id, path: entry.path, revision: entry.revision ?? 0, sha256: entry.sha256 ?? null }));
     } catch (error) {
       console.debug("StoneIntelligence: Notizliste nicht abrufbar", error);
       return;
@@ -914,6 +952,102 @@ export default class StoneIntelligencePlugin extends Plugin {
       this.activity.endPass(vaultId === this.settings.vaultId);
     }
     await this.reconcileFolders();
+    if (limits && vaultId === this.settings.vaultId && this.isReady()) {
+      await this.fileSync.reconcile(serverFiles.filter((file) => !isExcluded(file.path, this.settings.excludedFolders)),
+        limits.maxFileBytes);
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Dateien (PDFs, Bilder, Anhaenge - ADR 0009)
+
+  /** Grenzen des Servers; `null`, wenn er keine Dateien kennt (dann bleibt alles wie vorher). */
+  private async currentFileLimits(): Promise<FileLimits | null> {
+    if (this.fileLimits !== undefined && Date.now() - this.fileLimitsAt < FILE_LIMITS_TTL_MS) {
+      return this.fileLimits;
+    }
+    try {
+      this.fileLimits = await this.noteApiClient.fileLimits();
+      this.fileLimitsAt = Date.now();
+    } catch (error) {
+      console.debug("StoneIntelligence: Datei-Grenzen nicht abrufbar", error);
+      return this.fileLimits ?? null;
+    }
+    return this.fileLimits;
+  }
+
+  private isTrackableFile(path: string): boolean {
+    return this.isReady() && this.fileLimits !== null && isSyncableFilePath(path)
+      && !isExcluded(path, this.settings.excludedFolders);
+  }
+
+  /** Lokal angelegt/geaendert: nach einer Pause hochladen (grosse Dateien entstehen schrittweise). */
+  private scheduleLocalFileChange(path: string): void {
+    const pending = this.fileChangeTimers.get(path);
+    if (pending !== undefined) {
+      window.clearTimeout(pending);
+    }
+    this.fileChangeTimers.set(path, window.setTimeout(() => {
+      this.fileChangeTimers.delete(path);
+      if (this.isTrackableFile(path) && !this.serverDrivenPaths.has(path)) {
+        void this.currentFileLimits().then((limits) => limits && this.fileSync.localChanged(path, limits.maxFileBytes));
+      }
+    }, FILE_CHANGE_DEBOUNCE_MS));
+  }
+
+  /** Der Vault aus Sicht der Datei-Synchronisation; alles, was vom Server kommt, meldet sich nicht zurueck. */
+  private fileVaultPort(): FileVaultPort {
+    const fileAt = (path: string): TFile | null => {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      return file instanceof TFile ? file : null;
+    };
+    const serverDriven = async (paths: string[], work: () => Promise<unknown>) => {
+      paths.forEach((path) => this.serverDrivenPaths.add(path));
+      try {
+        await work();
+      } finally {
+        paths.forEach((path) => this.serverDrivenPaths.delete(path));
+      }
+    };
+    return {
+      list: () => this.app.vault.getFiles()
+        .filter((file) => file.extension !== "md" && isSyncableFilePath(file.path) && !isExcluded(file.path, this.settings.excludedFolders))
+        .map((file) => ({ path: file.path, mtime: file.stat.mtime, size: file.stat.size })),
+      stat: (path) => {
+        const file = fileAt(path);
+        return file ? { mtime: file.stat.mtime, size: file.stat.size } : null;
+      },
+      read: async (path) => {
+        const file = fileAt(path);
+        if (!file) {
+          throw new Error(`Datei ${path} fehlt`);
+        }
+        return this.app.vault.readBinary(file);
+      },
+      write: (path, bytes) => serverDriven([path], async () => {
+        const existing = fileAt(path);
+        if (existing) {
+          await this.app.vault.modifyBinary(existing, bytes);
+        } else {
+          await this.ensureFolder(path);
+          await this.app.vault.createBinary(path, bytes);
+        }
+      }),
+      rename: (from, to) => serverDriven([from, to], async () => {
+        const file = fileAt(from);
+        if (file && !this.app.vault.getAbstractFileByPath(to)) {
+          await this.ensureFolder(to);
+          // Wie bei Notizen: ohne Links umzuschreiben und ohne Rueckfrage (s. applyRemoteRename).
+          await this.app.vault.rename(file, to);
+        }
+      }),
+      trash: (path) => serverDriven([path], async () => {
+        const file = fileAt(path);
+        if (file) {
+          await this.app.fileManager.trashFile(file);
+        }
+      }),
+    };
   }
 
   private async executeAction(action: ReconcileAction): Promise<void> {
@@ -1318,7 +1452,10 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.serverDrivenPaths.add(from);
     this.serverDrivenPaths.add(to);
     try {
-      await this.app.fileManager.renameFile(file, to);
+      // vault.rename statt fileManager.renameFile: das andere Geraet hat die Links schon angepasst (sie
+      // kommen mit den Notizen). renameFile wuerde sie erneut umschreiben und dabei auf die Rueckfrage
+      // "Links aktualisieren?" warten - der Abgleich hing dann, bis jemand den Dialog wegklickte.
+      await this.app.vault.rename(file, to);
       this.mapNote(to, noteId);
     } finally {
       this.serverDrivenPaths.delete(from);
@@ -1403,7 +1540,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         done();
         return;
       }
-      const modal = new DeletionConflictModal(this.app, basename(path), () => decide(true), () => decide(false));
+      const modal = new DeletionConflictModal(this.app, path, () => decide(true), () => decide(false));
       const originalOnClose = modal.onClose.bind(modal);
       modal.onClose = () => {
         originalOnClose();
@@ -1423,6 +1560,11 @@ export default class StoneIntelligencePlugin extends Plugin {
     await this.saveSettings();
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) {
+      return;
+    }
+    if (keep && file.extension !== "md") {
+      this.activity.log("kept", path, "Behalten – wird als neue Datei hochgeladen");
+      await this.fileSync.keepAfterDeletion(path);
       return;
     }
     if (keep) {
@@ -1534,6 +1676,17 @@ export default class StoneIntelligencePlugin extends Plugin {
     if (state.pendingOps.some((op) => isNoteOp(op) && op.noteId === noteId)) {
       return;
     }
+    // Dateien (ADR 0009) - an Id oder Endung erkennbar; nie als Notiz behandeln.
+    if (this.fileSync.isFileId(noteId) || !path.toLowerCase().endsWith(".md")) {
+      if (messageType === VAULT_NOTE_DELETED) {
+        await this.fileSync.remoteDeleted(noteId);
+        this.scheduleFolderPass();
+      } else {
+        // Anlage, neue Fassung, Umbenennung: der Abgleich holt genau das Noetige.
+        this.requestPass();
+      }
+      return;
+    }
     try {
       const localPath = this.pathForNoteId(noteId);
       if (messageType === VAULT_NOTE_UPDATED) {
@@ -1597,6 +1750,12 @@ export default class StoneIntelligencePlugin extends Plugin {
       }
       return;
     }
+    if (file instanceof TFile && file.extension !== "md") {
+      if (this.app.workspace.layoutReady && !this.serverDrivenPaths.has(file.path) && this.isTrackableFile(file.path)) {
+        this.scheduleLocalFileChange(file.path);
+      }
+      return;
+    }
     if (!(file instanceof TFile) || file.extension !== "md" || this.serverDrivenPaths.has(file.path)) {
       return;
     }
@@ -1607,6 +1766,12 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   private async handleLocalModify(file: TAbstractFile): Promise<void> {
+    if (file instanceof TFile && file.extension !== "md") {
+      if (!this.serverDrivenPaths.has(file.path) && this.isTrackableFile(file.path)) {
+        this.scheduleLocalFileChange(file.path);
+      }
+      return;
+    }
     if (!(file instanceof TFile) || file.extension !== "md" || !this.isTrackable(file.path)) {
       return;
     }
@@ -1701,6 +1866,18 @@ export default class StoneIntelligencePlugin extends Plugin {
       this.activity.log("deleted", path, "Gelöscht");
       changed = true;
     }
+    // Dateien (ADR 0009): dieselbe Loeschung auf dem Server, eigene Zuordnung hier.
+    const affectedFiles = file instanceof TFolder
+      ? Object.keys(state.fileIds).filter((path) => path.startsWith(`${file.path}/`))
+      : [file.path];
+    for (const path of affectedFiles) {
+      const fileId = this.fileSync.localDeleted(path);
+      if (fileId) {
+        queueDelete(state, fileId, path, crypto.randomUUID());
+        this.activity.log("deleted", path, "Gelöscht");
+        changed = true;
+      }
+    }
     if (file instanceof TFolder && this.isTrackableFolder(file.path)) {
       // Nach den Notiz-Loeschungen: der Server entfernt den Ordner samt allem darunter, die anderen
       // Geraete raeumen ihn weg, sobald ihre Notizen darin geloescht sind.
@@ -1758,6 +1935,20 @@ export default class StoneIntelligencePlugin extends Plugin {
         this.live.set(to, session);
       }
       changed = true;
+    }
+    const fileMoves: Array<[string, string]> = file instanceof TFolder
+      ? Object.keys(state.fileIds)
+        .filter((path) => path.startsWith(`${oldPath}/`))
+        .map((path) => [path, `${file.path}/${path.slice(oldPath.length + 1)}`])
+      : file instanceof TFile && file.extension !== "md" ? [[oldPath, file.path]] : [];
+    for (const [from, to] of fileMoves) {
+      const fileId = this.fileSync.localRenamed(from, to);
+      if (fileId) {
+        queueRename(state, fileId, to);
+        changed = true;
+      } else if (this.isTrackableFile(to)) {
+        this.scheduleLocalFileChange(to);
+      }
     }
     if (changed || folderChanged) {
       await this.saveSettings();

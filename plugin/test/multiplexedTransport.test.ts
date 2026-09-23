@@ -548,6 +548,20 @@ describe("MultiplexedTransport", () => {
     });
   });
 
+  describe("Datei-Ankuendigungen", () => {
+    it("should_subscribeToFileAnnouncements_afterConnecting", async () => {
+      const socket = new FakeRealSocket();
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => socket, {
+        sleep: vi.fn(), subscribeFileEvents: true,
+      });
+      transport.start();
+      await waitUntilConnecting(socket);
+      socket.open();
+
+      expect(socket.sent.some((frameBytes) => frameBytes[0] === 13)).toBe(true);
+    });
+  });
+
   describe("Ordner-Ankuendigungen", () => {
     it("should_subscribeToFolderAnnouncements_afterConnecting", async () => {
       const socket = new FakeRealSocket();

@@ -97,6 +97,10 @@ export function planReconciliation(input: ReconcileInput): ReconcileAction[] {
     if (!local) {
       if (!localByPath.has(server.path)) {
         actions.push({ kind: "download", noteId, path: server.path });
+      } else if (!mappedPaths.has(server.path)) {
+        // Schon am neuen Ort (z. B. unterbrochenes Umbenennen) - neu zuordnen, nicht als neue Notiz hochladen.
+        claimedLocalPaths.add(server.path);
+        actions.push({ kind: "adopt", noteId, path: server.path });
       }
       continue;
     }

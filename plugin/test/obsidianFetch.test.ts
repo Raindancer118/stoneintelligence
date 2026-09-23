@@ -76,4 +76,17 @@ describe("obsidianFetch", () => {
 
     expect(response.headers.get("retry-after")).toBeNull();
   });
+
+  // Dateien (PDFs, Bilder) gehen als Bytes hin und zurueck - nicht als Text.
+  it("should_sendBinaryBodies_andReadBinaryResponses", async () => {
+    const bytes = new Uint8Array([37, 80, 68, 70, 0, 255]);
+    requestUrlMock.mockResolvedValue({ status: 200, json: null, text: "", arrayBuffer: bytes.buffer });
+
+    const response = await obsidianFetch("https://example.com/file", { method: "PUT", body: bytes });
+
+    const sent = requestUrlMock.mock.calls[0][0].body as ArrayBuffer;
+    expect(new Uint8Array(sent)).toEqual(bytes);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+  });
 });
+

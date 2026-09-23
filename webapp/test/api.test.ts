@@ -38,5 +38,19 @@ describe("API responses", () => {
     expect(init.headers["Content-Type"]).toBeUndefined();
     expect(init.headers.Authorization).toBe("Bearer test-token");
   });
+  it("asks for notes and files, and loads a file as a blob with the login", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ epochId: "e", complete: true, nextCursor: null, notes: [] }))
+      .mockResolvedValueOnce(new Response("%PDF", { headers: { "Content-Type": "application/pdf" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listNotes("vault");
+    const blob = await api.fileBlob("vault", "f1");
+
+    expect(fetchMock.mock.calls[0][0]).toContain("kinds=note%2Cfile");
+    expect(fetchMock.mock.calls[1][0]).toMatch(/\/api\/v1\/vaults\/vault\/files\/f1\/content$/);
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer test-token");
+    expect(await blob.text()).toBe("%PDF");
+  });
 });
 

@@ -1,5 +1,6 @@
 import { type App, Modal } from "obsidian";
 import { DecisionCountdown } from "./decisionCountdown";
+import { deletionConflictText } from "./deletionText";
 
 export const DELETION_DECISION_SECONDS = 15;
 
@@ -7,7 +8,7 @@ export const DELETION_DECISION_SECONDS = 15;
  * Anderswo geloescht, hier aber noch nicht uebertragene Aenderungen: die Person entscheidet.
  * Standard ist Loeschen (in Obsidians Papierkorb, wiederherstellbar) - ohne Reaktion nach
  * {@link DELETION_DECISION_SECONDS} Sekunden, beim Schliessen des Dialogs sofort. Nur "Behalten"
- * haelt die Notiz; sie wird dann als neue Notiz wieder hochgeladen.
+ * haelt die Notiz bzw. Datei; sie wird dann neu hochgeladen.
  */
 export class DeletionConflictModal extends Modal {
   private readonly countdown: DecisionCountdown;
@@ -15,7 +16,7 @@ export class DeletionConflictModal extends Modal {
 
   constructor(
     app: App,
-    private readonly noteName: string,
+    private readonly path: string,
     private readonly onKeep: () => void,
     private readonly onDelete: () => void,
   ) {
@@ -30,11 +31,10 @@ export class DeletionConflictModal extends Modal {
   private deleteButton: HTMLButtonElement | null = null;
 
   onOpen(): void {
-    this.setTitle(`„${this.noteName}“ wurde auf einem anderen Gerät gelöscht`);
+    this.setTitle(`„${this.path.split("/").pop()}“ wurde auf einem anderen Gerät gelöscht`);
     this.contentEl.addClass("stoneintelligence-conflict");
     this.contentEl.createEl("p", {
-      text: "Hier gibt es an dieser Notiz noch Änderungen, die nie übertragen wurden. "
-        + "Ohne Auswahl wird sie gelöscht (in den Papierkorb, dort wiederherstellbar).",
+      text: deletionConflictText(this.path),
     });
     const buttons = this.contentEl.createDiv({ cls: "modal-button-container" });
     const keep = buttons.createEl("button", { text: "Behalten" });

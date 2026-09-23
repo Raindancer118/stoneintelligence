@@ -324,4 +324,59 @@ describe("NoteApiClient", () => {
       await expect(clientWith(fakeFetch).createFolder("v1", "A")).rejects.toMatchObject({ status: 403 });
     });
   });
+  describe("files", () => {
+    const clientWith = (fakeFetch: ReturnType<typeof vi.fn>) =>
+      new NoteApiClient("https://platform.example", async () => "t", fakeFetch as unknown as typeof fetch);
+
+    it("should_listNotesAndFiles_whenAskedForFiles", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({
+        epochId: "e", complete: true, nextCursor: null,
+        notes: [{ id: "f1", vaultId: "v1", path: "a.pdf", noteLevel: 1, kind: "FILE", revision: 2, sha256: "ab", size: 3 }] }) });
+
+      const entries = await clientWith(fakeFetch).listAllEntries("v1");
+
+      expect(entries).toEqual([expect.objectContaining({ id: "f1", kind: "FILE", sha256: "ab" })]);
+      expect(fakeFetch.mock.calls[0][0]).toContain("kinds=note%2Cfile");
+    });
+
+    it("should_createAFile_andUploadBytesOnTheBaseRevision", async () => {
+      const fakeFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: "f1" }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ revision: 3, sha256: "cd", size: 4 }) });
+      const client = clientWith(fakeFetch);
+      const bytes = new Uint8Array([1, 2, 3, 4]).buffer;
+
+      await expect(client.createFile("v1", "Bilder/x.png")).resolves.toBe("f1");
+      await expect(client.uploadFile("v1", "f1", 2, bytes, "image/png")).resolves.toEqual({ revision: 3, sha256: "cd", size: 4 });
+
+      const [url, init] = fakeFetch.mock.calls[1];
+      expect(url).toBe("https://platform.example/api/v1/vaults/v1/files/f1/content");
+      expect(init).toMatchObject({ method: "PUT", body: bytes, headers: { "If-Match": "\"2\"", "Content-Type": "image/png" } });
+    });
+
+    // Jemand war schneller: das Plugin behaelt seine Fassung als Kopie (ADR 0009 Punkt 3).
+    it("should_reportAStaleBase_withTheCurrentRevision", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status: 409,
+        headers: { get: (name: string) => name === "X-Current-Revision" ? "5" : null }, json: async () => ({}) });
+
+      await expect(clientWith(fakeFetch).uploadFile("v1", "f1", 2, new ArrayBuffer(1), "image/png"))
+        .rejects.toMatchObject({ name: "FileConflictError", currentRevision: 5 });
+    });
+
+    it("should_downloadBytes_withRevisionAndHash", async () => {
+      const bytes = new Uint8Array([9, 8, 7]).buffer;
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, arrayBuffer: async () => bytes,
+        headers: { get: (name: string) => ({ etag: "\"4\"", "x-content-sha256": "ef" } as Record<string, string>)[name.toLowerCase()] ?? null } });
+
+      await expect(clientWith(fakeFetch).downloadFile("v1", "f1")).resolves.toEqual({ bytes, revision: 4, sha256: "ef" });
+    });
+
+    it("should_readTheLimits_orNullOnAServerWithoutFiles", async () => {
+      const limits = { maxFileBytes: 200, vaultQuotaBytes: 5000 };
+      await expect(clientWith(vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => limits })).fileLimits())
+        .resolves.toEqual(limits);
+      await expect(clientWith(vi.fn().mockResolvedValue({ ok: false, status: 404 })).fileLimits()).resolves.toBeNull();
+    });
+  });
 });
+

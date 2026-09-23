@@ -121,3 +121,23 @@ describe("Ordner", () => {
     expect(isExcludedFolder("Privatsache", ["Privat"])).toBe(false);
   });
 });
+
+describe("Dateien", () => {
+  // Installationen vor der Datei-Synchronisation (ADR 0009) starten ohne verknuepfte Dateien.
+  it("should_startWithoutFileMappings_forExistingInstallations", () => {
+    const settings = migrateSettings({ vaultId: "v1", vaults: { v1: { noteIds: { "a.md": "n1" }, noteMeta: {}, pendingOps: [], blockedPaths: {} } } });
+
+    expect(settings.vaults.v1.fileIds).toEqual({});
+    expect(settings.vaults.v1.fileMeta).toEqual({});
+    expect(settings.vaults.v1.noteIds).toEqual({ "a.md": "n1" });
+  });
+
+  it("should_dropAQueuedRename_ofAFileThatIsDeletedAfterwards", () => {
+    const state = emptyVaultState();
+    queueRename(state, "f1", "Archiv/a.pdf");
+    queueDelete(state, "f1", "Archiv/a.pdf", "op-1");
+
+    expect(state.pendingOps).toEqual([{ kind: "delete", noteId: "f1", path: "Archiv/a.pdf", operationId: "op-1" }]);
+  });
+});
+
