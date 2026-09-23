@@ -42,4 +42,22 @@ class AiServiceTest {
             .isInstanceOf(IllegalArgumentException.class);
         assertThat(new AiServiceDirectory(List.of(gemini)).find("gemini")).contains(gemini);
     }
+
+    // Konfiguration ueber eine Umgebungsvariable: "id|Name|Levels; id|Name|Levels".
+    @Test
+    void should_readTheConfiguredServices_fromOneSetting() {
+        var directory = AiServiceDirectory.parse(" gemini|Gemini|1 ; lokal|Ollama lokal|1,2 ;");
+
+        assertThat(directory.all()).containsExactly(new AiService("gemini", "Gemini", Set.of(1)),
+            new AiService("lokal", "Ollama lokal", Set.of(1, 2)));
+        assertThat(AiServiceDirectory.parse("").all()).isEmpty();
+        assertThat(AiServiceDirectory.parse(null).all()).isEmpty();
+    }
+
+    @Test
+    void should_refuseToStart_withABrokenServiceConfiguration() {
+        for (var broken : List.of("gemini|Gemini", "gemini|Gemini|x", "gemini|Gemini|101", "|Gemini|1")) {
+            assertThatThrownBy(() -> AiServiceDirectory.parse(broken), broken).isInstanceOf(IllegalArgumentException.class);
+        }
+    }
 }
