@@ -98,3 +98,10 @@ zusätzlich einen passenden OIDC-Client und eine erlaubte Origin in der API-Konf
 
 Die vollständigen Ziele und Architekturentscheidungen stehen in [Anforderungen.md](Anforderungen.md)
 und [Plan.md](Plan.md). Die Webapp hat eine eigene [Entwickleranleitung](webapp/README.md).
+
+## Lizenz
+
+© 2026 Raindancer118. Alle Rechte vorbehalten. Offizielle Releases dürfen privat und
+nichtkommerziell genutzt werden. Für geschäftliche Nutzung oder andere Verwendungen ist eine
+ausdrückliche individuelle Erlaubnis erforderlich. Die Einzelheiten stehen in der
+[Lizenzdatei](LICENSE.md).
