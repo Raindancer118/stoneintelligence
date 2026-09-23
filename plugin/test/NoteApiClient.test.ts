@@ -242,4 +242,46 @@ describe("NoteApiClient", () => {
       await expect(client.deleteNote("v", "n", "op")).resolves.toBeUndefined();
     });
   });
+
+  describe("Einladen", () => {
+    const client = (response: object) => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => response });
+      return { fakeFetch, api: new NoteApiClient("https://platform.example", async () => "tok", fakeFetch as unknown as typeof fetch) };
+    };
+
+    it("should_searchPeople_withTheQueryEncoded", async () => {
+      const { fakeFetch, api } = client([{ username: "anna", name: "Anna", maskedEmail: "a***@x.de", alreadyMember: false }]);
+
+      const people = await api.searchPeople("v", "anna+x");
+
+      expect(people[0].username).toBe("anna");
+      expect(fakeFetch.mock.calls[0][0]).toBe("https://platform.example/api/v1/vaults/v/people?q=anna%2Bx");
+    });
+
+    it("should_addAPerson_andInviteByEmail_withTheChosenAccess", async () => {
+      const { fakeFetch, api } = client({ status: "ADDED", displayName: "Anna" });
+
+      await api.addPerson("v", "anna", "READ");
+      await api.inviteByEmail("v", "neu@x.de", "EDIT");
+
+      expect(fakeFetch.mock.calls[0][0]).toBe("https://platform.example/api/v1/vaults/v/members");
+      expect(JSON.parse(fakeFetch.mock.calls[0][1].body)).toEqual({ username: "anna", access: "READ" });
+      expect(fakeFetch.mock.calls[1][0]).toBe("https://platform.example/api/v1/vaults/v/invitations");
+      expect(JSON.parse(fakeFetch.mock.calls[1][1].body)).toEqual({ email: "neu@x.de", access: "EDIT" });
+    });
+
+    it("should_surfaceTheServersExplanation_forRejectedInvitations", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status: 422, json: async () => ({ detail: "Bitte eine gültige E-Mail-Adresse angeben." }) });
+      const api = new NoteApiClient("https://platform.example", async () => "t", fakeFetch as unknown as typeof fetch);
+
+      await expect(api.inviteByEmail("v", "x", "EDIT")).rejects.toThrow("Bitte eine gültige E-Mail-Adresse angeben.");
+    });
+
+    it("should_readTheOwnPermissions_forAVault", async () => {
+      const { fakeFetch, api } = client(["READ", "MANAGE"]);
+
+      expect(await api.permissions("v")).toEqual(["READ", "MANAGE"]);
+      expect(fakeFetch.mock.calls[0][0]).toBe("https://platform.example/api/v1/vaults/v/permissions");
+    });
+  });
 });
