@@ -21,6 +21,37 @@ public final class AiServiceDirectory {
         }
     }
 
+    /**
+     * Liest {@code STONEINTELLIGENCE_AI_SERVICES}: {@code id|Name|Levels} je Dienst, durch {@code ;}
+     * getrennt, Levels durch {@code ,} - z. B. {@code gemini|Gemini|1; lokal|Ollama lokal|1,2}. Leer =
+     * keine KI. Eine fehlerhafte Angabe verhindert den Start, statt still einen Dienst wegzulassen.
+     */
+    public static AiServiceDirectory parse(String setting) {
+        if (setting == null || setting.isBlank()) {
+            return new AiServiceDirectory(List.of());
+        }
+        var services = new java.util.ArrayList<AiService>();
+        for (var entry : setting.split(";")) {
+            if (entry.isBlank()) {
+                continue;
+            }
+            var parts = entry.strip().split("\\|", -1);
+            if (parts.length != 3) {
+                throw new IllegalArgumentException("AI service must be 'id|Name|levels', was: " + entry.strip());
+            }
+            var levels = new java.util.HashSet<Integer>();
+            for (var level : parts[2].split(",")) {
+                try {
+                    levels.add(Integer.parseInt(level.strip()));
+                } catch (NumberFormatException notANumber) {
+                    throw new IllegalArgumentException("AI service " + parts[0].strip() + " has an invalid level: " + level.strip());
+                }
+            }
+            services.add(new AiService(parts[0].strip(), parts[1].strip(), levels));
+        }
+        return new AiServiceDirectory(services);
+    }
+
     public Optional<AiService> find(String id) {
         return Optional.ofNullable(byId.get(id));
     }

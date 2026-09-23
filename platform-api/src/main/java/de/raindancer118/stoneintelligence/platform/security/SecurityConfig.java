@@ -43,7 +43,30 @@ public class SecurityConfig {
      */
     private static final List<String> ALLOWED_ORIGINS = List.of("https://kb.tstieh.de", "http://localhost:5173");
 
+    /**
+     * {@code /internal/**} gehoert allein dem KI-Worker (ADR 0008): eigene Kette mit Service-Token,
+     * ohne OIDC - ein Personen-Token oeffnet sie nicht, das Worker-Token keine andere Route.
+     */
     @Bean
+    @org.springframework.core.annotation.Order(1)
+    public SecurityFilterChain internalWorkerChain(HttpSecurity http,
+            de.raindancer118.stoneintelligence.platform.ai.AiWorkerTokenFilter workerToken) throws Exception {
+        http
+            .securityMatcher("/internal/**")
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session.sessionCreationPolicy(
+                org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
+            .addFilterBefore(workerToken,
+                org.springframework.security.web.authentication.AnonymousAuthenticationFilter.class)
+            .authorizeHttpRequests(auth -> auth.anyRequest()
+                .hasRole(de.raindancer118.stoneintelligence.platform.ai.AiWorkerTokenFilter.ROLE))
+            .exceptionHandling(errors -> errors.authenticationEntryPoint(
+                new org.springframework.security.web.authentication.HttpStatusEntryPoint(org.springframework.http.HttpStatus.UNAUTHORIZED)));
+        return http.build();
+    }
+
+    @Bean
+    @org.springframework.core.annotation.Order(2)
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
@@ -51,6 +74,9 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/ws/sync").permitAll()
+                // Fehlerweiterleitung (z. B. ein 403 aus /internal) - sonst machte die OIDC-Pflicht
+                // aus jedem Fehlerstatus eines Aufrufers ohne JWT ein 401.
+                .requestMatchers("/error").permitAll()
                 // Eingeladene ohne Konto muessen sehen koennen, wozu sie eingeladen wurden -
                 // nur GET, Annehmen verlangt eine Anmeldung.
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/invitations/*").permitAll()
