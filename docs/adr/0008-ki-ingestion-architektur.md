@@ -44,9 +44,15 @@ welche Levels er verarbeiten darf.
    (konstantzeitiger Vergleich), nur für den Worker. Dieselben Wege wie Menschen: Notiz anlegen,
    Text als Yjs-Update anhängen, Live-Broadcast an offene Editoren, Vault-Ankündigungen, Audit.
    Der Akteur ist eine **KI-Identität** (`ki:<name>`), in Audit und Frontmatter sichtbar.
-5. **Uploads** über `platform-api` (Berechtigung CREATE, Typ- und Größenlimits), gespeichert in
-   Postgres, verarbeitet über die vorhandene persistierte Job-Queue (`worker.jobs`,
-   `FOR UPDATE SKIP LOCKED`). Fortschritt/Status per Job abrufbar.
+5. **Uploads** über `platform-api` (Berechtigung CREATE; PDF, Markdown, Text – am Inhalt erkannt;
+   20 MB je Datei, 10 Dateien je Upload, 20 offene Jobs je Vault). Jede Datei wird ein Job in
+   `platform.ai_jobs` (Postgres, `FOR UPDATE SKIP LOCKED`, Lease 10 min für den Wiederanlauf nach
+   Absturz, 3 Versuche mit wachsender Pause). **Abweichung vom ursprünglichen Plan:** nicht die
+   `worker.jobs`-Tabelle – der Worker holt Jobs, Dokument und Fortschritt ausschließlich über
+   `/internal/ai/jobs/**` und braucht so keinerlei Datenbankzugriff (Punkt 4). Beim Hochladen wählt
+   die Person den KI-Dienst und das Level des Dokuments; der Dienst muss dieses Level verarbeiten
+   dürfen, alle erzeugten Notizen bekommen es. Das Dokument selbst wird gelöscht, sobald der Job
+   endet; die Job-Metadaten nach 90 Tagen.
 6. **Change-Sets statt Git-Revert (Plan 4.2):** Jede Verarbeitung schreibt ein Change-Set mit
    den exakten Operationen je Notiz (angelegt, Text vorher/nachher). Rückgängig machen ist eine
    konfliktgeprüfte Kompensation: nur wo der aktuelle Text noch dem KI-Stand entspricht, wird
