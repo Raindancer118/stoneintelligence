@@ -16,3 +16,5 @@ Project.md
 .claude/
 .serena/
 codex-research-archive/
+worker.env
+maven-settings.xml

@@ -1,0 +1,207 @@
+package de.raindancer118.stoneai.pipeline;
+
+import de.raindancer118.stoneai.chunk.Chunk;
+import de.raindancer118.stoneai.chunk.Chunker;
+import de.raindancer118.stoneai.config.StoneAiConfig;
+import de.raindancer118.stoneai.extract.ExtractionResult;
+import de.raindancer118.stoneai.extract.ExtractionService;
+import de.raindancer118.stoneai.extract.LlmClient;
+import de.raindancer118.stoneai.ledger.LedgerEntry;
+import de.raindancer118.stoneai.ledger.ProcessingLedger;
+import de.raindancer118.stoneai.note.Consolidator;
+import de.raindancer118.stoneai.note.DraftNote;
+import de.raindancer118.stoneai.protection.ProtectionDecision;
+import de.raindancer118.stoneai.protection.ProtectionPolicy;
+import de.raindancer118.stoneai.source.DocumentLoaders;
+import de.raindancer118.stoneai.source.EmptyDocumentException;
+import de.raindancer118.stoneai.source.SourceDocument;
+import de.raindancer118.stoneai.source.UnsupportedDocumentException;
+import de.raindancer118.stoneai.vault.MocWriter;
+import de.raindancer118.stoneai.vault.NoteStore;
+import de.raindancer118.stoneai.vault.SourceNoteWriter;
+import de.raindancer118.stoneai.vault.VaultIndex;
+import de.raindancer118.stoneai.vault.VaultWriter;
+import de.raindancer118.stoneai.vault.WriteResult;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Supplier;
+
+/**
+ * The whole journey of one document: protection check, load, chunk, extract, consolidate, write.
+ *
+ * <p>The order matters. Protection is checked <em>before</em> anything is read into memory, so a
+ * document a person marked private never reaches a provider — not even as a page image. The
+ * ledger is consulted next, so a watch daemon that sees the same file twice does not pay for it
+ * twice. Only then does any model get called.
+ */
+public final class IngestPipeline {
+
+    /** Characters per chunk. Comfortably inside every current model's context, with room for the prompt. */
+    private static final int CHUNK_CHARS = 6_000;
+    private static final int CHUNK_OVERLAP = 400;
+
+    private final StoneAiConfig config;
+    private final LlmClient llm;
+    private final ProcessingLedger ledger;
+    private final Supplier<LocalDate> clock;
+    private final boolean dryRun;
+    private final boolean force;
+
+    public IngestPipeline(StoneAiConfig config, LlmClient llm, ProcessingLedger ledger,
+                          Supplier<LocalDate> clock, boolean dryRun) {
+        this(config, llm, ledger, clock, dryRun, false);
+    }
+
+    private IngestPipeline(StoneAiConfig config, LlmClient llm, ProcessingLedger ledger,
+                           Supplier<LocalDate> clock, boolean dryRun, boolean force) {
+        this.config = config;
+        this.llm = llm;
+        this.ledger = ledger;
+        this.clock = clock;
+        this.dryRun = dryRun;
+        this.force = force;
+    }
+
+    /**
+     * A pipeline for a vault it reaches only through a {@link NoteStore} (StoneIntelligence): the
+     * caller decides what gets processed, so there is no ledger, nothing is moved and no
+     * attachment is copied - the document is typically a temporary upload.
+     */
+    public static IngestPipeline hosted(StoneAiConfig config, LlmClient llm, Supplier<LocalDate> clock) {
+        return new IngestPipeline(config, llm, null, clock, false, true);
+    }
+
+    /** A pipeline that processes a document again even when the ledger has seen it. */
+    public IngestPipeline force() {
+        return new IngestPipeline(config, llm, ledger, clock, dryRun, true);
+    }
+
+    public IngestReport ingest(Path file) throws IOException {
+        if (ledger == null) {
+            throw new IllegalStateException("a hosted pipeline writes through a NoteStore - use ingestInto");
+        }
+        return run(file, NoteStore.files());
+    }
+
+    /** Processes a document into the vault behind {@code store}; see {@link #hosted}. */
+    public IngestReport ingestInto(Path file, NoteStore store) throws IOException {
+        return run(file, store);
+    }
+
+    private IngestReport run(Path file, NoteStore store) throws IOException {
+        boolean hosted = ledger == null;
+        Path document = file.toAbsolutePath().normalize();
+        RecordingLlmClient recorder = new RecordingLlmClient(llm);
+        ProtectionPolicy protection = ProtectionPolicy.of(config, protectionRootFor(document));
+
+        ProtectionDecision decision = protection.inspect(document);
+        if (decision.isProtected()) {
+            return IngestReport.skipped(document, "vor der KI geschützt — " + decision.reason());
+        }
+
+        SourceDocument source;
+        try {
+            source = DocumentLoaders.forConfig(config, (png, page) -> readPage(recorder, png, page)).load(document);
+        } catch (UnsupportedDocumentException | EmptyDocumentException e) {
+            return IngestReport.skipped(document, e.getMessage());
+        }
+
+        if (!hosted && !force && ledger.isProcessed(source.sha256())) {
+            return IngestReport.skipped(document, "bereits verarbeitet (Ledger) — mit --force erneut lesen");
+        }
+
+        List<Chunk> chunks = new Chunker(CHUNK_CHARS, CHUNK_OVERLAP).split(source);
+        ExtractionResult extraction = new ExtractionService(config, recorder).extract(chunks);
+        List<DraftNote> notes = new Consolidator(config, recorder).consolidate(extraction.concepts());
+
+        VaultIndex index = VaultIndex.build(config, ProtectionPolicy.of(config, config.vault().resolvedPath()), store);
+        VaultWriter writer = new VaultWriter(config, ProtectionPolicy.of(config,
+                config.vault().resolvedPath()), clock, index, store);
+        if (dryRun) {
+            writer = writer.dryRun();
+        }
+        final VaultWriter noteWriter = writer;
+
+        SourceNoteWriter sourceWriter = new SourceNoteWriter(config, clock, dryRun, store);
+        String sourceLink = sourceWriter.linkFor(source);
+
+        // Announce every note of this run before writing any of it, so a cross reference
+        // resolves regardless of the order the notes happen to be written in.
+        notes.forEach(note -> index.register(note.title(), note.aliases(), noteWriter.fileFor(note)));
+
+        List<WriteResult> writes = new ArrayList<>();
+        List<String> writtenTitles = new ArrayList<>();
+        for (DraftNote note : notes) {
+            WriteResult result = noteWriter.write(note, source.sha256(), sourceLink);
+            writes.add(result);
+            if (result.wrote()) {
+                writtenTitles.add(note.title());
+            }
+        }
+
+        Path attachment = hosted ? null : copyAttachment(source);
+        if (config.notes().writeSourceNote()) {
+            sourceWriter.write(source, writtenTitles, attachment);
+        }
+        if (config.notes().writeMoc()) {
+            new MocWriter(config, clock, dryRun, store).update(source, writtenTitles, sourceLink);
+        }
+
+        if (!dryRun && !hosted) {
+            ledger.record(new LedgerEntry(source.sha256(), document.toString(), Instant.now(),
+                    writtenTitles, recorder.models(), extraction.tokensUsed()));
+            ledger.save();
+            moveProcessed(document);
+        }
+
+        return new IngestReport(document, source.sha256(), source.title(), "", writes,
+                extraction.failures(), source.skippedPages(), extraction.tokensUsed(),
+                extraction.budgetExhausted());
+    }
+
+    /** Reads a scanned page through the vision model. */
+    private String readPage(RecordingLlmClient recorder, byte[] png, int pageNumber) {
+        return recorder.readImage(png, de.raindancer118.stoneai.extract.VisionPrompts.ocr(
+                pageNumber, config.llm().language())).text();
+    }
+
+    /**
+     * The root the protection rules are relative to. For a file inside the vault that is the
+     * vault; otherwise its own folder, so a {@code .stoneaiignore} next to an inbox still applies.
+     */
+    private Path protectionRootFor(Path document) {
+        Path vault = config.vault().resolvedPath();
+        return document.startsWith(vault) ? vault : document.getParent();
+    }
+
+    private Path copyAttachment(SourceDocument source) throws IOException {
+        if (!config.vault().copyAttachments() || dryRun) {
+            return null;
+        }
+        Path target = config.vault().attachmentsDir().resolve(source.file().getFileName());
+        if (source.file().startsWith(config.vault().resolvedPath())) {
+            return source.file();
+        }
+        Files.createDirectories(target.getParent());
+        Files.copy(source.file(), target, StandardCopyOption.REPLACE_EXISTING);
+        return target;
+    }
+
+    private void moveProcessed(Path document) throws IOException {
+        if (!config.ingest().moveProcessed() || !document.startsWith(config.ingest().inboxDir())) {
+            return;
+        }
+        Path target = config.vault().resolvedPath()
+                .resolve(config.ingest().processedFolder())
+                .resolve(document.getFileName());
+        Files.createDirectories(target.getParent());
+        Files.move(document, target, StandardCopyOption.REPLACE_EXISTING);
+    }
+}

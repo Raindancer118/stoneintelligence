@@ -16,13 +16,17 @@ welche Levels er verarbeiten darf.
 
 1. **Pipeline aus `stoneai-core` wiederverwenden**, nicht neu schreiben: Schutzprüfung, Laden
    (PDF/Text, OCR für Scans), Chunking, Extraktion, Konsolidierung, Managed Blocks, Frontmatter.
-   `stoneai-core` wird dafür so erweitert, dass das Schreiben von Notizen über eine
-   Text-Schnittstelle („bestehender Text rein → neuer Text raus") statt nur über lokale Dateien
-   geht, und als Bibliothek auf packages.tstieh.de veröffentlicht. Die CLI bleibt unverändert.
+   Geschrieben wird über einen `NoteStore`-Port statt direkt in Dateien
+   (`IngestPipeline.hosted(...).ingestInto(dokument, store)`: kein Ledger, nichts verschoben, keine
+   temporären Pfade in der Quellnotiz). **Umsetzung 23.09.:** Da das Repo `Raindancer118/stoneai`
+   archiviert ist (StoneIntelligence ist der Nachfolger), liegt `stoneai-core` als Modul in diesem
+   Repo; die Datei-Implementierung bleibt für die frühere CLI erhalten.
 2. **Mehrere KI-Dienste, Modell austauschbar über einen Port** (`LlmClient` aus `stoneai-core`):
-   Standard-Adapter `ai-gateway`; zusätzlich ein OpenAI-kompatibler Adapter (Ollama, vLLM,
-   OpenRouter …). Der Betrieb konfiguriert beliebig viele **KI-Dienste** (`AiService`: Id, Name,
-   Adapter, Endpunkt/Modell, Schlüssel-Referenz, **erlaubte Levels**); Schlüssel nie im Klartext im
+   Standard ist `ai-gateway` (Gemini, Groq, Mistral, OpenRouter mit Schlüssel-Pools); seit
+   ai-gateway 0.3.0 zusätzlich jeder OpenAI-kompatible Endpunkt (Ollama, vLLM …, auch ohne
+   Schlüssel). Der Betrieb konfiguriert beliebig viele **KI-Dienste**: Id, Name und **erlaubte
+   Levels** in `platform-api` (`STONEINTELLIGENCE_AI_SERVICES`), Modellketten, Endpunkt und
+   Schlüssel nur im Worker (`AI_SERVICE_<ID>_FAST|SMART|VISION|ENDPOINT|KEYS`, `worker.env`); nie im Klartext im
    Repo. Der Name ist zugleich die KI-Identität im Vault (`ki:<Name>`), daher eindeutig.
    **Level-Schranke je Dienst** (in `platform-api` durchgesetzt, nicht im Worker): ein Dienst liest
    und schreibt nur Notizen der für ihn freigegebenen Levels — z. B. ein externer Anbieter nur

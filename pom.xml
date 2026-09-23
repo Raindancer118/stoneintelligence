@@ -18,6 +18,7 @@
 
   <modules>
     <module>domain-core</module>
+    <module>stoneai-core</module>
     <module>platform-api</module>
     <module>intelligence-worker</module>
     <module>mcp-adapter</module>
@@ -33,6 +34,8 @@
     <junit-jupiter.version>6.0.0</junit-jupiter.version>
     <assertj.version>3.27.6</assertj.version>
     <testcontainers.version>1.21.3</testcontainers.version>
+    <ai-gateway.version>0.3.0</ai-gateway.version>
+    <pdfbox.version>3.0.8</pdfbox.version>
   </properties>
 
   <dependencyManagement>
@@ -49,6 +52,21 @@
         <groupId>de.raindancer118</groupId>
         <artifactId>domain-core</artifactId>
         <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>de.raindancer118</groupId>
+        <artifactId>stoneai-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.raindancer118</groupId>
+        <artifactId>ai-gateway</artifactId>
+        <version>${ai-gateway.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.pdfbox</groupId>
+        <artifactId>pdfbox</artifactId>
+        <version>${pdfbox.version}</version>
       </dependency>
 
       <dependency>
@@ -149,6 +167,14 @@
       </plugins>
     </pluginManagement>
   </build>
+
+  <!-- Eigene Bibliotheken (ai-gateway, revolver) - privat, Zugang per Token (settings.xml / CI-Secret). -->
+  <repositories>
+    <repository>
+      <id>packages-releases</id>
+      <url>https://packages.tstieh.de/releases</url>
+    </repository>
+  </repositories>
 
   <distributionManagement>
     <repository>

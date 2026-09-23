@@ -9,6 +9,9 @@ on:
 jobs:
   java-build-and-test:
     runs-on: ubuntu-latest
+    env:
+      # packages.tstieh.de (ai-gateway): Maven-HTTP-Transport scheitert dort am TLSv1.3-Handshake.
+      MAVEN_OPTS: -Djdk.tls.client.protocols=TLSv1.2
     steps:
       - uses: actions/checkout@v4
 
@@ -18,9 +21,16 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: maven
+          # Nur-Lese-Token fuer die privaten eigenen Bibliotheken (ai-gateway, revolver).
+          server-id: packages-releases
+          server-username: MAVEN_REGISTRY_USERNAME
+          server-password: MAVEN_REGISTRY_PASSWORD
 
       - name: Build and unit-test all modules
         run: ./mvnw -B -ntp verify
+        env:
+          MAVEN_REGISTRY_USERNAME: ${{ secrets.MAVEN_REGISTRY_USERNAME }}
+          MAVEN_REGISTRY_PASSWORD: ${{ secrets.MAVEN_REGISTRY_PASSWORD }}
 
       - name: Upload surefire/failsafe reports
         if: always()

@@ -29,23 +29,30 @@ services:
       STONEINTELLIGENCE_DB_USER: ${STONEINTELLIGENCE_DB_USER:-stoneintelligence}
       STONEINTELLIGENCE_DB_PASSWORD: ${STONEINTELLIGENCE_DB_PASSWORD:?set STONEINTELLIGENCE_DB_PASSWORD}
       STONEINTELLIGENCE_OIDC_ISSUER_URI: ${STONEINTELLIGENCE_OIDC_ISSUER_URI:-}
+      # "id|Name|Levels; ..." - leer = keine KI (s. AiServiceDirectory)
+      STONEINTELLIGENCE_AI_SERVICES: ${STONEINTELLIGENCE_AI_SERVICES:-}
+      STONEINTELLIGENCE_AI_WORKER_TOKEN: ${STONEINTELLIGENCE_AI_WORKER_TOKEN:-}
     ports:
       - "8080:8080"
 
+  # KI-Worker (ADR 0008): kein Datenbankzugriff, alles ueber platform-api /internal. Welche Modelle
+  # ein Dienst nutzt, steht in worker.env (AI_SERVICE_<ID>_FAST|SMART|VISION|ENDPOINT|KEYS,
+  # GROQ_API_KEY, GOOGLE_API_KEY ...) - getrennt von .env, damit der Worker keine DB-Secrets sieht.
   intelligence-worker:
     build:
       context: .
       dockerfile: intelligence-worker/Dockerfile
+      secrets:
+        - maven_settings
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      - platform-api
     environment:
-      STONEINTELLIGENCE_DB_URL: jdbc:postgresql://postgres:5432/stoneintelligence
-      STONEINTELLIGENCE_DB_USER: ${STONEINTELLIGENCE_DB_USER:-stoneintelligence}
-      STONEINTELLIGENCE_DB_PASSWORD: ${STONEINTELLIGENCE_DB_PASSWORD:?set STONEINTELLIGENCE_DB_PASSWORD}
-    ports:
-      - "8081:8081"
+      STONEINTELLIGENCE_PLATFORM_API_URL: http://platform-api:8080
+      STONEINTELLIGENCE_AI_WORKER_TOKEN: ${STONEINTELLIGENCE_AI_WORKER_TOKEN:-}
+    env_file:
+      - path: worker.env
+        required: false
 
   mcp-adapter:
     build:
@@ -57,9 +64,13 @@ services:
       - intelligence-worker
     environment:
       STONEINTELLIGENCE_PLATFORM_API_URL: http://platform-api:8080
-      STONEINTELLIGENCE_INTELLIGENCE_WORKER_URL: http://intelligence-worker:8081
     ports:
       - "8082:8082"
 
 volumes:
   stoneintelligence-postgres:
+
+secrets:
+  # Maven-settings.xml mit Lesezugang zu packages.tstieh.de (server-id packages-releases)
+  maven_settings:
+    file: ${MAVEN_SETTINGS_FILE:-./maven-settings.xml}
