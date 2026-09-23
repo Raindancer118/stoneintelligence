@@ -11,7 +11,15 @@ class VaultControllerTest {
 
     private final FakeVaultRepository vaults = new FakeVaultRepository();
     private final FakeAuthorizationRepository authorization = new FakeAuthorizationRepository();
-    private final VaultController controller = new VaultController(vaults, authorization);
+    private final de.raindancer118.stoneintelligence.platform.invitation.RecordingMailer mailer =
+        new de.raindancer118.stoneintelligence.platform.invitation.RecordingMailer();
+    private final de.raindancer118.stoneintelligence.platform.invitation.InvitationService invitations =
+        new de.raindancer118.stoneintelligence.platform.invitation.InvitationService(
+            new de.raindancer118.stoneintelligence.platform.invitation.FakeInvitationRepository(),
+            new de.raindancer118.stoneintelligence.platform.invitation.FakeUserDirectory(), mailer, authorization,
+            new VaultAccessGuard(authorization), vaults, java.time.Clock.systemUTC(),
+            new de.raindancer118.stoneintelligence.platform.invitation.InvitationSettings("https://kb.example", java.time.Duration.ofDays(14)));
+    private final VaultController controller = new VaultController(vaults, authorization, invitations);
 
     @Test
     void should_grantCreatorFullPermissions_when_vaultIsCreated() {
@@ -44,5 +52,22 @@ class VaultControllerTest {
         var tomsVaults = controller.list(tom);
 
         assertThat(tomsVaults).extracting(VaultController.VaultResponse::id).containsExactly(tomsVault.id());
+    }
+
+    /**
+     * Wer ueber eine E-Mail-Einladung ein Konto angelegt hat und sich dann einfach anmeldet, soll
+     * den Vault sofort sehen - ohne den Link aus der Mail noch einmal oeffnen zu muessen.
+     */
+    @Test
+    void should_acceptPendingInvitationsForTheSignedInEmail_whenListingVaults() {
+        var tom = new TestingAuthenticationToken("tom", null);
+        var vault = controller.create(new VaultController.CreateVaultRequest("Team"), tom);
+        invitations.inviteByEmail(de.raindancer118.stoneintelligence.domain.id.VaultId.of(vault.id()), "tom", "neu@example.org",
+            de.raindancer118.stoneintelligence.platform.invitation.InviteAccess.EDIT);
+        var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "none")
+            .claim("preferred_username", "neu").claim("email", "Neu@example.org").build();
+        var newcomer = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt, java.util.List.of(), "neu");
+
+        assertThat(controller.list(newcomer)).extracting(VaultController.VaultResponse::name).containsExactly("Team");
     }
 }

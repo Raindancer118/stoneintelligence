@@ -23,10 +23,13 @@ public class VaultController {
 
     private final VaultRepository vaults;
     private final AuthorizationRepository authorization;
+    private final de.raindancer118.stoneintelligence.platform.invitation.InvitationService invitations;
 
-    public VaultController(VaultRepository vaults, AuthorizationRepository authorization) {
+    public VaultController(VaultRepository vaults, AuthorizationRepository authorization,
+                           de.raindancer118.stoneintelligence.platform.invitation.InvitationService invitations) {
         this.vaults = vaults;
         this.authorization = authorization;
+        this.invitations = invitations;
     }
 
     @PostMapping("/api/v1/vaults")
@@ -40,9 +43,16 @@ public class VaultController {
         return VaultResponse.from(vault);
     }
 
-    /** Alle Vaults, in denen der authentifizierte Actor ueber irgendeine Gruppe Mitglied ist. */
+    /**
+     * Alle Vaults, in denen der authentifizierte Actor ueber irgendeine Gruppe Mitglied ist. Vorher
+     * werden offene Einladungen an seine E-Mail-Adresse (Claim aus dem Authentik-Token) angenommen -
+     * Plugin und Webapp rufen diese Liste nach jeder Anmeldung ab.
+     */
     @GetMapping("/api/v1/vaults")
     public List<VaultResponse> list(Authentication authentication) {
+        if (authentication instanceof org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken jwt) {
+            invitations.acceptPendingForEmail(authentication.getName(), jwt.getToken().getClaimAsString("email"));
+        }
         var accessibleIds = authorization.listAccessibleVaultIds(authentication.getName());
         return accessibleIds.stream()
             .map(vaults::findById)
