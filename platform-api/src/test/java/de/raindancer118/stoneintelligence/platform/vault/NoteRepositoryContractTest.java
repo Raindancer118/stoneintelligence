@@ -57,6 +57,18 @@ public abstract class NoteRepositoryContractTest {
 
             assertThat(repository.findById(otherVaultId, note.id())).isEmpty();
         }
+
+        @Test
+        void should_findByExactPath_onlyInTheOwnVault() {
+            var repository = repository();
+            var vaultId = newVault();
+            var note = repository.create(vaultId, "Wissen/A.md", NoteLevel.of(1), "tom");
+            repository.create(vaultId, "Wissen/A.md.bak.md", NoteLevel.of(1), "tom");
+
+            assertThat(repository.findByPath(vaultId, "Wissen/A.md")).containsExactly(note);
+            assertThat(repository.findByPath(vaultId, "wissen/a.md")).isEmpty();
+            assertThat(repository.findByPath(newVault(), "Wissen/A.md")).isEmpty();
+        }
     }
 
     @Nested

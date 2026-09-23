@@ -181,10 +181,7 @@ public class NoteController {
     }
 
     private static void validatePath(String path) {
-        if (path == null || path.isBlank() || path.length() > 1024 || !path.equals(path.strip())
-                || !path.toLowerCase(java.util.Locale.ROOT).endsWith(".md")
-                || path.chars().anyMatch(c -> Character.isISOControl(c) || "\\:*?\"<>|".indexOf(c) >= 0)
-                || java.util.Arrays.stream(path.split("/", -1)).anyMatch(part -> part.isBlank() || part.startsWith("."))) {
+        if (!NotePaths.isValid(path)) {
             throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
                 "Invalid Markdown path");
         }
