@@ -18,13 +18,17 @@ class JobProcessorTest {
           "body":"Findet in Chloroplasten statt.","tags":["biologie"],"entities":{},"related":["Zelle"],"confidence":0.9}]}
         """;
 
+    private static final String PLAN = """
+        {"topics":[{"title":"Photosynthese","kind":"begriff","scope":"Ablauf"}]}
+        """;
+
     private final FakePlatform platform = new FakePlatform();
 
     private static LlmClient answering(String answer) {
         return new LlmClient() {
             @Override
             public LlmAnswer complete(Tier tier, String system, String user) {
-                return new LlmAnswer(answer, 5, "fake/model");
+                return new LlmAnswer(system.contains("Themenplan") ? PLAN : answer, 5, "fake/model");
             }
 
             @Override
@@ -69,6 +73,34 @@ class JobProcessorTest {
         var note = platform.notes.values().stream().filter(n -> n.path().equals("Notizen/Photosynthese.md")).findFirst().orElseThrow();
         assertThat(note.text()).contains("Licht wird zu Zucker.").contains("[[Zelle]]");
         assertThat(platform.events.getFirst()).startsWith("progress");
+    }
+
+    @Test
+    void should_keepTheOriginalPdf_inTheVault_andLinkItFromTheSourceNote() throws Exception {
+        var pdf = new java.io.ByteArrayOutputStream();
+        try (var document = new org.apache.pdfbox.pdmodel.PDDocument()) {
+            var page = new org.apache.pdfbox.pdmodel.PDPage();
+            document.addPage(page);
+            try (var content = new org.apache.pdfbox.pdmodel.PDPageContentStream(document, page)) {
+                content.beginText();
+                content.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(
+                    org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA), 12);
+                content.newLineAtOffset(60, 700);
+                content.showText("Photosynthese braucht Licht.");
+                content.endText();
+            }
+            document.save(pdf);
+        }
+        var job = new ClaimedJob(UUID.randomUUID(), "vault-1", "gemini", "tom", "Skript.pdf", "application/pdf",
+            pdf.size(), 1, UUID.randomUUID(), 1);
+        platform.documents.put(job.jobId(), pdf.toByteArray());
+
+        processor(answering(ANSWER)).process(job);
+
+        assertThat(platform.files).containsKey("Anhänge/Skript.pdf");
+        var source = platform.notes.values().stream().filter(n -> n.path().startsWith("Quellen/")).findFirst().orElseThrow();
+        assertThat(source.text()).contains("![[Skript.pdf]]");
+        assertThat(platform.events).last().isEqualTo("complete");
     }
 
     // Ein als privat markiertes Dokument erreicht nie einen Anbieter - und ein erneuter Versuch aendert daran nichts.

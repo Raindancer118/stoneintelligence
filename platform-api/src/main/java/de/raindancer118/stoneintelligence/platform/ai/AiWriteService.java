@@ -1,5 +1,6 @@
 package de.raindancer118.stoneintelligence.platform.ai;
 
+import java.io.ByteArrayInputStream;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,7 +20,13 @@ import de.raindancer118.stoneintelligence.platform.sync.relay.UpdateRecord;
 import de.raindancer118.stoneintelligence.platform.sync.relay.VaultAnnouncementService;
 import de.raindancer118.stoneintelligence.platform.sync.yjs.YjsBridge;
 import de.raindancer118.stoneintelligence.platform.vault.FolderRegistry;
+import de.raindancer118.stoneintelligence.platform.files.BlobTooLargeException;
+import de.raindancer118.stoneintelligence.platform.files.FilePaths;
+import de.raindancer118.stoneintelligence.platform.files.FileQuotaExceededException;
+import de.raindancer118.stoneintelligence.platform.files.FileRefusedException;
+import de.raindancer118.stoneintelligence.platform.files.FileService;
 import de.raindancer118.stoneintelligence.platform.vault.Note;
+import de.raindancer118.stoneintelligence.platform.vault.NoteKind;
 import de.raindancer118.stoneintelligence.platform.vault.NotePaths;
 import de.raindancer118.stoneintelligence.platform.vault.NoteRepository;
 
@@ -47,12 +54,22 @@ public class AiWriteService {
     private final AiServiceDirectory services;
     private final AiChangeSetRepository changeSets;
     private final Supplier<Instant> clock;
+    private final FileService files;
     private final NoteLevelPolicyResolver levels = NoteLevelPolicyResolver.withDefaults();
 
     public AiWriteService(NoteRepository notes, SnapshotStore snapshots, SyncRelayService relay, YjsBridge yjs,
                           VaultAnnouncementService announcements, FolderRegistry folders, AiAuditRecorder audit,
                           AiServiceDirectory services,
                           AiChangeSetRepository changeSets, Supplier<Instant> clock) {
+        this(notes, snapshots, relay, yjs, announcements, folders, audit, services, changeSets, clock, null);
+    }
+
+    /** @param files legt die gelesenen Originale ab; {@code null} = keine Dateien (Tests ohne Dateispeicher) */
+    public AiWriteService(NoteRepository notes, SnapshotStore snapshots, SyncRelayService relay, YjsBridge yjs,
+                          VaultAnnouncementService announcements, FolderRegistry folders, AiAuditRecorder audit,
+                          AiServiceDirectory services,
+                          AiChangeSetRepository changeSets, Supplier<Instant> clock, FileService files) {
+        this.files = files;
         this.notes = notes;
         this.snapshots = snapshots;
         this.relay = relay;
@@ -102,6 +119,72 @@ public class AiWriteService {
         return new WrittenNote(note.id(), path);
     }
 
+    /**
+     * Legt das gelesene Original als synchronisierte Datei ab, damit die Quellnotiz es verlinken
+     * kann. Liegt dieselbe Datei (gleicher Inhalt) schon dort, wird sie weiterverwendet; ist der
+     * Name von etwas anderem belegt, bekommt sie einen freien ({@code Brief (2).pdf}). Die Datei
+     * gehört zum Change-Set - Rückgängig entfernt sie, solange sie niemand ersetzt hat.
+     */
+    public WrittenNote storeFile(VaultId vaultId, UUID changeSetId, String path, byte[] content, String contentType,
+                                 NoteLevel level) {
+        var changeSet = openChangeSet(vaultId, changeSetId);
+        var service = configured(changeSet.service());
+        requireLevel(service, level);
+        if (files == null) {
+            throw new AiWriteRefusedException("Dieser Server nimmt keine Dateien auf");
+        }
+        if (!FilePaths.isValid(path)) {
+            throw new AiWriteRefusedException("Ungültiger Dateipfad: " + path);
+        }
+        var sha256 = sha256(content);
+        for (var attempt = 1; attempt <= 50; attempt++) {
+            var candidate = attempt == 1 ? path : numbered(path, attempt);
+            var existing = notes.findByPath(vaultId, candidate);
+            if (!existing.isEmpty()) {
+                var same = existing.getFirst();
+                if (same.kind() == NoteKind.FILE
+                    && files.current(same.id()).map(version -> version.sha256().equals(sha256)).orElse(false)) {
+                    return new WrittenNote(same.id(), candidate);
+                }
+                continue;
+            }
+            Note file;
+            try {
+                file = files.create(vaultId, candidate, level, service.agent());
+            } catch (FileRefusedException refused) {
+                throw new AiWriteRefusedException(refused.getMessage());
+            }
+            try {
+                files.upload(vaultId, file.id(), 0, new ByteArrayInputStream(content), contentType, service.agent());
+            } catch (RuntimeException failure) {
+                remove(file, service.agent());
+                throw failure instanceof FileRefusedException || failure instanceof BlobTooLargeException
+                    || failure instanceof FileQuotaExceededException
+                    ? new AiWriteRefusedException(failure.getMessage()) : failure;
+            }
+            changeSets.addChange(new AiChange(UUID.randomUUID(), changeSetId, file.id(), candidate, AiChange.Kind.FILE_CREATED,
+                "", sha256, clock.get()));
+            return new WrittenNote(file.id(), candidate);
+        }
+        throw new AiWriteRefusedException("Kein freier Name für " + path);
+    }
+
+    private static String numbered(String path, int number) {
+        var slash = path.lastIndexOf('/');
+        var dot = path.lastIndexOf('.');
+        return dot > slash + 1
+            ? path.substring(0, dot) + " (" + number + ")" + path.substring(dot)
+            : path + " (" + number + ")";
+    }
+
+    private static String sha256(byte[] content) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(content));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
     public void updateNote(VaultId vaultId, UUID changeSetId, NoteId noteId, String text) {
         var changeSet = openChangeSet(vaultId, changeSetId);
         var service = configured(changeSet.service());
@@ -135,6 +218,18 @@ public class AiWriteService {
             var note = notes.findById(vaultId, change.noteId());
             if (note.isEmpty()) {
                 conflicts.add(new AiRevertConflict(change.path(), "Die Notiz gibt es nicht mehr"));
+                continue;
+            }
+            if (change.kind() == AiChange.Kind.FILE_CREATED) {
+                var unchanged = files != null && files.current(change.noteId())
+                    .map(version -> version.sha256().equals(change.textAfter())).orElse(false);
+                if (!unchanged) {
+                    conflicts.add(new AiRevertConflict(note.get().path(), "Die Datei wurde seitdem ersetzt"));
+                    continue;
+                }
+                remove(note.get(), actor);
+                removedFrom.addAll(de.raindancer118.stoneintelligence.platform.vault.FolderPaths.parentsOf(note.get().path()));
+                reverted++;
                 continue;
             }
             var history = snapshots.listSince(change.noteId(), 0);
@@ -213,7 +308,7 @@ public class AiWriteService {
         notes.delete(note.vaultId(), note.id(), operationId, actor);
         audit.record(note.vaultId(), note.id(), actor, "note.deleted", Map.of("operationId", operationId));
         relay.onNoteDeleted(note.id());
-        announcements.announceNoteDeleted(note.vaultId(), note.id(), note.path());
+        announcements.announceNoteDeleted(note.vaultId(), note.id(), note.path(), note.kind());
     }
 
     private List<UpdateRecord> plainHistory(Note note) {

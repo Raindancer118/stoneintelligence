@@ -14,7 +14,14 @@ import de.raindancer118.stoneintelligence.worker.platform.PlatformRefusedExcepti
 /** platform-api im Kleinen: Notizen eines Vaults, Jobs, und was der Worker gemeldet hat. */
 final class FakePlatform implements PlatformApi {
 
-    record Stored(String noteId, String path, int level, String createdBy, String text) { }
+    record Stored(String noteId, String path, int level, String createdBy, String text, String kind) {
+
+        Stored(String noteId, String path, int level, String createdBy, String text) {
+            this(noteId, path, level, createdBy, text, "NOTE");
+        }
+    }
+
+    final Map<String, byte[]> files = new LinkedHashMap<>();
 
     final Map<String, Stored> notes = new LinkedHashMap<>();
     final List<ClaimedJob> queue = new ArrayList<>();
@@ -54,12 +61,16 @@ final class FakePlatform implements PlatformApi {
 
     @Override
     public List<ListedNote> notes(String vaultId, UUID changeSetId) {
-        return notes.values().stream().map(n -> new ListedNote(n.noteId(), n.path(), n.level(), n.createdBy())).toList();
+        return notes.values().stream().map(n -> new ListedNote(n.noteId(), n.path(), n.level(), n.createdBy(), n.kind())).toList();
     }
 
     @Override
     public String read(String vaultId, UUID changeSetId, String noteId) {
-        return notes.get(noteId).text();
+        var note = notes.get(noteId);
+        if ("FILE".equals(note.kind())) {
+            throw new PlatformRefusedException("Das ist eine Datei, keine Notiz");
+        }
+        return note.text();
     }
 
     @Override
@@ -71,6 +82,17 @@ final class FakePlatform implements PlatformApi {
         notes.put(id, new Stored(id, path, level, agent, text));
         events.add("create " + path);
         return id;
+    }
+
+    @Override
+    public String storeFile(String vaultId, UUID changeSetId, String path, byte[] content, String contentType, int level) {
+        var taken = notes.values().stream().anyMatch(n -> n.path().equals(path));
+        var stored = taken ? path.replace(".pdf", " (2).pdf") : path;
+        var id = UUID.randomUUID().toString();
+        notes.put(id, new Stored(id, stored, level, agent, null, "FILE"));
+        files.put(stored, content);
+        events.add("file " + stored);
+        return stored;
     }
 
     @Override

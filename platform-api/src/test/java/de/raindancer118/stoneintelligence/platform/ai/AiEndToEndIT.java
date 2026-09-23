@@ -31,6 +31,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class AiEndToEndIT {
 
+    private static final java.nio.file.Path STORAGE = temporaryStorage();
+
+    private static java.nio.file.Path temporaryStorage() {
+        try {
+            return java.nio.file.Files.createTempDirectory("si-ai-files-");
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
     private static final String WORKER_TOKEN = "e2e-worker-token-0123456789abcdef-0123456789";
     private static final String WORKER_HEADER = "X-StoneIntelligence-Worker-Token";
 
@@ -45,6 +55,7 @@ class AiEndToEndIT {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("STONEINTELLIGENCE_AI_SERVICES", () -> "gemini|Gemini|1; lokal|Ollama lokal|1,2");
         registry.add("STONEINTELLIGENCE_AI_WORKER_TOKEN", () -> WORKER_TOKEN);
+        registry.add("STONEINTELLIGENCE_FILE_STORAGE_DIR", () -> STORAGE.toString());
     }
 
     @LocalServerPort
@@ -68,6 +79,13 @@ class AiEndToEndIT {
         } else {
             builder.method(method, HttpRequest.BodyPublishers.noBody());
         }
+        return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> sendBytes(String path, byte[] body) throws Exception {
+        var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .header("Content-Type", "application/pdf").POST(HttpRequest.BodyPublishers.ofByteArray(body));
+        WORKER.forEach(builder::header);
         return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
@@ -114,8 +132,17 @@ class AiEndToEndIT {
 
         var note = ok(send("GET", base + "/notes/" + written.get("noteId"), tom, null));
         assertThat(note).containsEntry("path", "Wissen/Photosynthese.md");
+
+        // Das gelesene Original landet als synchronisierte Datei im Vault.
+        var original = ok(sendBytes(internal + "/change-sets/" + changeSet.get("id") + "/files?path="
+            + java.net.URLEncoder.encode("Anhänge/Vorlesung.pdf", java.nio.charset.StandardCharsets.UTF_8) + "&level=1",
+            "%PDF-1.7 Vorlesung".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertThat(original).containsEntry("path", "Anhänge/Vorlesung.pdf");
+        var download = send("GET", base + "/files/" + original.get("noteId") + "/content", tom, null);
+        assertThat(download.statusCode()).isEqualTo(200);
+        assertThat(download.body()).isEqualTo("%PDF-1.7 Vorlesung");
         var folders = send("GET", base + "/folders", tom, null);
-        assertThat(json.readValue(folders.body(), List.class)).containsExactly("Wissen");
+        assertThat(json.readValue(folders.body(), List.class)).containsExactlyInAnyOrder("Anhänge", "Wissen");
 
         // Die Person sieht, was die KI getan hat, und macht es rueckgaengig.
         var sets = okList(send("GET", base + "/ai/change-sets", tom, null));
@@ -125,11 +152,12 @@ class AiEndToEndIT {
         });
         assertThat(send("GET", base + "/ai/change-sets", user("zaungast"), null).statusCode()).isEqualTo(403);
         var detail = ok(send("GET", base + "/ai/change-sets/" + changeSet.get("id"), tom, null));
-        assertThat((List<?>) detail.get("changes")).hasSize(2);
+        assertThat((List<?>) detail.get("changes")).hasSize(3);
 
         var report = ok(send("POST", base + "/ai/change-sets/" + changeSet.get("id") + "/revert", tom, null));
-        assertThat(report).containsEntry("reverted", 2).containsEntry("conflicts", List.of());
+        assertThat(report).containsEntry("reverted", 3).containsEntry("conflicts", List.of());
         assertThat(send("GET", base + "/notes/" + written.get("noteId"), tom, null).statusCode()).isEqualTo(404);
+        assertThat(send("GET", base + "/files/" + original.get("noteId") + "/content", tom, null).statusCode()).isEqualTo(404);
         assertThat(send("POST", base + "/ai/change-sets/" + changeSet.get("id") + "/revert", tom, null).statusCode()).isEqualTo(422);
     }
 

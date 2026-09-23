@@ -2,6 +2,7 @@ package de.raindancer118.stoneai.extract;
 
 import de.raindancer118.stoneai.chunk.Chunk;
 import de.raindancer118.stoneai.config.StoneAiConfig;
+import de.raindancer118.stoneai.note.TextSimilarity;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -26,9 +27,20 @@ public final class ExtractionService {
     }
 
     public ExtractionResult extract(List<Chunk> chunks) {
+        return extract(chunks, TopicPlan.none());
+    }
+
+    /**
+     * Extracts the planned topics. When the planner read the whole document (a single chunk), a
+     * note outside the plan is a detail the model split off after all - it is folded into the
+     * topic it resembles, or else the main topic. Only in a long document, where the planner saw
+     * excerpts, may a chunk add a topic of its own.
+     */
+    public ExtractionResult extract(List<Chunk> chunks, TopicPlan plan) {
         List<ExtractedConcept> concepts = new ArrayList<>();
         List<ChunkFailure> failures = new ArrayList<>();
-        String system = Prompts.extractionSystem(config.llm().language());
+        boolean mayAddTopics = plan.isEmpty() || chunks.size() > 1;
+        String system = Prompts.extractionSystem(config.llm().language(), mayAddTopics);
         int budget = config.llm().maxTokensPerRun();
         int used = 0;
         boolean exhausted = false;
@@ -38,11 +50,11 @@ public final class ExtractionService {
                 exhausted = true;
                 break;
             }
-            LlmAnswer answer = llm.complete(Tier.FAST, system, Prompts.extractionUser(chunk));
+            LlmAnswer answer = llm.complete(Tier.FAST, system, Prompts.extractionUser(chunk, plan));
             used += answer.tokensUsed();
 
             try {
-                concepts.addAll(ConceptJson.parse(answer.text(), chunk.provenance()));
+                concepts.addAll(fitted(ConceptJson.parse(answer.text(), chunk.provenance()), plan, mayAddTopics));
                 continue;
             } catch (ExtractionException first) {
                 if (used >= budget) {
@@ -54,7 +66,7 @@ public final class ExtractionService {
                         Prompts.repairUser(answer.text(), first.getMessage()));
                 used += repaired.tokensUsed();
                 try {
-                    concepts.addAll(ConceptJson.parse(repaired.text(), chunk.provenance()));
+                    concepts.addAll(fitted(ConceptJson.parse(repaired.text(), chunk.provenance()), plan, mayAddTopics));
                 } catch (ExtractionException second) {
                     failures.add(failure(chunk, second.getMessage()));
                 }
@@ -62,6 +74,52 @@ public final class ExtractionService {
         }
 
         return new ExtractionResult(concepts, failures, used, exhausted);
+    }
+
+    private List<ExtractedConcept> fitted(List<ExtractedConcept> parsed, TopicPlan plan, boolean mayAddTopics) {
+        if (plan.isEmpty()) {
+            return parsed;
+        }
+        double threshold = config.notes().similarityThreshold();
+        List<ExtractedConcept> fitted = new ArrayList<>();
+        for (ExtractedConcept concept : parsed) {
+            TopicPlan.Topic topic = plan.topics().stream()
+                    .filter(candidate -> matches(candidate, concept, threshold))
+                    .findFirst().orElse(null);
+            if (topic != null) {
+                fitted.add(retitled(concept, topic, concept.definition(), concept.confidence()));
+            } else if (mayAddTopics) {
+                fitted.add(concept);
+            } else {
+                // A detail the plan already covers: its text joins the main topic, but it never
+                // decides that note's definition.
+                fitted.add(retitled(withHeading(concept), plan.main(), "", 0.0));
+            }
+        }
+        return fitted;
+    }
+
+    private static ExtractedConcept withHeading(ExtractedConcept concept) {
+        return new ExtractedConcept(concept.title(), concept.aliases(), concept.definition(),
+                "### " + concept.title() + "\n\n" + concept.body(), concept.tags(), concept.entities(),
+                concept.related(), concept.confidence(), concept.provenance());
+    }
+
+    private static boolean matches(TopicPlan.Topic topic, ExtractedConcept concept, double threshold) {
+        List<String> names = new ArrayList<>(topic.aliases());
+        names.add(topic.title());
+        return names.stream().anyMatch(name -> TextSimilarity.sameConcept(name, concept.title(), threshold)
+                || concept.aliases().stream().anyMatch(alias -> TextSimilarity.sameConcept(name, alias, threshold)));
+    }
+
+    private static ExtractedConcept retitled(ExtractedConcept concept, TopicPlan.Topic topic,
+                                             String definition, double confidence) {
+        List<String> aliases = new ArrayList<>(topic.aliases());
+        if (confidence > 0) {
+            concept.aliases().stream().filter(alias -> !aliases.contains(alias)).forEach(aliases::add);
+        }
+        return new ExtractedConcept(topic.title(), aliases, definition, concept.body(), concept.tags(),
+                concept.entities(), concept.related(), confidence, concept.provenance());
     }
 
     private static ChunkFailure failure(Chunk chunk, String reason) {

@@ -57,8 +57,8 @@ public final class Consolidator {
                     target = i;
                     continue;
                 }
-                for (String existing : keys.get(i)) {
-                    if (TextSimilarity.similarity(existing, concept.title()) >= threshold) {
+                for (ExtractedConcept member : groups.get(i)) {
+                    if (TextSimilarity.sameConcept(member.title(), concept.title(), threshold)) {
                         target = i;
                         break;
                     }
@@ -103,12 +103,14 @@ public final class Consolidator {
                     .append(concept.body());
         }
         String user = """
-                Begriff: %s
+                Thema: %s
 
-                Unten stehen mehrere Fassungen desselben Begriffs aus einem Dokument.
-                Schreibe daraus EINEN zusammenhängenden Text in Markdown: ohne Wiederholungen,
-                ohne Überschrift, ohne Frontmatter, ohne Quellenmarker. Nimm nichts hinzu, was
-                nicht in den Fassungen steht. Antworte nur mit dem Text.
+                Unten stehen mehrere Teile derselben Notiz aus einem Dokument.
+                Schreibe daraus EINEN gut gegliederten Text in Markdown: ohne Wiederholungen,
+                Fakten als Stichpunkte, bei Bedarf Zwischenüberschriften ab ###, keine Überschrift
+                der Ebene 1 oder 2, kein Frontmatter, keine Quellenmarker. Behalte jeden Fakt und
+                jeden [[Verweis]]. Nimm nichts hinzu, was nicht in den Teilen steht. Antworte nur
+                mit dem Text.
                 %s""".formatted(group.get(0).title(), parts);
 
         try {

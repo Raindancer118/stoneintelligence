@@ -52,7 +52,7 @@ class HostedIngestTest {
         LlmClient llm = new LlmClient() {
             @Override
             public LlmAnswer complete(Tier tier, String system, String user) {
-                return new LlmAnswer(ANSWER, 10, "fake/model");
+                return new LlmAnswer(system.contains("Themenplan") ? IngestPipelineTest.PLAN : ANSWER, 10, "fake/model");
             }
 
             @Override
@@ -82,6 +82,15 @@ class HostedIngestTest {
 
         String sourceNote = store.notes.get(VAULT.resolve("Quellen/Skript.md"));
         assertThat(sourceNote).contains("Skript.md").doesNotContain(upload.toString());
+    }
+
+    // Undo lives in the plugin: the source note opens it with one click.
+    @Test
+    @DisplayName("should offer undoing the run right in the source note")
+    void should_linkTheUndoDialog() throws IOException {
+        ingest("Skript.md", "# Relationen\n\nText.\n");
+
+        assertThat(store.notes.get(VAULT.resolve("Quellen/Skript.md"))).contains("(obsidian://stoneintelligence-ai-changes)");
     }
 
     @Test

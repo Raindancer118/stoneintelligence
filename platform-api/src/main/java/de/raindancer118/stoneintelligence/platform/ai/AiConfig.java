@@ -67,9 +67,10 @@ public class AiConfig {
     @Lazy
     public AiWriteService aiWriteService(NoteRepository notes, SnapshotStore snapshots, SyncRelayService relay, YjsBridge yjs,
                                          VaultAnnouncementService announcements, FolderRegistry folders, AuditService audit,
-                                         AiServiceDirectory services, AiChangeSetRepository changeSets) {
+                                         AiServiceDirectory services, AiChangeSetRepository changeSets,
+                                         de.raindancer118.stoneintelligence.platform.files.FileService files) {
         return new AiWriteService(notes, snapshots, relay, yjs, announcements, folders, audit::record, services, changeSets,
-            Instant::now);
+            Instant::now, files);
     }
 
     @Bean

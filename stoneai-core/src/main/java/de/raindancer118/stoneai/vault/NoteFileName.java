@@ -1,5 +1,7 @@
 package de.raindancer118.stoneai.vault;
 
+import de.raindancer118.stoneai.note.TextSimilarity;
+
 import java.util.Locale;
 
 /**
@@ -18,10 +20,9 @@ public final class NoteFileName {
 
     public static String forTitle(String title) {
         StringBuilder name = new StringBuilder();
-        for (char character : title.strip().toCharArray()) {
+        // Spaces stay: Obsidian resolves [[Fluss im Wald]] by file name, not by title.
+        for (char character : TextSimilarity.plain(title).toCharArray()) {
             if (ILLEGAL.indexOf(character) >= 0 || Character.isISOControl(character)) {
-                name.append('-');
-            } else if (Character.isWhitespace(character)) {
                 name.append('-');
             } else {
                 name.append(character);
@@ -29,13 +30,13 @@ public final class NoteFileName {
         }
         String cleaned = name.toString()
                 .replaceAll("-{2,}", "-")
-                .replaceAll("^[-.]+", "")
-                .replaceAll("[-.]+$", "");
+                .replaceAll("^[-. ]+", "")
+                .replaceAll("[-. ]+$", "");
         if (cleaned.isEmpty()) {
             cleaned = "Notiz";
         }
         if (cleaned.length() > MAX_LENGTH) {
-            cleaned = cleaned.substring(0, MAX_LENGTH).replaceAll("-+$", "");
+            cleaned = cleaned.substring(0, MAX_LENGTH).replaceAll("[- ]+$", "");
         }
         return cleaned + ".md";
     }

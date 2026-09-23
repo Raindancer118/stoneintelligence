@@ -37,6 +37,7 @@ import { TicketClient } from "./sync/TicketClient";
 import { CONNECT_ACTION, type ConnectLink, parseConnectLink } from "./sync/connectLink";
 import { ConnectVaultModal } from "./ui/ConnectVaultModal";
 import { DeletionConflictModal } from "./ui/DeletionConflictModal";
+import { AiChangesModal } from "./ui/AiChangesModal";
 import { InviteModal } from "./ui/InviteModal";
 import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
 import { presentStatus, type StatusPresentation } from "./ui/statusPresentation";
@@ -253,6 +254,14 @@ export default class StoneIntelligencePlugin extends Plugin {
         return;
       }
       this.handleConnectLink(link);
+    });
+    // Link in jeder KI-Quellnotiz: obsidian://stoneintelligence-ai-changes
+    this.registerObsidianProtocolHandler("stoneintelligence-ai-changes", () => {
+      if (!this.isReady()) {
+        new Notice("StoneIntelligence: Erst anmelden und einen Vault verbinden.");
+        return;
+      }
+      this.openAiChanges();
     });
     this.addSettingTab(new StoneIntelligenceSettingTab(this.app, this, this));
     this.registerView(VIEW_TYPE_STATUS, (leaf) => new StatusView(leaf, this));
@@ -533,6 +542,14 @@ export default class StoneIntelligencePlugin extends Plugin {
     new InviteModal(this.app, this.noteApiClient, this.settings.vaultId, this.vaultName() ?? "Vault").open();
   }
 
+  openAiChanges(): void {
+    if (!this.settings.vaultId) {
+      return;
+    }
+    const active = this.app.workspace.getActiveFile();
+    new AiChangesModal(this.app, this.noteApiClient, this.settings.vaultId, active?.path ?? null).open();
+  }
+
   /**
    * Verbinden-Link der Einrichtungsseite: bestaetigen lassen, bei Bedarf anmelden, dann pruefen,
    * dass der Vault fuer dieses Konto wirklich zugaenglich ist, und ihn waehlen.
@@ -787,6 +804,17 @@ export default class StoneIntelligencePlugin extends Plugin {
           return this.canInvite();
         }
         this.openInvite();
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "stoneintelligence-ai-changes",
+      name: "KI-Änderungen anzeigen und rückgängig machen",
+      checkCallback: (checking) => {
+        if (checking) {
+          return this.isReady();
+        }
+        this.openAiChanges();
         return true;
       },
     });

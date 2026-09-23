@@ -14,6 +14,64 @@ public final class TextSimilarity {
     }
 
     /**
+     * The title as a person would type it: typographic hyphens and spaces (which models like to
+     * emit - {@code HWS\u2011Distorsion}) become plain ones, soft hyphens vanish, runs of
+     * whitespace collapse. Without this two spellings that look identical end up as two notes
+     * and a link that looks right leads nowhere.
+     */
+    public static String plain(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.replaceAll("[\u2010\u2011\u2012\u2043\u2212]", "-")
+                .replace("\u00ad", "")
+                .replaceAll("[\u00a0\u2007\u202f\\s]+", " ")
+                .strip();
+    }
+
+    /**
+     * Whether two titles name the same note. Close in Jaro-Winkler terms is necessary but not
+     * enough: German compounds share long prefixes ({@code Schadenmeldung}/{@code Schadennummer})
+     * and titles often differ only in a date - so the numbers must agree and the spelling may
+     * differ by no more than a typo or two.
+     */
+    public static boolean sameConcept(String left, String right, double threshold) {
+        String a = normalise(left);
+        String b = normalise(right);
+        if (a.equals(b)) {
+            return true;
+        }
+        if (a.isEmpty() || b.isEmpty() || !digits(a).equals(digits(b))) {
+            return false;
+        }
+        int allowed = Math.max(2, Math.max(a.length(), b.length()) / 6);
+        return jaroWinkler(a, b) >= threshold && editDistance(a, b) <= allowed;
+    }
+
+    private static String digits(String text) {
+        return text.replaceAll("[^0-9]+", " ").strip();
+    }
+
+    private static int editDistance(String a, String b) {
+        int[] previous = new int[b.length() + 1];
+        int[] current = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) {
+            previous[j] = j;
+        }
+        for (int i = 1; i <= a.length(); i++) {
+            current[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                current[j] = Math.min(Math.min(current[j - 1] + 1, previous[j] + 1), previous[j - 1] + cost);
+            }
+            int[] swap = previous;
+            previous = current;
+            current = swap;
+        }
+        return previous[b.length()];
+    }
+
+    /**
      * A comparison key: lower-cased, accent-folded, punctuation-free, and with the German plural
      * and inflection endings that make {@code Äquivalenzrelation} and {@code Äquivalenzrelationen}
      * the same concept trimmed off.

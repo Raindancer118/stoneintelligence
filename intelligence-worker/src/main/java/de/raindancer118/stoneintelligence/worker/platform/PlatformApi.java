@@ -30,4 +30,7 @@ public interface PlatformApi {
     String create(String vaultId, UUID changeSetId, String path, String text, int level);
 
     void update(String vaultId, UUID changeSetId, String noteId, String text);
+
+    /** Legt das gelesene Original als Datei ab; liefert den Pfad, den der Server gewaehlt hat. */
+    String storeFile(String vaultId, UUID changeSetId, String path, byte[] content, String contentType, int level);
 }

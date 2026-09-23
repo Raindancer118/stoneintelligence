@@ -53,7 +53,7 @@ export interface AiJob {
 export interface AiChangeSet {
   id: string; service: string; agent: string; requestedBy: string; label: string; createdAt: string; revertedAt: string | null;
 }
-export interface AiChange { noteId: string; path: string; kind: "CREATED" | "UPDATED"; at: string; }
+export interface AiChange { noteId: string; path: string; kind: "CREATED" | "UPDATED" | "FILE_CREATED"; at: string; }
 export interface AiChangeSetDetail { changeSet: AiChangeSet; changes: AiChange[]; }
 export interface AiRevertReport { reverted: number; conflicts: { path: string; reason: string }[]; }
 
