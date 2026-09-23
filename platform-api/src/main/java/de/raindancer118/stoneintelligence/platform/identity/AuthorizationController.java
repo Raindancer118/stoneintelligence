@@ -15,11 +15,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Rollen/Gruppen/Ordner-ACL-Verwaltung (Plan.md Abschnitt 4.4a). {@link VaultAccessGuard} kennt
- * kein eigenes "Admin"-Permission - Verwaltungsoperationen verlangen bewusst
- * {@link Permission#DELETE} als Stellvertreter (staerkste der vier bestehenden Permissions,
- * keine Schema-Aenderung fuer eine fuenfte noetig). Die Owner-Rolle, die
- * {@code VaultController} beim Anlegen automatisch vergibt, hat alle vier Permissions.
+ * Rollen/Gruppen/Ordner-ACL-Verwaltung (Plan.md Abschnitt 4.4a). Verwaltungsoperationen verlangen
+ * {@link Permission#MANAGE} (seit V6; vorher stand DELETE stellvertretend dafuer, womit jede
+ * Person, die Notizen loeschen durfte, auch Mitglieder und Rechte verwalten konnte). Die
+ * Owner-Rolle, die {@code VaultController} beim Anlegen vergibt, hat alle Permissions.
  */
 @RestController
 public class AuthorizationController {
@@ -44,7 +43,7 @@ public class AuthorizationController {
         @PathVariable String vaultId, @RequestBody CreateRoleRequest request, Authentication authentication
     ) {
         var vId = VaultId.of(vaultId);
-        access.require(vId, authentication.getName(), Permission.DELETE);
+        access.require(vId, authentication.getName(), Permission.MANAGE);
         var role = authorization.createRole(vId, request.name(), Set.copyOf(request.permissions()));
         return RoleResponse.from(role);
     }
@@ -64,7 +63,7 @@ public class AuthorizationController {
         @PathVariable String vaultId, @RequestBody CreateGroupRequest request, Authentication authentication
     ) {
         var vId = VaultId.of(vaultId);
-        access.require(vId, authentication.getName(), Permission.DELETE);
+        access.require(vId, authentication.getName(), Permission.MANAGE);
         var group = authorization.createGroup(vId, request.name());
         return GroupResponse.from(group, Set.of());
     }
@@ -106,7 +105,7 @@ public class AuthorizationController {
     }
 
     private void requireGroupAccess(VaultId vaultId, UUID groupId, Authentication authentication) {
-        access.require(vaultId, authentication.getName(), Permission.DELETE);
+        access.require(vaultId, authentication.getName(), Permission.MANAGE);
         if (!authorization.groupBelongsToVault(groupId, vaultId)) {
             throw new ForbiddenException("group does not belong to this vault");
         }
@@ -124,7 +123,7 @@ public class AuthorizationController {
         @PathVariable String vaultId, @RequestBody CreatePathRuleRequest request, Authentication authentication
     ) {
         var vId = VaultId.of(vaultId);
-        access.require(vId, authentication.getName(), Permission.DELETE);
+        access.require(vId, authentication.getName(), Permission.MANAGE);
         var scope = request.scopeSubject() == null || request.scopeSubject().isBlank()
             ? RuleScope.everyone()
             : RuleScope.user(request.scopeSubject());

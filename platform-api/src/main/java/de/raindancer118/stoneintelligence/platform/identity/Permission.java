@@ -5,5 +5,7 @@ public enum Permission {
     READ,
     WRITE,
     DELETE,
-    CREATE
+    CREATE,
+    /** Mitglieder, Gruppen, Rollen, Pfadregeln und Einladungen verwalten (bis V6 hing das an DELETE). */
+    MANAGE
 }

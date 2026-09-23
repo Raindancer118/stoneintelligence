@@ -5,7 +5,7 @@
 
   let { vault }: { vault: Vault } = $props();
 
-  const ALL_PERMISSIONS = ["READ", "WRITE", "DELETE", "CREATE"];
+  const ALL_PERMISSIONS = ["READ", "WRITE", "DELETE", "CREATE", "MANAGE"];
 
   let roles = $state<Role[]>([]);
   let groups = $state<Group[]>([]);
