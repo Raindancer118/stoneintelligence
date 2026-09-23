@@ -30,8 +30,8 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>Wer schon ein Konto hat, wird gesucht und mit einem Klick Mitglied (Mail zur Info).</li>
  *   <li>Wer keins hat, bekommt per Mail einen Link: Konto ueber eine Authentik-Einladung anlegen,
- *   danach ist die Person automatisch im Vault - ueber den Link ODER, falls sie sich einfach
- *   anmeldet, ueber ihre eingeladene E-Mail-Adresse.</li>
+ *   anmelden, Einladung annehmen. Bestaetigt der Identity-Provider die E-Mail-Adresse
+ *   ({@code email_verified}), geschieht das Annehmen beim Anmelden automatisch.</li>
  * </ul>
  * Alle verwaltenden Aktionen verlangen {@link Permission#MANAGE}.
  */

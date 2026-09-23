@@ -56,6 +56,7 @@ public class TestJwtSupport {
                 .subject(preferredUsername)
                 .claim("preferred_username", preferredUsername)
                 .claim("email", email)
+                .claim("email_verified", email != null)
                 .issueTime(Date.from(Instant.now()))
                 .expirationTime(Date.from(Instant.now().plusSeconds(300)))
                 .build();

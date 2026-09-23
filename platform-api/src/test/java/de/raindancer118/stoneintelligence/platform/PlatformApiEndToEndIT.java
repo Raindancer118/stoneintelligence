@@ -255,7 +255,9 @@ class PlatformApiEndToEndIT {
         assertThat(get(base + "/notes", newcomer).statusCode()).isEqualTo(200);
         assertThat(postRaw(base + "/invitations", newcomer, Map.of("email", "x@example.org")).statusCode())
             .as("Mitbearbeiter duerfen nicht selbst einladen").isEqualTo(403);
-        assertThat(postRaw("/api/v1/invitations/" + token + "/accept", bearerAuth("mallory"), null).statusCode()).isEqualTo(422);
+        var reused = postRaw("/api/v1/invitations/" + token + "/accept", bearerAuth("mallory"), null);
+        assertThat(reused.statusCode()).isEqualTo(422);
+        assertThat(json.readTree(reused.body()).get("detail").asText()).isEqualTo("Diese Einladung wurde bereits angenommen.");
         assertThat(postRaw("/api/v1/invitations/" + token + "/accept", Map.of(), null).statusCode()).isEqualTo(401);
     }
 

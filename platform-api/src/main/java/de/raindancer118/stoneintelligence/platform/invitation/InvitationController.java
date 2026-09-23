@@ -65,6 +65,12 @@ public class InvitationController {
         return invitations.accept(token, authentication.getName());
     }
 
+    /** Die Texte sind fuer Menschen geschrieben und verraten nichts Internes - direkt anzeigen lassen. */
+    @org.springframework.web.bind.annotation.ExceptionHandler(InvitationException.class)
+    public org.springframework.http.ProblemDetail invitationRejected(InvitationException rejected) {
+        return org.springframework.http.ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT, rejected.getMessage());
+    }
+
     private static InviteAccess access(String value) {
         return "READ".equalsIgnoreCase(value) ? InviteAccess.READ : InviteAccess.EDIT;
     }

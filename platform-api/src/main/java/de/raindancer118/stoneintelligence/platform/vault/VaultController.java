@@ -45,12 +45,15 @@ public class VaultController {
 
     /**
      * Alle Vaults, in denen der authentifizierte Actor ueber irgendeine Gruppe Mitglied ist. Vorher
-     * werden offene Einladungen an seine E-Mail-Adresse (Claim aus dem Authentik-Token) angenommen -
-     * Plugin und Webapp rufen diese Liste nach jeder Anmeldung ab.
+     * werden offene Einladungen an seine E-Mail-Adresse angenommen - aber NUR, wenn der Identity-
+     * Provider die Adresse als bestaetigt ausweist ({@code email_verified=true}). Sonst koennte
+     * sich jede Person, die ein Konto mit fremder Adresse anlegt, deren Einladungen aneignen; der
+     * Weg ueber den Link aus der Mail bleibt davon unberuehrt.
      */
     @GetMapping("/api/v1/vaults")
     public List<VaultResponse> list(Authentication authentication) {
-        if (authentication instanceof org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken jwt) {
+        if (authentication instanceof org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken jwt
+                && Boolean.TRUE.equals(jwt.getToken().getClaimAsBoolean("email_verified"))) {
             invitations.acceptPendingForEmail(authentication.getName(), jwt.getToken().getClaimAsString("email"));
         }
         var accessibleIds = authorization.listAccessibleVaultIds(authentication.getName());

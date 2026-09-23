@@ -25,7 +25,7 @@ final class InvitationMails {
             Einladung annehmen:
             %s
 
-            Hast du noch kein Konto, kannst du es dort in einer Minute anlegen – danach bist du automatisch dabei.
+            Hast du noch kein Konto, legst du es dort in einer Minute an und nimmst die Einladung danach an.
             Der Link gilt bis zum %s.
 
             Wenn du mit dieser Einladung nichts anfangen kannst, ignoriere diese Mail einfach.
@@ -34,7 +34,7 @@ final class InvitationMails {
             "<p><strong>%s</strong> lädt dich ein, im Vault <strong>„%s“</strong> bei StoneIntelligence mitzuarbeiten (Notizen %s).</p>"
                 .formatted(esc(invitedBy), esc(vaultName), access.label())
                 + button(link, "Einladung annehmen")
-                + "<p>Hast du noch kein Konto, kannst du es dort in einer Minute anlegen – danach bist du automatisch dabei. "
+                + "<p>Hast du noch kein Konto, legst du es dort in einer Minute an und nimmst die Einladung danach an. "
                 + "Der Link gilt bis zum %s.</p>".formatted(DATE.format(expiresAt))
                 + "<p style=\"color:#6b7280;font-size:13px\">Wenn du mit dieser Einladung nichts anfangen kannst, ignoriere diese Mail einfach.</p>");
         return new OutgoingMail(to, subject, text, html);
