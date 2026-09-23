@@ -1054,6 +1054,12 @@ export default class StoneIntelligencePlugin extends Plugin {
     reason: "sync" | "adopt" | "download" | "upload" | "local",
   ): Promise<ContentSyncResult | null> {
     return this.withNoteLock(noteId, async () => {
+      const liveSession = this.live.get(path);
+      if (liveSession && liveSession.noteId !== noteId) {
+        // Veraltete Live-Bindung (z. B. an eine anderswo geloeschte Notiz) - weg damit, sie darf den
+        // Abgleich der aktuellen Zuordnung nicht verhindern. Die Neubindung folgt unten.
+        this.detachLive(path);
+      }
       if (this.live.has(path) || this.liveStarting.has(path) || this.pathForNoteId(noteId) !== path) {
         return null;
       }
@@ -1279,7 +1285,11 @@ export default class StoneIntelligencePlugin extends Plugin {
     }
     if (keep) {
       this.activity.log("kept", path, "Behalten – wird als neue Notiz hochgeladen");
-      void this.runLocalChange(path);
+      // Eine noch an die geloeschte Notiz gebundene Editor-Sitzung zuerst loesen, sonst wird der
+      // Inhalt nicht hochgeladen; danach den offenen Editor an die neue Notiz binden.
+      this.detachLive(path);
+      await this.runLocalChange(path);
+      void this.syncOpenEditorBindings();
       return;
     }
     this.serverDrivenPaths.add(path);
@@ -1405,8 +1415,14 @@ export default class StoneIntelligencePlugin extends Plugin {
   // ---------------------------------------------------------------------------------------------
   // Lokale Aenderungen
 
+  /**
+   * Ob ein Pfad gerade synchronisiert werden darf. Nicht, solange zu ihm eine Loeschentscheidung
+   * offen ist - sonst legte z. B. die Live-Bindung eines offenen Editors schon vor der Entscheidung
+   * eine neue Notiz an.
+   */
   private isTrackable(path: string): boolean {
-    return this.isReady() && isSyncablePath(path) && !isExcluded(path, this.settings.excludedFolders);
+    return this.isReady() && isSyncablePath(path) && !isExcluded(path, this.settings.excludedFolders)
+      && this.vaultState().blockedPaths[path] !== DELETION_DECISION_PENDING;
   }
 
   private handleLocalCreate(file: TAbstractFile): void {
@@ -1639,6 +1655,7 @@ export default class StoneIntelligencePlugin extends Plugin {
    */
   private async startLive(file: TFile, view: EditorView): Promise<void> {
     const path = file.path;
+    let remappedMeanwhile = false;
     this.liveStarting.add(path);
     try {
       const noteId = this.vaultState().noteIds[path] ?? (await this.uploadNote(path));
@@ -1680,7 +1697,12 @@ export default class StoneIntelligencePlugin extends Plugin {
         // Waehrend der Awaits kann das Pane geschlossen oder auf eine andere Datei umgestellt
         // worden sein - dann zeigt diese View diesen Pfad nicht mehr und darf nicht gebunden werden.
         const stillShown = this.openMarkdownEditors().some((candidate) => candidate.file.path === path && candidate.view === view);
-        if (!stillShown || this.live.has(path)) {
+        // Ebenso kann die Notiz waehrend der Awaits anderswo geloescht und hier neu zugeordnet
+        // worden sein. Eine Bindung an die alte Id liesse den Editor ins Leere schreiben - und
+        // blockierte den Upload unter der neuen Id (behaltene Notiz kam bei anderen leer an).
+        const stillMapped = this.vaultState().noteIds[path] === noteId && this.isTrackable(path);
+        remappedMeanwhile = stillShown && !stillMapped;
+        if (!stillShown || !stillMapped || this.live.has(path)) {
           client.disconnect();
           doc.destroy();
           return;
@@ -1711,6 +1733,12 @@ export default class StoneIntelligencePlugin extends Plugin {
       this.reportFailure(path, error);
     } finally {
       this.liveStarting.delete(path);
+      // Waehrend dieses Versuchs wurde die Notiz neu zugeordnet (z. B. nach "Behalten" in einem
+      // Loeschkonflikt). Ein dabei angestossener Bindungsversuch wurde uebersprungen, weil dieser
+      // hier noch lief - also jetzt neu binden, sonst bliebe der offene Editor ungebunden.
+      if (remappedMeanwhile) {
+        void this.syncOpenEditorBindings();
+      }
     }
   }
 
