@@ -157,9 +157,16 @@ public final class IngestPipeline {
             }
         }
 
+        // What of the document is missing from the notes: image pages nobody could read, and
+        // whatever the token budget did not reach.
+        List<String> unread = new ArrayList<>();
+        final SourceDocument read = source;
+        source.unreadablePages().forEach(page -> unread.add(read.title() + ", S. " + page + " (Bild nicht lesbar)"));
+        unread.addAll(extraction.unprocessed());
+
         Path attachment = hosted ? storeOriginal(source, store) : copyAttachment(source);
         if (config.notes().writeSourceNote()) {
-            sourceWriter.write(source, List.copyOf(links), attachment, extraction.unprocessed(),
+            sourceWriter.write(source, List.copyOf(links), attachment, unread,
                     extraction.failures().stream().map(failure -> failure.provenanceLabel()).distinct().toList());
         }
         if (config.notes().writeMoc()) {
@@ -177,7 +184,7 @@ public final class IngestPipeline {
 
         return new IngestReport(document, source.sha256(), source.title(), "", writes,
                 extraction.failures(), source.skippedPages(), extraction.tokensUsed() + planned.tokensUsed(),
-                extraction.budgetExhausted(), extraction.unprocessed());
+                extraction.budgetExhausted(), unread);
     }
 
     /** Reads a scanned page through the vision model. */

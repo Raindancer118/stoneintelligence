@@ -126,6 +126,36 @@ class DocumentLoaderTest {
             assertThat(document.pages().get(0).fromOcr()).isTrue();
         }
 
+        // One diagram slide the image model cannot read (provider overloaded) must not cost the
+        // other 199 - the page is named as unread instead.
+        @Test
+        @DisplayName("should go on without an image page the vision model could not read")
+        void should_markPageUnreadable_when_ocrFails() throws Exception {
+            Path pdf = scannedPdf();
+            appendTextPage(pdf, "Seite mit Text");
+            OcrService failing = (png, page) -> {
+                throw new IllegalStateException("kein Provider konnte antworten: HTTP 503");
+            };
+
+            SourceDocument document = new PdfLoader(config, failing).load(pdf);
+
+            assertThat(document.pages()).extracting(Page::number).containsExactly(2);
+            assertThat(document.unreadablePages()).containsExactly(1);
+        }
+
+        // A document that is nothing but a scan would come out empty - better to try again later.
+        @Test
+        @DisplayName("should fail when no page at all could be read")
+        void should_fail_when_everyPageIsUnreadable() throws Exception {
+            Path pdf = scannedPdf();
+            OcrService failing = (png, page) -> {
+                throw new IllegalStateException("kein Provider konnte antworten: HTTP 503");
+            };
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> new PdfLoader(config, failing).load(pdf))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
         @Test
         @DisplayName("should skip an image page rather than fail when vision is switched off")
         void should_skipPage_when_visionIsDisabled() throws Exception {
@@ -258,6 +288,21 @@ class DocumentLoaderTest {
             document.save(file.toFile());
         }
         return file;
+    }
+
+    private static void appendTextPage(Path pdf, String text) throws IOException {
+        try (PDDocument document = org.apache.pdfbox.Loader.loadPDF(pdf.toFile())) {
+            PDPage page = new PDPage();
+            document.addPage(page);
+            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                content.beginText();
+                content.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                content.newLineAtOffset(60, 700);
+                content.showText(text);
+                content.endText();
+            }
+            document.save(pdf.toFile());
+        }
     }
 
     /** Stands in for the vision model: records every call and returns a fixed transcription. */

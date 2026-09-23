@@ -60,6 +60,7 @@ class TopicIngestTest {
     private String planAnswer = PLAN;
     private String notesAnswer = NOTES;
     private int tokensPerCall = 10;
+    private boolean visionDown;
 
     @BeforeEach
     void setUp() {
@@ -80,6 +81,9 @@ class TopicIngestTest {
 
             @Override
             public LlmAnswer readImage(byte[] pngImage, String prompt) {
+                if (visionDown) {
+                    throw new IllegalStateException("kein Provider konnte antworten: HTTP 503");
+                }
                 return new LlmAnswer("", 0, "fake/vision");
             }
         };
@@ -203,6 +207,28 @@ class TopicIngestTest {
         assertThat(report.budgetExhausted()).isTrue();
         assertThat(report.unprocessed()).containsExactly("Skript — Kapitel 2", "Skript — Kapitel 3");
         assertThat(note("Quellen/Skript.md")).contains("Nicht verarbeitet").contains("Skript — Kapitel 2");
+    }
+
+    @Test
+    @DisplayName("should name an image slide the vision model could not read")
+    void should_reportUnreadableImagePages() throws IOException {
+        visionDown = true;
+        Path deck = pdf("Folien.pdf", "Folie mit Text");
+        try (PDDocument document = org.apache.pdfbox.Loader.loadPDF(deck.toFile())) {
+            PDPage page = new PDPage();
+            document.addPage(page);
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(120, 60, java.awt.image.BufferedImage.TYPE_INT_RGB);
+            var xObject = org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory.createFromImage(document, image);
+            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                content.drawImage(xObject, 60, 600, 120, 60);
+            }
+            document.save(deck.toFile());
+        }
+
+        IngestReport report = ingest(deck);
+
+        assertThat(report.gaps()).contains("Folien, S. 2 (Bild nicht lesbar)");
+        assertThat(note("Quellen/Folien.md")).contains("Folien, S. 2 (Bild nicht lesbar)");
     }
 
     private void assertEveryLinkResolves() {

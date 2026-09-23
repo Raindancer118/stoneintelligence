@@ -46,7 +46,7 @@ public final class PageCleaner {
         pages = withoutBoilerplate(pages);
         List<Page> kept = pages.stream().filter(page -> !page.text().isBlank()).toList();
         return new SourceDocument(document.file(), document.title(), document.kind(), kept, document.skippedPages(),
-                document.truncated(), document.sha256());
+                document.truncated(), document.sha256(), document.unreadablePages());
     }
 
     /**

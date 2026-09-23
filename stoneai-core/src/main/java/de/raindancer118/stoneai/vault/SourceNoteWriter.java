@@ -91,7 +91,7 @@ public final class SourceNoteWriter {
                     .append(" Seiten gelesen (`ingest.maxPages`).\n\n");
         }
         if (!unread.isEmpty()) {
-            block.append("> [!warning] Nicht verarbeitet (Token-Budget des Laufs erschöpft): ")
+            block.append("> [!warning] Nicht verarbeitet: ")
                     .append(String.join("; ", unread)).append("\n\n");
         }
         if (!unusable.isEmpty()) {

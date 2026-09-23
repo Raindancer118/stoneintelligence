@@ -44,6 +44,7 @@ public final class GatewayLlmClient implements LlmClient {
     private final AiGateway gateway;
     private final StoneAiConfig config;
     private final Map<String, AiProvider> providers;
+    private java.util.function.Consumer<java.time.Duration> sleeper = GatewayLlmClient::sleep;
 
     private GatewayLlmClient(AiGateway gateway, StoneAiConfig config, Map<String, AiProvider> providers) {
         this.gateway = gateway;
@@ -127,13 +128,44 @@ public final class GatewayLlmClient implements LlmClient {
         return answer(ModelTier.BALANCED, request);
     }
 
+    /** How the client waits between attempts - replaced in tests. */
+    GatewayLlmClient sleepingWith(java.util.function.Consumer<java.time.Duration> sleeper) {
+        this.sleeper = sleeper;
+        return this;
+    }
+
+    /**
+     * Asks the chain; when every route failed and at least one of them only for a passing reason
+     * (overloaded, rate-limited, unreachable), waits and asks again - {@code llm.retryAttempts}
+     * times, the pause tripling from {@code llm.retryBackoffSeconds}. Providers routinely answer
+     * "high demand" for minutes; one such minute must not end a run over a 200-slide deck.
+     */
     private LlmAnswer answer(ModelTier tier, ChatRequest request) {
+        int attempts = Math.max(1, config.llm().retryAttempts());
+        java.time.Duration pause = java.time.Duration.ofSeconds(config.llm().retryBackoffSeconds());
+        for (int attempt = 1; ; attempt++) {
+            try {
+                ChatResponse response = gateway.chat(tier, request);
+                return new LlmAnswer(response.content(), response.usage().totalTokens(),
+                        response.provider() + "/" + response.model());
+            } catch (AiGatewayException e) {
+                boolean passing = e.getFailures().stream()
+                        .anyMatch(failure -> failure instanceof io.github.raindancer118.aigateway.RetryableAiException);
+                if (!passing || attempt >= attempts) {
+                    throw new IllegalStateException("kein Provider konnte antworten: " + e.getMessage(), e);
+                }
+                sleeper.accept(pause);
+                pause = pause.multipliedBy(3);
+            }
+        }
+    }
+
+    private static void sleep(java.time.Duration pause) {
         try {
-            ChatResponse response = gateway.chat(tier, request);
-            return new LlmAnswer(response.content(), response.usage().totalTokens(),
-                    response.provider() + "/" + response.model());
-        } catch (AiGatewayException e) {
-            throw new IllegalStateException("kein Provider konnte antworten: " + e.getMessage(), e);
+            Thread.sleep(pause);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("beim Warten auf den KI-Anbieter unterbrochen", e);
         }
     }
 

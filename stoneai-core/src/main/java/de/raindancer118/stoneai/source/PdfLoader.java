@@ -58,6 +58,8 @@ public final class PdfLoader implements DocumentLoader {
     public SourceDocument load(Path file) throws IOException {
         List<Page> pages = new ArrayList<>();
         List<Integer> skipped = new ArrayList<>();
+        List<Integer> unreadable = new ArrayList<>();
+        RuntimeException lastOcrFailure = null;
         boolean truncated;
         String title;
 
@@ -88,7 +90,15 @@ public final class PdfLoader implements DocumentLoader {
                     skipped.add(number);
                     continue;
                 }
-                String transcribed = normalise(ocr.read(renderPng(renderer, number), number));
+                String transcribed;
+                try {
+                    transcribed = normalise(ocr.read(renderPng(renderer, number), number));
+                } catch (RuntimeException unavailable) {
+                    // One unreadable diagram must not cost the rest of the document; it is named instead.
+                    unreadable.add(number);
+                    lastOcrFailure = unavailable;
+                    continue;
+                }
                 if (transcribed.isBlank()) {
                     skipped.add(number);
                 } else {
@@ -97,11 +107,15 @@ public final class PdfLoader implements DocumentLoader {
             }
         }
 
+        if (pages.isEmpty() && lastOcrFailure != null) {
+            // Nothing readable at all - a later attempt may reach the provider.
+            throw lastOcrFailure;
+        }
         if (pages.isEmpty() && skipped.isEmpty()) {
             throw new EmptyDocumentException(file);
         }
         return new SourceDocument(file, title, DocumentKind.PDF, pages, skipped, truncated,
-                Documents.sha256(file));
+                Documents.sha256(file), unreadable);
     }
 
     /** Whether a page draws at least one image — the other half of the "is this a scan?" test. */
