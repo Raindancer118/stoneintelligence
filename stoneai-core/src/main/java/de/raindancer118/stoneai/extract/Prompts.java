@@ -99,9 +99,12 @@ final class Prompts {
                   Adressen, Telefonnummern, Daten, Beträge, Nebenpersonen, Gegenstände,
                   Abbildungen. Nichts davon wird eine eigene Notiz.
                 - Extrahiere nur, was im Text steht. Ergänze kein Wissen von außen und rate nicht.
+                - Schreibe nur Inhalt: keine Bemerkungen darüber, was der Abschnitt nicht enthält
+                  oder wo etwas „nur im Inhaltsverzeichnis“ steht. Nennt ein Abschnitt ein Thema
+                  bloß in einer Gliederung, schreibst du dazu nichts.
                 - [S. n] markiert, wo Seite n beginnt. Folien sind stichpunktartig: schreibe
                   verständliche, zusammenhängende Notizen, Definitionen und Sätze vollständig,
-                  Formeln als LaTeX ($…$). Offensichtlich verstümmelte Zeichen aus der
+                  Formeln als LaTeX in Dollarzeichen ($…$, abgesetzt $$…$$), nie \\( \\). Offensichtlich verstümmelte Zeichen aus der
                   PDF-Umwandlung (z. B. „6=“ für „≠“) darfst du richtigstellen.
                 - "body" ist gut gegliedertes Markdown: kurze Absätze, Stichpunkte für Fakten
                   ("- **Schadennummer:** …"), bei Bedarf Zwischenüberschriften ab ###. Keine
