@@ -166,6 +166,16 @@ public class AiWriteService {
         return changeSets.find(vaultId, changeSetId).map(set -> changeSets.changes(set.id())).orElse(List.of());
     }
 
+    /** Ob dieser Dienst Notizen dieses Levels lesen/schreiben darf (dieselbe Schranke wie beim Schreiben). */
+    public boolean mayProcess(AiService service, NoteLevel level) {
+        try {
+            requireLevel(service, level);
+            return true;
+        } catch (AiWriteRefusedException refused) {
+            return false;
+        }
+    }
+
     public static boolean isAgent(String actor) {
         return actor != null && actor.startsWith("ki:");
     }

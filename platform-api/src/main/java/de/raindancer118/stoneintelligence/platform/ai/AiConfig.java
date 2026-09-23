@@ -73,23 +73,32 @@ public class AiConfig {
     }
 
     @Bean
-    public AiChangeSetHousekeeping aiChangeSetHousekeeping(AiChangeSetRepository changeSets) {
-        return new AiChangeSetHousekeeping(changeSets);
+    public AiJobService aiJobService(AiJobRepository jobs, AiServiceDirectory services, @Lazy AiWriteService ai) {
+        return new AiJobService(jobs, () -> services,
+            (vaultId, service, requestedBy, label) -> ai.startChangeSet(vaultId, service, requestedBy, label).id(), Instant::now);
     }
 
-    /** Taeglich: Change-Sets samt Textkopien nach Ablauf des Rueckgaengig-Zeitraums loeschen. */
-    public static class AiChangeSetHousekeeping {
-        private final AiChangeSetRepository changeSets;
+    @Bean
+    public AiHousekeeping aiHousekeeping(AiChangeSetRepository changeSets, AiJobRepository jobs) {
+        return new AiHousekeeping(changeSets, jobs);
+    }
 
-        AiChangeSetHousekeeping(AiChangeSetRepository changeSets) {
+    /** Taeglich: Change-Sets samt Textkopien und Job-Metadaten nach Ablauf des Rueckgaengig-Zeitraums loeschen. */
+    public static class AiHousekeeping {
+        private final AiChangeSetRepository changeSets;
+        private final AiJobRepository jobs;
+
+        AiHousekeeping(AiChangeSetRepository changeSets, AiJobRepository jobs) {
             this.changeSets = changeSets;
+            this.jobs = jobs;
         }
 
         @Scheduled(initialDelay = 120_000, fixedDelay = 24 * 60 * 60 * 1000)
         public void purge() {
-            var purged = changeSets.purgeCreatedBefore(Instant.now().minus(REVERT_WINDOW));
+            var cutoff = Instant.now().minus(REVERT_WINDOW);
+            var purged = changeSets.purgeCreatedBefore(cutoff) + jobs.purgeCreatedBefore(cutoff);
             if (purged > 0) {
-                LOG.info("{} KI-Aenderungen nach {} Tagen entfernt", purged, REVERT_WINDOW.toDays());
+                LOG.info("{} KI-Aenderungen/-Jobs nach {} Tagen entfernt", purged, REVERT_WINDOW.toDays());
             }
         }
     }

@@ -33,8 +33,11 @@ public class AiInternalController {
     private final AiServiceDirectory services;
     private final VaultAccessGuard access;
     private final NoteRepository notes;
+    private final AiJobService jobs;
 
-    public AiInternalController(@Lazy AiWriteService ai, AiServiceDirectory services, VaultAccessGuard access, NoteRepository notes) {
+    public AiInternalController(@Lazy AiWriteService ai, AiServiceDirectory services, VaultAccessGuard access, NoteRepository notes,
+                                AiJobService jobs) {
+        this.jobs = jobs;
         this.ai = ai;
         this.services = services;
         this.access = access;
@@ -94,6 +97,62 @@ public class AiInternalController {
         return new NoteText(noteId, note.path(), ai.readText(vId, nId, service));
     }
 
+    /**
+     * Bestehende Notizen, die die KI fuer Verlinkung und Konsolidierung kennen darf: fuer
+     * {@code requestedBy} lesbar und auf einem Level, das der Dienst verarbeiten darf.
+     */
+    @GetMapping("/vaults/{vaultId}/change-sets/{changeSetId}/notes")
+    public List<ListedNote> listNotes(@PathVariable String vaultId, @PathVariable UUID changeSetId) {
+        var vId = VaultId.of(vaultId);
+        var changeSet = changeSet(vId, changeSetId);
+        access.require(vId, changeSet.requestedBy(), Permission.READ);
+        var service = services.find(changeSet.service())
+            .orElseThrow(() -> new AiWriteRefusedException("KI-Dienst " + changeSet.service() + " ist nicht (mehr) eingerichtet"));
+        var listed = new java.util.ArrayList<ListedNote>();
+        String cursor = null;
+        do {
+            var page = notes.list(vId, cursor, 500);
+            access.readableNotes(vId, changeSet.requestedBy(), page.notes()).stream()
+                .filter(note -> ai.mayProcess(service, note.level()))
+                .map(note -> new ListedNote(note.id().value().toString(), note.path(), note.level().value(), note.createdBy()))
+                .forEach(listed::add);
+            cursor = page.complete() ? null : page.nextCursor().orElse(null);
+        } while (cursor != null);
+        return listed;
+    }
+
+    @PostMapping("/jobs/claim")
+    public org.springframework.http.ResponseEntity<ClaimedJob> claim() {
+        return jobs.claim().map(ClaimedJob::from).map(org.springframework.http.ResponseEntity::ok)
+            .orElseGet(() -> org.springframework.http.ResponseEntity.noContent().build());
+    }
+
+    @GetMapping("/jobs/{jobId}/document")
+    public org.springframework.http.ResponseEntity<byte[]> document(@PathVariable UUID jobId) {
+        var job = jobs.running(jobId);
+        return org.springframework.http.ResponseEntity.ok()
+            .contentType(org.springframework.http.MediaType.parseMediaType(job.contentType()))
+            .body(jobs.document(jobId));
+    }
+
+    @PostMapping("/jobs/{jobId}/progress")
+    public JobAck progress(@PathVariable UUID jobId, @RequestBody ProgressRequest request) {
+        jobs.progress(jobId, request.message(), request.percent());
+        return new JobAck(jobId);
+    }
+
+    @PostMapping("/jobs/{jobId}/complete")
+    public JobAck complete(@PathVariable UUID jobId) {
+        jobs.complete(jobId);
+        return new JobAck(jobId);
+    }
+
+    @PostMapping("/jobs/{jobId}/fail")
+    public JobAck fail(@PathVariable UUID jobId, @RequestBody FailRequest request) {
+        jobs.fail(jobId, request.error(), Boolean.TRUE.equals(request.retryable()));
+        return new JobAck(jobId);
+    }
+
     private AiChangeSet changeSet(VaultId vaultId, UUID changeSetId) {
         return ai.changeSet(vaultId, changeSetId).orElseThrow(() -> new AiWriteRefusedException("KI-Änderung nicht gefunden"));
     }
@@ -110,5 +169,18 @@ public class AiInternalController {
     public record CreateNoteRequest(String path, String text, Integer level) { }
     public record UpdateNoteRequest(String text) { }
     public record NoteRef(String noteId, String path) { }
+    public record ListedNote(String noteId, String path, int level, String createdBy) { }
+    public record ProgressRequest(String message, Integer percent) { }
+    public record FailRequest(String error, Boolean retryable) { }
+    public record JobAck(UUID jobId) { }
+
+    /** Was der Worker fuer einen Job braucht - das Dokument holt er gesondert. */
+    public record ClaimedJob(UUID jobId, String vaultId, String service, String requestedBy, String fileName, String contentType,
+                             long size, int level, UUID changeSetId, int attempt) {
+        static ClaimedJob from(AiJob job) {
+            return new ClaimedJob(job.id(), job.vaultId().value().toString(), job.service(), job.requestedBy(), job.fileName(),
+                job.contentType(), job.size(), job.level(), job.changeSetId(), job.attempts());
+        }
+    }
     public record NoteText(String noteId, String path, String text) { }
 }

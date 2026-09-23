@@ -132,4 +132,67 @@ class AiEndToEndIT {
         assertThat(send("GET", base + "/notes/" + written.get("noteId"), tom, null).statusCode()).isEqualTo(404);
         assertThat(send("POST", base + "/ai/change-sets/" + changeSet.get("id") + "/revert", tom, null).statusCode()).isEqualTo(422);
     }
+
+    private HttpResponse<String> upload(String path, Map<String, String> headers, Map<String, String> fields,
+                                        Map<String, byte[]> files) throws Exception {
+        var boundary = "----si" + java.util.UUID.randomUUID();
+        var body = new java.io.ByteArrayOutputStream();
+        for (var field : fields.entrySet()) {
+            body.writeBytes(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + field.getKey() + "\"\r\n\r\n"
+                + field.getValue() + "\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        for (var file : files.entrySet()) {
+            body.writeBytes(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"files\"; filename=\"" + file.getKey()
+                + "\"\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            body.writeBytes(file.getValue());
+            body.writeBytes("\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        body.writeBytes(("--" + boundary + "--\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+            .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()));
+        headers.forEach(builder::header);
+        return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    // Der ganze Weg eines Dokuments: hochladen, Worker holt es, schreibt Notizen, meldet fertig.
+    @Test
+    void should_queueUploadedDocuments_forTheWorker() throws Exception {
+        var anna = user("ai-anna");
+        var vault = ok(send("POST", "/api/v1/vaults", anna, Map.of("name", "Uploads")));
+        var base = "/api/v1/vaults/" + vault.get("id");
+        var pdf = "%PDF-1.7\nInhalt".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        ok(send("POST", base + "/notes", anna, Map.of("path", "Bestand.md", "noteLevel", 1)));
+
+        assertThat(upload(base + "/ai/jobs", user("zaungast"), Map.of("service", "gemini", "level", "1"), Map.of("a.pdf", pdf))
+            .statusCode()).isEqualTo(403);
+        assertThat(upload(base + "/ai/jobs", anna, Map.of("service", "gemini", "level", "2"), Map.of("a.pdf", pdf))
+            .statusCode()).isEqualTo(422);
+        var queued = okList(upload(base + "/ai/jobs", anna, Map.of("service", "gemini", "level", "1"),
+            new java.util.LinkedHashMap<>(Map.of("Vorlesung.pdf", pdf, "Notizen.md", "# Notizen\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)))));
+        assertThat(queued).extracting(job -> job.get("status")).containsOnly("PENDING");
+        assertThat(queued).extracting(job -> job.get("fileName")).containsExactlyInAnyOrder("Vorlesung.pdf", "Notizen.md");
+        var cancelled = queued.stream().filter(j -> j.get("fileName").equals("Notizen.md")).findFirst().orElseThrow().get("id");
+        assertThat(ok(send("POST", base + "/ai/jobs/" + cancelled + "/cancel", anna, null))).containsEntry("status", "CANCELLED");
+
+        var job = ok(send("POST", "/internal/ai/jobs/claim", WORKER, null));
+        assertThat(job).containsEntry("fileName", "Vorlesung.pdf").containsEntry("requestedBy", "ai-anna")
+            .containsEntry("service", "gemini").containsEntry("level", 1);
+        assertThat(send("POST", "/internal/ai/jobs/claim", WORKER, null).statusCode()).isEqualTo(204);
+        var document = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/internal/ai/jobs/" + job.get("jobId") + "/document"))
+            .header(WORKER_HEADER, WORKER_TOKEN).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(document.body()).isEqualTo(pdf);
+
+        var internal = "/internal/ai/vaults/" + vault.get("id") + "/change-sets/" + job.get("changeSetId");
+        assertThat(okList(send("GET", internal + "/notes", WORKER, null))).extracting(note -> note.get("path")).containsExactly("Bestand.md");
+        ok(send("POST", "/internal/ai/jobs/" + job.get("jobId") + "/progress", WORKER, Map.of("message", "Seite 1 von 1", "percent", 50)));
+        ok(send("POST", internal + "/notes", WORKER, Map.of("path", "Wissen/Aus der Vorlesung.md", "text", "# Wissen\n", "level", 1)));
+        ok(send("POST", "/internal/ai/jobs/" + job.get("jobId") + "/complete", WORKER, null));
+
+        var jobs = okList(send("GET", base + "/ai/jobs", anna, null));
+        assertThat(jobs).filteredOn(j -> j.get("id").equals(job.get("jobId"))).singleElement().satisfies(done -> {
+            assertThat(done).containsEntry("status", "SUCCEEDED").containsEntry("changeSetId", job.get("changeSetId"));
+        });
+        assertThat(send("GET", "/internal/ai/jobs/" + job.get("jobId") + "/document", WORKER, null).statusCode()).isEqualTo(422);
+    }
 }

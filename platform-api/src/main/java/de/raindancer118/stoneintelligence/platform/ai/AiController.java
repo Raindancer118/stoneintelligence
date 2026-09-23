@@ -23,8 +23,10 @@ public class AiController {
     private final AiWriteService ai;
     private final AiServiceDirectory services;
     private final VaultAccessGuard access;
+    private final AiJobService jobs;
 
-    public AiController(@Lazy AiWriteService ai, AiServiceDirectory services, VaultAccessGuard access) {
+    public AiController(@Lazy AiWriteService ai, AiServiceDirectory services, VaultAccessGuard access, AiJobService jobs) {
+        this.jobs = jobs;
         this.ai = ai;
         this.services = services;
         this.access = access;
@@ -66,6 +68,50 @@ public class AiController {
             report.conflicts().stream().map(AiRevertConflict::path).toList(), UnaryOperator.identity());
         return new AiRevertReport(report.reverted(),
             report.conflicts().stream().filter(conflict -> readable.contains(conflict.path())).toList());
+    }
+
+    /** Dokumente hochladen: je Datei ein Job fuer den gewaehlten Dienst, Level = Level des Dokuments. */
+    @PostMapping(path = "/api/v1/vaults/{vaultId}/ai/jobs", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public List<JobResponse> upload(@PathVariable String vaultId,
+                                    @org.springframework.web.bind.annotation.RequestParam String service,
+                                    @org.springframework.web.bind.annotation.RequestParam(defaultValue = "1") int level,
+                                    @org.springframework.web.bind.annotation.RequestParam("files")
+                                    List<org.springframework.web.multipart.MultipartFile> files,
+                                    Authentication auth) throws java.io.IOException {
+        var vId = VaultId.of(vaultId);
+        access.require(vId, auth.getName(), Permission.CREATE);
+        var uploads = new java.util.ArrayList<AiJobService.Upload>();
+        for (var file : files) {
+            uploads.add(new AiJobService.Upload(file.getOriginalFilename(), file.getContentType(), file.getBytes()));
+        }
+        return jobs.upload(vId, auth.getName(), service, level, uploads).stream().map(JobResponse::from).toList();
+    }
+
+    @GetMapping("/api/v1/vaults/{vaultId}/ai/jobs")
+    public List<JobResponse> jobs(@PathVariable String vaultId, Authentication auth) {
+        var vId = VaultId.of(vaultId);
+        access.require(vId, auth.getName(), Permission.READ);
+        return jobs.list(vId, LIST_LIMIT).stream().map(JobResponse::from).toList();
+    }
+
+    @PostMapping("/api/v1/vaults/{vaultId}/ai/jobs/{jobId}/cancel")
+    public JobResponse cancel(@PathVariable String vaultId, @PathVariable UUID jobId, Authentication auth) {
+        var vId = VaultId.of(vaultId);
+        access.require(vId, auth.getName(), Permission.CREATE);
+        if (!jobs.cancel(vId, jobId)) {
+            throw new AiWriteRefusedException("Nur wartende Dokumente lassen sich abbrechen");
+        }
+        return jobs.list(vId, LIST_LIMIT).stream().filter(job -> job.id().equals(jobId)).findFirst().map(JobResponse::from)
+            .orElseThrow(() -> new AiWriteRefusedException("Job nicht gefunden"));
+    }
+
+    public record JobResponse(UUID id, String service, String requestedBy, String fileName, long size, int level, String status,
+                              String progress, Integer percent, String error, UUID changeSetId, Instant createdAt,
+                              Instant finishedAt) {
+        static JobResponse from(AiJob job) {
+            return new JobResponse(job.id(), job.service(), job.requestedBy(), job.fileName(), job.size(), job.level(),
+                job.status().name(), job.progress(), job.percent(), job.error(), job.changeSetId(), job.createdAt(), job.finishedAt());
+        }
     }
 
     public record ChangeSetResponse(UUID id, String service, String agent, String requestedBy, String label,
