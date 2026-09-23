@@ -31,6 +31,7 @@ import { isSyncablePath, planReconciliation, type ReconcileAction } from "./sync
 import { SyncActivity } from "./sync/SyncActivity";
 import { SyncClient } from "./sync/SyncClient";
 import { TicketClient } from "./sync/TicketClient";
+import { DeletionConflictModal } from "./ui/DeletionConflictModal";
 import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
 import { presentStatus, type StatusPresentation } from "./ui/statusPresentation";
 import { type Collaborator, type LiveNote, StatusView, VIEW_TYPE_STATUS } from "./ui/StatusView";
@@ -57,6 +58,12 @@ const CREATED_FOLLOW_UP_MS = 3_000;
  * Inhaltsabgleich in dem Fall nur in diesem (dem frueheren) Takt.
  */
 const LEGACY_FULL_CONTENT_INTERVAL_MS = 90_000;
+/**
+ * Markierung in `blockedPaths`: anderswo geloescht, hier noch unuebertragene Aenderungen - bis
+ * zur Entscheidung weder hochladen noch loeschen. Persistiert, damit die Frage einen Neustart
+ * uebersteht.
+ */
+const DELETION_DECISION_PENDING = "deletion-decision-pending";
 /** Frist fuer Verbindung + Catchup einer einzelnen Notiz im Hintergrund. */
 const CONTENT_SYNC_TIMEOUT_MS = 10_000;
 /** Wie lange eine geoeffnete Notiz auf den Server-Stand wartet, bevor sie offline weiterarbeitet. */
@@ -169,6 +176,9 @@ export default class StoneIntelligencePlugin extends Plugin {
   private passRequested = false;
   private flushingOps = false;
   private settingsSaveTimer: number | null = null;
+  /** Loeschkonflikte werden nacheinander gefragt, nie mehrere Dialoge uebereinander. */
+  private decisionQueue: Promise<void> = Promise.resolve();
+  private readonly decisionsAsked = new Set<string>();
 
   private statusBarEl!: HTMLElement;
   private presenceBarEl!: HTMLElement;
@@ -255,6 +265,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     this.ensureTransport().start();
+    this.askPendingDeletionDecisions();
     this.requestPass();
     void this.syncOpenEditorBindings();
     void this.refreshVaultName();
@@ -671,6 +682,9 @@ export default class StoneIntelligencePlugin extends Plugin {
         return;
       }
       const blocked = this.vaultState().blockedPaths[file.path];
+      if (blocked === DELETION_DECISION_PENDING) {
+        return;
+      }
       menu.addItem((item) =>
         item.setTitle(blocked ? "StoneIntelligence: Erneut versuchen" : "StoneIntelligence: Jetzt synchronisieren")
           .setIcon("refresh-cw")
@@ -1096,8 +1110,80 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     if (locallyChanged) {
-      this.activity.log("kept", path, "Anderswo gelöscht, hier aber noch nicht übertragene Änderungen – behalten und neu hochgeladen");
-      this.requestPass();
+      this.vaultState().blockedPaths[path] = DELETION_DECISION_PENDING;
+      this.requestSettingsSave();
+      this.askDeletionDecision(path);
+      return;
+    }
+    this.serverDrivenPaths.add(path);
+    try {
+      await this.app.fileManager.trashFile(file);
+    } finally {
+      this.serverDrivenPaths.delete(path);
+    }
+    this.activity.log("deleted", path, "Auf einem anderen Gerät gelöscht, im Papierkorb");
+  }
+
+  /** Offene Loeschentscheidungen (z. B. von vor einem Neustart) erneut stellen. */
+  private askPendingDeletionDecisions(): void {
+    for (const [path, reason] of Object.entries(this.vaultState().blockedPaths)) {
+      if (reason === DELETION_DECISION_PENDING) {
+        this.askDeletionDecision(path);
+      }
+    }
+  }
+
+  /**
+   * Fragt per Dialog (15s-Countdown, Standard Loeschen) und bietet dieselbe Wahl in der
+   * Seitenleiste an. Die zuerst getroffene Wahl gilt, jede weitere ist wirkungslos.
+   */
+  private askDeletionDecision(path: string): void {
+    if (this.decisionsAsked.has(path)) {
+      return;
+    }
+    this.decisionsAsked.add(path);
+    let settled = false;
+    const decide = (keep: boolean): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      void this.resolveDeletionDecision(path, keep);
+    };
+    this.activity.reportProblem(path, "Anderswo gelöscht, hier aber noch nicht übertragene Änderungen.", [
+      { label: "Behalten", run: () => decide(true) },
+      { label: "Löschen", run: () => decide(false) },
+    ]);
+    this.decisionQueue = this.decisionQueue.then(() => new Promise<void>((done) => {
+      if (settled || !(this.app.vault.getAbstractFileByPath(path) instanceof TFile)) {
+        done();
+        return;
+      }
+      const modal = new DeletionConflictModal(this.app, basename(path), () => decide(true), () => decide(false));
+      const originalOnClose = modal.onClose.bind(modal);
+      modal.onClose = () => {
+        originalOnClose();
+        done();
+      };
+      modal.open();
+    }));
+  }
+
+  private async resolveDeletionDecision(path: string, keep: boolean): Promise<void> {
+    this.decisionsAsked.delete(path);
+    this.activity.clearProblem(path);
+    const state = this.vaultState();
+    if (state.blockedPaths[path] === DELETION_DECISION_PENDING) {
+      delete state.blockedPaths[path];
+    }
+    await this.saveSettings();
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      return;
+    }
+    if (keep) {
+      this.activity.log("kept", path, "Behalten – wird als neue Notiz hochgeladen");
+      void this.runLocalChange(path);
       return;
     }
     this.serverDrivenPaths.add(path);
@@ -1250,6 +1336,10 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     const state = this.vaultState();
+    if (state.blockedPaths[file.path] === DELETION_DECISION_PENDING) {
+      // Erst entscheiden, dann hochladen - weiteres Tippen aendert an der offenen Frage nichts.
+      return;
+    }
     if (state.blockedPaths[file.path]) {
       // Geaendert -> neuer Versuch (z. B. nachdem Rechte vergeben wurden).
       delete state.blockedPaths[file.path];
@@ -1298,6 +1388,13 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     const state = this.vaultState();
+    if (state.blockedPaths[file.path] === DELETION_DECISION_PENDING) {
+      // Die offene Frage hat sich erledigt - die Person hat selbst geloescht.
+      delete state.blockedPaths[file.path];
+      this.decisionsAsked.delete(file.path);
+      this.activity.clearProblem(file.path);
+      this.requestSettingsSave();
+    }
     const affected = file instanceof TFolder
       ? Object.keys(state.noteIds).filter((path) => path.startsWith(`${file.path}/`))
       : [file.path];

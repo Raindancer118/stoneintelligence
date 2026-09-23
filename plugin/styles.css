@@ -173,6 +173,16 @@
   padding-left: calc(var(--icon-xs) + var(--size-4-2));
 }
 
+.stoneintelligence-row-actions {
+  display: flex;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) 0 0 calc(var(--icon-xs) + var(--size-4-2));
+}
+
+.stoneintelligence-conflict p {
+  color: var(--text-muted);
+}
+
 .stoneintelligence-people {
   display: flex;
   gap: var(--size-2-2);
