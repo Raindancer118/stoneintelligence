@@ -59,6 +59,7 @@ class TopicIngestTest {
     private final List<String> plannerPrompts = new ArrayList<>();
     private String planAnswer = PLAN;
     private String notesAnswer = NOTES;
+    private int tokensPerCall = 10;
 
     @BeforeEach
     void setUp() {
@@ -74,7 +75,7 @@ class TopicIngestTest {
                     plannerPrompts.add(user);
                     return new LlmAnswer(planAnswer, 10, "fake/smart");
                 }
-                return new LlmAnswer(system.startsWith("Du führst") ? "" : notesAnswer, 10, "fake/fast");
+                return new LlmAnswer(system.startsWith("Du führst") ? "" : notesAnswer, tokensPerCall, "fake/fast");
             }
 
             @Override
@@ -186,6 +187,22 @@ class TopicIngestTest {
 
         assertThat(store.notes).doesNotContainKey(VAULT.resolve("Quellen/Brief an die Versicherung.md"));
         assertThat(note("Quellen/Brief-an-die-Versicherung.md")).contains("[[Merle Wilkens]]");
+    }
+
+    // A 200-slide deck used to stop at the token budget and still report success.
+    @Test
+    @DisplayName("should say in the report and in the source note which parts were not read")
+    void should_reportWhatTheBudgetLeftUnread() throws IOException {
+        ConfigSchema.byPath("llm.maxTokensPerRun").set(config, "1000");
+        tokensPerCall = 1_000;
+        String section = "Inhalt ".repeat(1_200);
+
+        IngestReport report = ingest(markdown("Skript.md",
+                "# Kapitel 1\n\n" + section + "\n\n# Kapitel 2\n\n" + section + "\n\n# Kapitel 3\n\n" + section));
+
+        assertThat(report.budgetExhausted()).isTrue();
+        assertThat(report.unprocessed()).containsExactly("Skript — Kapitel 2", "Skript — Kapitel 3");
+        assertThat(note("Quellen/Skript.md")).contains("Nicht verarbeitet").contains("Skript — Kapitel 2");
     }
 
     private void assertEveryLinkResolves() {

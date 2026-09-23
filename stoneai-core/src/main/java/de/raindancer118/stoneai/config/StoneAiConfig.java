@@ -134,7 +134,7 @@ public final class StoneAiConfig {
         private String inbox = "~/Dokumente/StoneAI-Vault/Inbox";
         private String processedFolder = "Inbox/_erledigt";
         private boolean moveProcessed = true;
-        private int maxPages = 200;
+        private int maxPages = 500;
         private int watchDebounceSeconds = 3;
 
         public String inbox() {

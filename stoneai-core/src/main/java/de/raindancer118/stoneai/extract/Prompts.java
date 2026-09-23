@@ -33,6 +33,11 @@ final class Prompts {
                   erklärt und er über dieses Dokument hinaus nützlich ist.
                 - Wenige, tragfähige Themen: ein kurzes Dokument (1 bis 3 Seiten) hat meist 1 bis 4,
                   ein langes selten mehr als eines je zwei bis drei Seiten.
+                - Vorlesungsfolien und Skripte: das erste Thema ist die Veranstaltung selbst
+                  (z. B. "Controlling I (Vorlesung)") als Überblick über ihre Gliederung. Dazu je
+                  zentrales Konzept, Modell, Verfahren oder zentralen Satz eine Notiz - etwa eines
+                  je fünf bis zehn Folien, nicht jede Folie. Organisatorisches (Literaturliste,
+                  Termine, Prüfungsmodalitäten, Agenda) wird kein eigenes Thema.
                 - Gehört ein Thema zu einer schon vorhandenen Notiz (derselbe Vorgang, dieselbe
                   Person, dieselbe Figur), übernimm deren Titel exakt - das Dokument ergänzt dann
                   diese Notiz.
@@ -53,19 +58,25 @@ final class Prompts {
                 {"topics": [{"title": "…", "kind": "…", "scope": "…", "aliases": ["…"]}]}""".formatted(language);
     }
 
-    static String planUser(String documentTitle, List<String> existingTitles, String text) {
+    static String planUser(String documentTitle, List<String> existingTitles, String outline, String text) {
         String existing = existingTitles.isEmpty() ? "(keine)"
                 : existingTitles.stream().map(title -> "- " + title).collect(Collectors.joining("\n"));
+        String structure = outline.isBlank() ? "" : """
+
+                Gliederung des ganzen Dokuments (Folien- bzw. Seitentitel):
+                %s
+
+                Der Text unten ist nur ein Auszug - plane nach der Gliederung.""".formatted(outline);
         return """
                 Dokument: %s
 
                 Schon vorhandene Notizen:
                 %s
-
+                %s
                 Text:
                 ---
                 %s
-                ---""".formatted(documentTitle, existing, text);
+                ---""".formatted(documentTitle, existing, structure, text);
     }
 
     static String extractionSystem(String language, boolean mayAddTopics) {
@@ -88,6 +99,10 @@ final class Prompts {
                   Adressen, Telefonnummern, Daten, Beträge, Nebenpersonen, Gegenstände,
                   Abbildungen. Nichts davon wird eine eigene Notiz.
                 - Extrahiere nur, was im Text steht. Ergänze kein Wissen von außen und rate nicht.
+                - [S. n] markiert, wo Seite n beginnt. Folien sind stichpunktartig: schreibe
+                  verständliche, zusammenhängende Notizen, Definitionen und Sätze vollständig,
+                  Formeln als LaTeX ($…$). Offensichtlich verstümmelte Zeichen aus der
+                  PDF-Umwandlung (z. B. „6=“ für „≠“) darfst du richtigstellen.
                 - "body" ist gut gegliedertes Markdown: kurze Absätze, Stichpunkte für Fakten
                   ("- **Schadennummer:** …"), bei Bedarf Zwischenüberschriften ab ###. Keine
                   Überschrift der Ebene 1 oder 2, kein Frontmatter.

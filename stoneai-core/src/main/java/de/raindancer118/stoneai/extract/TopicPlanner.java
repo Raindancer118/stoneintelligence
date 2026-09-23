@@ -23,6 +23,9 @@ public final class TopicPlanner {
 
     /** How much of the document the planner reads - plenty for the gist, bounded in cost. */
     static final int TEXT_BUDGET = 24_000;
+    /** At most this much outline; a longer one keeps an even sample of its entries, and the last. */
+    static final int OUTLINE_BUDGET = 12_000;
+    private static final int MIN_EXCERPT_BUDGET = 12_000;
     /** Above this many notes, only titles sharing a word with the document are offered. */
     private static final int MAX_EXISTING = 200;
 
@@ -41,8 +44,11 @@ public final class TopicPlanner {
      */
     public Result plan(SourceDocument document, List<Chunk> chunks, List<String> existingTitles) {
         String system = Prompts.planSystem(config.llm().language());
-        String user = Prompts.planUser(document.title(), relevant(existingTitles, document), excerpt(chunks));
         boolean complete = chunks.stream().mapToInt(chunk -> chunk.text().length()).sum() <= TEXT_BUDGET;
+        // A long document is read in excerpts - its outline shows the planner every chapter anyway.
+        String outline = complete ? "" : outline(document);
+        String user = Prompts.planUser(document.title(), relevant(existingTitles, document), outline,
+                excerpt(chunks, Math.max(MIN_EXCERPT_BUDGET, TEXT_BUDGET - outline.length())));
         LlmAnswer answer = llm.complete(Tier.SMART, system, user);
         try {
             return new Result(parse(answer.text(), complete), answer.tokensUsed());
@@ -89,20 +95,34 @@ public final class TopicPlanner {
         return new TopicPlan(planned.size() > limit ? planned.subList(0, limit) : planned, complete);
     }
 
+    static String outline(SourceDocument document) {
+        List<String> entries = de.raindancer118.stoneai.source.PageCleaner.outline(document);
+        int total = entries.stream().mapToInt(entry -> entry.length() + 1).sum();
+        if (total <= OUTLINE_BUDGET) {
+            return String.join("\n", entries);
+        }
+        int keep = Math.max(2, entries.size() * OUTLINE_BUDGET / total);
+        List<String> sampled = new ArrayList<>();
+        for (int i = 0; i < keep; i++) {
+            sampled.add(entries.get((int) ((long) i * (entries.size() - 1) / (keep - 1))));
+        }
+        return String.join("\n", sampled);
+    }
+
     /** The document, or - when it is long - the beginning of every chunk, so no part is unseen. */
-    static String excerpt(List<Chunk> chunks) {
+    static String excerpt(List<Chunk> chunks, int budget) {
         int total = chunks.stream().mapToInt(chunk -> chunk.text().length()).sum();
-        if (total <= TEXT_BUDGET) {
+        if (total <= budget) {
             return String.join("\n\n", chunks.stream().map(Chunk::text).toList());
         }
-        int share = Math.max(400, TEXT_BUDGET / chunks.size());
+        int share = Math.max(400, budget / chunks.size());
         StringBuilder excerpt = new StringBuilder();
         for (Chunk chunk : chunks) {
             String text = chunk.text();
             excerpt.append("[").append(chunk.provenance().label()).append("]\n")
                     .append(text, 0, Math.min(share, text.length())).append(text.length() > share ? " …" : "")
                     .append("\n\n");
-            if (excerpt.length() > TEXT_BUDGET * 1.2) {
+            if (excerpt.length() > budget * 1.2) {
                 break;
             }
         }

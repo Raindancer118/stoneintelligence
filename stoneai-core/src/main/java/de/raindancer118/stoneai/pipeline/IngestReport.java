@@ -18,17 +18,26 @@ public record IngestReport(Path document,
                            List<ChunkFailure> failures,
                            List<Integer> skippedPages,
                            int tokensUsed,
-                           boolean budgetExhausted) {
+                           boolean budgetExhausted,
+                           List<String> unprocessed) {
 
     public IngestReport {
         writes = List.copyOf(writes);
         failures = List.copyOf(failures);
         skippedPages = List.copyOf(skippedPages);
+        unprocessed = List.copyOf(unprocessed);
     }
 
     public static IngestReport skipped(Path document, String reason) {
         return new IngestReport(document, "", document.getFileName().toString(), reason,
-                List.of(), List.of(), List.of(), 0, false);
+                List.of(), List.of(), List.of(), 0, false, List.of());
+    }
+
+    /** What of the document did not make it into notes - unread (budget) or unusable answers. */
+    public List<String> gaps() {
+        List<String> gaps = new java.util.ArrayList<>(unprocessed);
+        failures.forEach(failure -> gaps.add(failure.provenanceLabel()));
+        return gaps.stream().distinct().toList();
     }
 
     public boolean wasSkipped() {

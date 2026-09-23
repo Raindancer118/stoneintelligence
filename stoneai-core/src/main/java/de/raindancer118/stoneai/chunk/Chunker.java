@@ -50,12 +50,54 @@ public final class Chunker {
                         new Provenance(document.title(), document.file(), null, section.headingPath()));
             }
         } else {
-            for (Page page : document.pages()) {
-                addPieces(chunks, page.text(),
-                        new Provenance(document.title(), document.file(), page.number(), null));
-            }
+            packPages(chunks, document);
         }
         return chunks;
+    }
+
+    /**
+     * Consecutive pages share a chunk up to the budget, each marked with {@code [S. n]}; a chunk
+     * only ever ends at a page boundary, unless one page alone exceeds the budget. A slide deck
+     * thus becomes a handful of calls with context instead of one call per slide.
+     */
+    private void packPages(List<Chunk> chunks, SourceDocument document) {
+        StringBuilder packed = new StringBuilder();
+        Integer first = null;
+        Integer last = null;
+        for (Page page : document.pages()) {
+            String text = page.text().strip();
+            if (visibleChars(text) < MINIMUM_USEFUL_CHARS) {
+                continue;
+            }
+            String marked = "[S. " + page.number() + "]\n" + text;
+            if (marked.length() > maxChars) {
+                flush(chunks, document, packed, first, last);
+                packed.setLength(0);
+                first = null;
+                addPieces(chunks, text, new Provenance(document.title(), document.file(), page.number(), null));
+                continue;
+            }
+            if (packed.length() > 0 && packed.length() + 2 + marked.length() > maxChars) {
+                flush(chunks, document, packed, first, last);
+                packed.setLength(0);
+                first = null;
+            }
+            if (packed.length() > 0) {
+                packed.append("\n\n");
+            }
+            packed.append(marked);
+            first = first == null ? page.number() : first;
+            last = page.number();
+        }
+        flush(chunks, document, packed, first, last);
+    }
+
+    private static void flush(List<Chunk> chunks, SourceDocument document, StringBuilder packed, Integer first, Integer last) {
+        if (packed.length() == 0 || first == null) {
+            return;
+        }
+        chunks.add(new Chunk(chunks.size(), packed.toString(),
+                new Provenance(document.title(), document.file(), first, null, last.equals(first) ? null : last)));
     }
 
     private void addPieces(List<Chunk> chunks, String text, Provenance provenance) {

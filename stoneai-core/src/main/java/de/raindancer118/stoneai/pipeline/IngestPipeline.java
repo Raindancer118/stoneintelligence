@@ -49,7 +49,7 @@ import java.util.function.Supplier;
 public final class IngestPipeline {
 
     /** Characters per chunk. Comfortably inside every current model's context, with room for the prompt. */
-    private static final int CHUNK_CHARS = 6_000;
+    private static final int CHUNK_CHARS = 10_000;
     private static final int CHUNK_OVERLAP = 400;
 
     private final StoneAiConfig config;
@@ -122,6 +122,8 @@ public final class IngestPipeline {
             return IngestReport.skipped(document, "bereits verarbeitet (Ledger) — mit --force erneut lesen");
         }
 
+        // Headers, footers, page numbers and animation steps out; what is left is content.
+        source = de.raindancer118.stoneai.source.PageCleaner.clean(source);
         List<Chunk> chunks = new Chunker(CHUNK_CHARS, CHUNK_OVERLAP).split(source);
         Path vaultRoot = config.vault().resolvedPath();
         VaultIndex index = VaultIndex.build(config, ProtectionPolicy.of(config, vaultRoot), store);
@@ -157,7 +159,8 @@ public final class IngestPipeline {
 
         Path attachment = hosted ? storeOriginal(source, store) : copyAttachment(source);
         if (config.notes().writeSourceNote()) {
-            sourceWriter.write(source, List.copyOf(links), attachment);
+            sourceWriter.write(source, List.copyOf(links), attachment, extraction.unprocessed(),
+                    extraction.failures().stream().map(failure -> failure.provenanceLabel()).distinct().toList());
         }
         if (config.notes().writeMoc()) {
             new MocWriter(config, clock, dryRun, store).update(source, List.copyOf(links), sourceLink);
@@ -174,7 +177,7 @@ public final class IngestPipeline {
 
         return new IngestReport(document, source.sha256(), source.title(), "", writes,
                 extraction.failures(), source.skippedPages(), extraction.tokensUsed() + planned.tokensUsed(),
-                extraction.budgetExhausted());
+                extraction.budgetExhausted(), extraction.unprocessed());
     }
 
     /** Reads a scanned page through the vision model. */
