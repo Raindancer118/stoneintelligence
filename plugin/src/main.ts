@@ -31,6 +31,8 @@ import { isSyncablePath, planReconciliation, type ReconcileAction } from "./sync
 import { SyncActivity } from "./sync/SyncActivity";
 import { SyncClient } from "./sync/SyncClient";
 import { TicketClient } from "./sync/TicketClient";
+import { CONNECT_ACTION, type ConnectLink, parseConnectLink } from "./sync/connectLink";
+import { ConnectVaultModal } from "./ui/ConnectVaultModal";
 import { DeletionConflictModal } from "./ui/DeletionConflictModal";
 import { InviteModal } from "./ui/InviteModal";
 import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
@@ -200,6 +202,14 @@ export default class StoneIntelligencePlugin extends Plugin {
       const pending = this.pendingAuthCallback;
       this.pendingAuthCallback = null;
       handleMobileRedirectCallback(pending, params as unknown as Record<string, string>);
+    });
+    this.registerObsidianProtocolHandler(CONNECT_ACTION, (params) => {
+      const link = parseConnectLink(params as unknown as Record<string, string | undefined>);
+      if (!link) {
+        new Notice("StoneIntelligence: Dieser Verbinden-Link ist ungültig.");
+        return;
+      }
+      this.handleConnectLink(link);
     });
     this.addSettingTab(new StoneIntelligenceSettingTab(this.app, this, this));
     this.registerView(VIEW_TYPE_STATUS, (leaf) => new StatusView(leaf, this));
@@ -478,6 +488,53 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     new InviteModal(this.app, this.noteApiClient, this.settings.vaultId, this.vaultName() ?? "Vault").open();
+  }
+
+  /**
+   * Verbinden-Link der Einrichtungsseite: bestaetigen lassen, bei Bedarf anmelden, dann pruefen,
+   * dass der Vault fuer dieses Konto wirklich zugaenglich ist, und ihn waehlen.
+   */
+  private handleConnectLink(link: ConnectLink): void {
+    const displayName = link.vaultName ?? "gemeinsamer Vault";
+    if (link.vaultId === this.settings.vaultId && this.isLoggedIn()) {
+      new Notice(`StoneIntelligence: Dieser Obsidian-Vault ist bereits mit „${this.settings.vaultName || displayName}“ verbunden.`);
+      void this.activateStatusView();
+      return;
+    }
+    const knownState = this.settings.vaults[link.vaultId];
+    const localNoteCount = this.app.vault.getMarkdownFiles()
+      .filter((file) => isSyncablePath(file.path) && !isExcluded(file.path, this.settings.excludedFolders))
+      .filter((file) => !knownState?.noteIds[file.path]).length;
+    new ConnectVaultModal(this.app, {
+      vaultName: displayName,
+      localNoteCount,
+      currentVaultName: this.settings.vaultId && this.settings.vaultId !== link.vaultId
+        ? (this.settings.vaultName || "einem anderen Vault") : null,
+      signedIn: this.isLoggedIn(),
+    }, () => void this.connectToVault(link)).open();
+  }
+
+  private async connectToVault(link: ConnectLink): Promise<void> {
+    try {
+      if (!this.isLoggedIn()) {
+        await this.login();
+      }
+      const vault = (await this.listVaults()).find((candidate) => candidate.id === link.vaultId);
+      if (!vault) {
+        new Notice("StoneIntelligence: Du hast (noch) keinen Zugriff auf diesen Vault. Nimm zuerst die Einladung an "
+          + "oder bitte die Person, die den Vault verwaltet, dich hinzuzufügen.", 10_000);
+        return;
+      }
+      if (this.settings.paused) {
+        this.settings.paused = false;
+      }
+      await this.selectVault(vault);
+      this.startSyncEngine();
+      new Notice(`StoneIntelligence: Verbunden mit „${vault.name}“ – die Notizen werden jetzt synchronisiert.`);
+      void this.activateStatusView();
+    } catch (error) {
+      new Notice(`StoneIntelligence: Verbinden fehlgeschlagen – ${(error as Error).message}`);
+    }
   }
 
   private async refreshVaultName(): Promise<void> {
