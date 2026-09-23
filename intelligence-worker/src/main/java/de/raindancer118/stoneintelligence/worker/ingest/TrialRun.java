@@ -36,7 +36,7 @@ public final class TrialRun {
         for (var report : run(documents, Path.of(args[1]), model, new GatewayLlmFactory().forService(model))) {
             System.out.printf("%s: %d Notizen, %d Tokens%s%n", report.document().getFileName(), report.notesWritten(),
                 report.tokensUsed(), report.wasSkipped() ? " - uebersprungen: " + report.skippedReason() : "");
-            report.failures().forEach(failure -> System.out.println("  Fehler: " + failure));
+            report.gaps().forEach(gap -> System.out.println("  nicht verarbeitet: " + gap));
         }
     }
 

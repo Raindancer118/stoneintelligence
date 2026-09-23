@@ -40,3 +40,33 @@ Konzept = eine Notiz“), und jeder Abschnitt wurde für sich gelesen, ohne Blic
 - `llm.maxOutputTokens` (Standard 16.384): reichhaltigere Notizen und Reasoning-Modelle sprengten
   die Standardlänge der Anbieter, Antworten brachen mitten im JSON ab.
 - Probeläufe ohne Vault: `TrialRun` im Worker-Image (siehe Klassenkommentar).
+
+## Nachtrag: lange Dokumente und Foliensätze (2026-09-23)
+
+Anlass: ein 186-seitiger Controlling-Foliensatz und ein 260-seitiger Beamer-Satz (Diskrete
+Mathematik). PDFs wurden bisher **je Seite** gelesen – 200 Folien = 200 Aufrufe ohne Kontext; das
+Token-Budget reichte für etwa 80, der Rest fiel still weg.
+
+1. **Aufräumen vor dem Lesen** (`PageCleaner`): Seitenzahlen am Seitenrand, Animationsschritte
+   (eine Seite, deren Zeilen alle auf der nächsten wiederkehren) und Kopf-/Fußzeilen, die auf
+   ≥ 60 % der Seiten **und** im ersten wie im letzten Viertel stehen (Ziffern ignoriert – die
+   Textextraktion klebt die Seitenzahl an die Fußzeile). Kapitelüberschriften über einen langen
+   Abschnitt bleiben: sie sind Struktur.
+2. **Seiten bündeln**: aufeinanderfolgende Seiten teilen sich einen Abschnitt bis 10.000 Zeichen,
+   mit `[S. n]`-Markern; Quellenangaben als Seitenbereich („S. 12–18“). Aus 183 Folien werden 9
+   Abschnitte.
+3. **Gliederung für den Planer**: bei langen Dokumenten sieht er die Folientitel des ganzen Satzes
+   (bis 12.000 Zeichen, sonst gleichmäßig ausgedünnt) plus Auszüge. Für Vorlesungen: erst ein
+   Überblick über die Veranstaltung, dann je zentralem Konzept eine Notiz (etwa eine je 5–10
+   Folien), nichts Organisatorisches.
+4. **Zusammenführen in Stufen**: große Themen werden in Portionen ≤ 12.000 Zeichen gemergt, dann
+   die Ergebnisse; ein Merge unter 25 % der Eingabe gilt als abgeschnitten, die Teile bleiben.
+5. **Nichts fällt still weg**: nicht gelesene Abschnitte (Budget), unbrauchbare Antworten und nicht
+   lesbare Bildseiten stehen in der Quellnotiz und in der Job-Meldung. Eine nicht lesbare Bildseite
+   bricht den Lauf nicht mehr ab.
+6. **Warten statt Aufgeben**: sind alle Anbieter nur vorübergehend weg (503/429/Netz), wird bis zu
+   `llm.retryAttempts` (4) mal gewartet (20 s, 60 s, 180 s). `ingest.maxPages` 200 → 500.
+7. **Betrieb**: Groq (Free Tier) erlaubt 8.000 Token/Minute je Schlüssel inklusive Antwortlänge –
+   für große Abschnitte ungeeignet, nur Rückfallebene. Hauptlast trägt Gemini mit breiten Ketten
+   (3.6-flash, 3.8-flash, flash-latest, 3.5-flash, flash-lite-latest; Bilder zuletzt über Qwen auf
+   Groq).

@@ -145,9 +145,10 @@ public final class VaultWriter {
     private String renderBlock(DraftNote note, Path self) {
         StringBuilder block = new StringBuilder();
         if (note.definition() != null && !note.definition().isBlank()) {
-            block.append("> ").append(resolveLinks(note.definition().strip()).replace("\n", "\n> ")).append("\n\n");
+            block.append("> ").append(resolveLinks(de.raindancer118.stoneai.note.MathDelimiters.forObsidian(note.definition().strip()))
+                    .replace("\n", "\n> ")).append("\n\n");
         }
-        block.append(resolveLinks(note.body().strip()));
+        block.append(resolveLinks(de.raindancer118.stoneai.note.MathDelimiters.forObsidian(note.body().strip())));
 
         // Only link to notes that exist or are being written in this same run. A vault full of
         // broken links is worse than no links: Obsidian's graph fills up with phantom nodes and
