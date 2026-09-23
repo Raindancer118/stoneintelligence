@@ -166,8 +166,10 @@ class AiEndToEndIT {
 
         assertThat(upload(base + "/ai/jobs", user("zaungast"), Map.of("service", "gemini", "level", "1"), Map.of("a.pdf", pdf))
             .statusCode()).isEqualTo(403);
-        assertThat(upload(base + "/ai/jobs", anna, Map.of("service", "gemini", "level", "2"), Map.of("a.pdf", pdf))
-            .statusCode()).isEqualTo(422);
+        var refused = upload(base + "/ai/jobs", anna, Map.of("service", "gemini", "level", "2"), Map.of("a.pdf", pdf));
+        assertThat(refused.statusCode()).isEqualTo(422);
+        // Die Begruendung ist fuer Menschen geschrieben - das Dashboard zeigt sie direkt an.
+        assertThat(json.readTree(refused.body()).path("detail").asText()).isEqualTo("Gemini darf Dokumente mit Level 2 nicht verarbeiten");
         var queued = okList(upload(base + "/ai/jobs", anna, Map.of("service", "gemini", "level", "1"),
             new java.util.LinkedHashMap<>(Map.of("Vorlesung.pdf", pdf, "Notizen.md", "# Notizen\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)))));
         assertThat(queued).extracting(job -> job.get("status")).containsOnly("PENDING");

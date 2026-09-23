@@ -20,7 +20,7 @@
   let error = $state("");
   let vaults = $state<Vault[]>([]);
   let selected = $state<Vault | null>(null);
-  let section = $state<"notes" | "manage" | "obsidian">("notes");
+  let section = $state<"notes" | "manage" | "obsidian" | "ai">("notes");
   let dirty = $state(false);
   let canManage = $state(false);
   let authBusy = $state(false);
@@ -46,7 +46,7 @@
     if (selected?.id === vault.id || !mayLeave()) return;
     selected = vault; section = "notes"; dirty = false; canManage = false;
   }
-  function navigate(next: "notes" | "manage" | "obsidian") { if (next !== section && mayLeave()) { section = next; dirty = false; } }
+  function navigate(next: "notes" | "manage" | "obsidian" | "ai") { if (next !== section && mayLeave()) { section = next; dirty = false; } }
   async function refreshVaults(created?: Vault) {
     const loaded = await api.listVaults();
     if (!alive) return;
@@ -110,10 +110,12 @@
           <p><a href="/" onclick={leaveSetup}>← Zurück zu den Notizen</a></p>
           <ObsidianSetup {vaults} signedIn={true} onLogin={() => authenticate()} />
         {:else if selected}
-          <div class="workspace-heading"><div><p class="workspace-label">Arbeitsbereich</p><h1>{selected.name}</h1></div><nav aria-label="Vault-Bereiche"><button class:active={section === "notes"} aria-pressed={section === "notes"} onclick={() => navigate("notes")}>Notizen</button><button class:active={section === "obsidian"} aria-pressed={section === "obsidian"} onclick={() => navigate("obsidian")}>In Obsidian</button>{#if canManage}<button class:active={section === "manage"} aria-pressed={section === "manage"} onclick={() => navigate("manage")}>Mitglieder & Rechte</button>{/if}</nav></div>
+          <div class="workspace-heading"><div><p class="workspace-label">Arbeitsbereich</p><h1>{selected.name}</h1></div><nav aria-label="Vault-Bereiche"><button class:active={section === "notes"} aria-pressed={section === "notes"} onclick={() => navigate("notes")}>Notizen</button><button class:active={section === "obsidian"} aria-pressed={section === "obsidian"} onclick={() => navigate("obsidian")}>In Obsidian</button><button class:active={section === "ai"} aria-pressed={section === "ai"} onclick={() => navigate("ai")}>KI-Wissen</button>{#if canManage}<button class:active={section === "manage"} aria-pressed={section === "manage"} onclick={() => navigate("manage")}>Mitglieder & Rechte</button>{/if}</nav></div>
           {#key selected.id}
             {#if section === "obsidian"}
               <ObsidianSetup vaults={[selected]} signedIn={true} scopedVault={true} onLogin={() => authenticate()} />
+            {:else if section === "ai"}
+              {#await import("./lib/components/AiWorkspace.svelte")}<p role="status">KI-Bereich wird geladen…</p>{:then module}<module.default vault={selected} />{:catch}<p class="feedback error" role="alert">Der KI-Bereich konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
             {:else if section === "notes"}
               {#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
             {:else}
@@ -131,8 +133,9 @@
   .app-header { min-height: 76px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; padding: .75rem 2rem; background: var(--surface); border-bottom: 1px solid var(--line); }
   .brand, .account { display: flex; align-items: center; gap: .7rem; } .brand { font-weight: 700; letter-spacing: -.02em; } .account { color: var(--ink-dim); font-size: .85rem; }
   .body { display: grid; grid-template-columns: 14rem minmax(0, 1fr); min-height: calc(100vh - 76px); } aside { background: var(--surface); border-right: 1px solid var(--line); min-width: 0; }
-  #workspace { min-width: 0; padding: 2rem clamp(1rem, 3vw, 3rem) 4rem; } .workspace-heading { display: flex; justify-content: space-between; align-items: end; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem; } .workspace-heading h1 { font-size: 1.9rem; margin: .25rem 0 0; overflow-wrap: anywhere; } .workspace-label { color: var(--ink-dim); font-size: .8rem; margin: 0; }
-  nav { display: flex; gap: .4rem; border-bottom: 1px solid var(--line); } nav button { border: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink-dim); padding: .6rem 1rem; } nav button.active { color: var(--forest); border-color: var(--forest); font-weight: 700; }
+  #workspace { min-width: 0; padding: 2rem clamp(1rem, 3vw, 3rem) 4rem; } .workspace-heading { display: flex; justify-content: space-between; align-items: end; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem; } .workspace-heading > * { min-width: 0; max-width: 100%; } .workspace-heading h1 { font-size: 1.9rem; margin: .25rem 0 0; overflow-wrap: anywhere; } .workspace-label { color: var(--ink-dim); font-size: .8rem; margin: 0; }
+  /* Auf schmalen Bildschirmen scrollt die Reiterleiste für sich, statt die Seite zu verbreitern. */
+  nav { display: flex; gap: .4rem; border-bottom: 1px solid var(--line); max-width: 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; } nav button { flex: none; white-space: nowrap; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink-dim); padding: .6rem 1rem; } nav button.active { color: var(--forest); border-color: var(--forest); font-weight: 700; }
   .standalone { max-width: 50rem; margin: clamp(2.5rem, 8vh, 6rem) auto; padding: 2rem; } .home { color: var(--ink); text-decoration: none; margin-bottom: 3rem; display: inline-flex; }
   .setup-link { color: var(--forest); font-weight: 500; text-decoration: none; min-height: 48px; display: inline-flex; align-items: center; } .setup-link:hover { text-decoration: underline; }
   .management { max-width: 62rem; } .app-error { margin: 1rem 2rem; } .first-vault { padding: 4rem 0; max-width: 44rem; } .first-vault h1 { font-size: 2.5rem; } .first-vault p { max-width: 58ch; color: var(--ink-dim); }

@@ -14,6 +14,14 @@ test.beforeEach(async ({ page }) => {
   const documents = new Map([[noteId, doc]]);
   const revisions = new Map([[noteId, 1]]);
   const invitations: unknown[] = [];
+  const aiJobs: Record<string, unknown>[] = [
+    { id: "done", service: "gemini", requestedBy: "Anna", fileName: "Skript Kapitel 4.pdf", size: 120000, level: 1, status: "SUCCEEDED",
+      progress: "6 Notizen geschrieben", percent: 100, error: null, changeSetId: "cs-1", createdAt: "2026-09-23T09:00:00Z", finishedAt: "2026-09-23T09:02:00Z" },
+    { id: "failed", service: "gemini", requestedBy: "Tom", fileName: "Scan Klausur.pdf", size: 900000, level: 1, status: "FAILED",
+      progress: null, percent: null, error: "vor der KI geschützt — Dateiname enthält [noai]", changeSetId: null, createdAt: "2026-09-23T08:30:00Z", finishedAt: "2026-09-23T08:30:10Z" },
+  ];
+  const changeSets: Record<string, unknown>[] = [{ id: "cs-1", service: "gemini", agent: "ki:Gemini", requestedBy: "Anna",
+    label: "Skript Kapitel 4.pdf", createdAt: "2026-09-23T09:00:00Z", revertedAt: null }];
   const notes = [{ id: noteId, vaultId, path: "Projekte/Kundenportal.md", noteLevel: 1, createdBy: "Tom", createdAt: "2026-09-19T09:00:00Z" }];
   await page.route("**/api/v1/**", async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
@@ -48,6 +56,20 @@ test.beforeEach(async ({ page }) => {
       if (request.method() === "POST") { const note = { ...notes[0]!, id: "b0000000-0000-4000-8000-000000000002", path: request.postDataJSON().path }; notes.push(note); documents.set(note.id, new Y.Doc()); revisions.set(note.id, 0); return json(note); }
       return json({ epochId: "test-epoch", complete: true, nextCursor: null, notes });
     }
+    if (path === "/api/v1/ai/services") return json([{ id: "gemini", name: "Gemini", levels: [1] }, { id: "lokal", name: "Lokales Modell", levels: [1, 2, 3] }]);
+    if (path.endsWith("/ai/jobs") && request.method() === "POST") {
+      const job = { id: `job-${aiJobs.length + 1}`, service: "lokal", requestedBy: "Tom", fileName: "Vorlesung Biologie.pdf", size: 48213, level: 2,
+        status: "RUNNING", progress: "Seite 3 von 12", percent: 25, error: null, changeSetId: null, createdAt: "2026-09-23T10:05:00Z", finishedAt: null };
+      aiJobs.unshift(job);
+      return json([job]);
+    }
+    if (path.endsWith("/ai/jobs")) return json(aiJobs);
+    if (path.endsWith("/revert")) { changeSets[0]!.revertedAt = "2026-09-23T10:10:00Z"; return json({ reverted: 3, conflicts: [{ path: "Wissen/Zellatmung.md", reason: "Seit der KI hat jemand weitergeschrieben" }] }); }
+    if (/\/ai\/change-sets\/[^/]+$/.test(path)) return json({ changeSet: changeSets[0], changes: [
+      { noteId: "n1", path: "Wissen/Photosynthese.md", kind: "CREATED", at: "2026-09-23T09:01:00Z" },
+      { noteId: "n2", path: "Wissen/Zellatmung.md", kind: "UPDATED", at: "2026-09-23T09:01:10Z" },
+      { noteId: "n3", path: "Quellen/Skript Kapitel 4.md", kind: "CREATED", at: "2026-09-23T09:01:20Z" }] });
+    if (path.endsWith("/ai/change-sets")) return json(changeSets);
     if (path.endsWith("/audit")) return json([{ actor: "Tom", action: "note.created", payload: {}, occurredAt: "2026-09-19T09:00:00Z" }]);
     if (request.method() === "PATCH") { notes[0]!.path = request.postDataJSON().path; return json(notes[0]); }
     if (request.method() === "DELETE") { notes.splice(0, 1); return json({}); }
@@ -147,4 +169,31 @@ test("connect the selected vault to Obsidian from the vault", async ({ page }, t
   await expect(connect).toHaveAttribute("href", /^obsidian:\/\/stoneintelligence-connect\?stoneVault=[0-9a-f-]{36}&name=Team-Wissen$/);
   await expect(page.getByRole("link", { name: "StoneIntelligence installieren" })).toHaveAttribute("href", "obsidian://brat?plugin=Raindancer118%2Fstoneintelligence");
   await page.screenshot({ path: testInfo.outputPath("vault-in-obsidian.png"), fullPage: true });
+});
+
+test("reads a document with AI and undoes the result", async ({ page }, testInfo) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/");
+  await page.getByRole("button", { name: "KI-Wissen" }).click();
+  await expect(page.getByRole("heading", { name: "Wissen aus Dokumenten" })).toBeVisible();
+
+  await page.getByLabel("KI-Dienst").selectOption("lokal");
+  await page.getByLabel("Level der Dokumente").selectOption("2");
+  await page.getByLabel("Dokumente", { exact: true }).setInputFiles({ name: "Vorlesung Biologie.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7 test") });
+  await page.getByRole("button", { name: "1 Dokument einlesen" }).click();
+  await expect(page.getByText("Seite 3 von 12 · 25 %")).toBeVisible();
+
+  await page.getByRole("button", { name: "Änderungen aus Skript Kapitel 4.pdf anzeigen" }).click();
+  await expect(page.getByText("Wissen/Photosynthese.md")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("ai-desktop.png"), fullPage: true });
+
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Skript Kapitel 4.pdf rückgängig machen" }).click();
+  await expect(page.getByText("3 Änderungen rückgängig gemacht")).toBeVisible();
+  await expect(page.getByText("Wissen/Zellatmung.md – Seit der KI hat jemand weitergeschrieben")).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("ai-mobile.png"), fullPage: true });
+  expect(errors).toEqual([]);
 });
