@@ -1,21 +1,13 @@
 spring:
   application:
     name: intelligence-worker
+  threads:
+    virtual:
+      enabled: true
 
-  datasource:
-    url: ${STONEINTELLIGENCE_DB_URL:jdbc:postgresql://localhost:5432/stoneintelligence}
-    username: ${STONEINTELLIGENCE_DB_USER:stoneintelligence}
-    password: ${STONEINTELLIGENCE_DB_PASSWORD:}
-
-  jpa:
-    open-in-view: false
-    hibernate:
-      ddl-auto: validate
-
-  flyway:
-    schemas: worker
-    default-schema: worker
-    locations: classpath:db/migration/worker
+# Kein eigener Datenbankzugriff (ADR 0008): Jobs, Dokumente und Notizen kommen ueber platform-api.
+server:
+  port: 8081
 
 management:
   endpoints:

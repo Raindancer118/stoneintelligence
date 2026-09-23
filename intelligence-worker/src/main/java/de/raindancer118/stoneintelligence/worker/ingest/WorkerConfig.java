@@ -1,0 +1,33 @@
+package de.raindancer118.stoneintelligence.worker.ingest;
+
+import java.time.LocalDate;
+import de.raindancer118.stoneintelligence.worker.platform.PlatformApi;
+import de.raindancer118.stoneintelligence.worker.platform.PlatformHttpClient;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
+
+/**
+ * Der Worker laeuft nur mit Adresse von platform-api und Worker-Token
+ * ({@code STONEINTELLIGENCE_PLATFORM_API_URL}, {@code STONEINTELLIGENCE_AI_WORKER_TOKEN}); ohne
+ * beides startet er, tut aber nichts.
+ */
+@Configuration
+@EnableScheduling
+@ConditionalOnExpression("'${STONEINTELLIGENCE_PLATFORM_API_URL:}' != '' and '${STONEINTELLIGENCE_AI_WORKER_TOKEN:}' != ''")
+public class WorkerConfig {
+
+    @Bean
+    public PlatformApi platformApi(@Value("${STONEINTELLIGENCE_PLATFORM_API_URL}") String url,
+                                   @Value("${STONEINTELLIGENCE_AI_WORKER_TOKEN}") String token) {
+        return new PlatformHttpClient(url, token);
+    }
+
+    @Bean
+    public WorkerLoop workerLoop(PlatformApi platform) {
+        var processor = new JobProcessor(platform, new GatewayLlmFactory(), ServiceModels.from(System.getenv()), LocalDate::now);
+        return new WorkerLoop(platform, processor);
+    }
+}
