@@ -1,0 +1,10 @@
+[Unit]
+Description=StoneIntelligence: Störung von %i an Jules melden
+
+[Service]
+Type=oneshot
+User=murthag
+ExecStart=/home/murthag/stoneintelligence/ops/backup/stoerung-melden.sh %i
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=2min
