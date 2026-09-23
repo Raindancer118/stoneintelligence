@@ -1,4 +1,5 @@
 import type { StoredTokens } from "./sync/AuthentikAuthClient";
+import type { FileMeta } from "./sync/filePlan";
 import type { NoteMeta } from "./sync/reconcilePlan";
 
 /** Eine lokal ausgefuehrte Loeschung/Umbenennung, die der Server noch nicht bestaetigt hat. */
@@ -27,6 +28,10 @@ export interface VaultSyncState {
   blockedPaths: Record<string, string>;
   /** Server-Ordner beim letzten Ordnerabgleich; `null` = noch nie abgeglichen. */
   knownFolders: string[] | null;
+  /** Pfad -> Datei-Id (PDFs, Bilder, Anhaenge - ADR 0009); getrennt von den Notizen. */
+  fileIds: Record<string, string>;
+  /** Datei-Id -> Stand beim letzten Abgleich (Fassung, Hash, Stat). */
+  fileMeta: Record<string, FileMeta>;
 }
 
 export interface StoneIntelligenceSettings {
@@ -71,7 +76,7 @@ export const DEFAULT_SETTINGS: StoneIntelligenceSettings = {
 };
 
 export function emptyVaultState(): VaultSyncState {
-  return { noteIds: {}, noteMeta: {}, pendingOps: [], blockedPaths: {}, knownFolders: [] };
+  return { noteIds: {}, noteMeta: {}, pendingOps: [], blockedPaths: {}, knownFolders: [], fileIds: {}, fileMeta: {} };
 }
 
 /** Laedt gespeicherte Daten beliebigen (auch alten) Formats in die aktuelle Struktur. */

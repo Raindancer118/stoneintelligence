@@ -32,6 +32,13 @@ services:
       # "id|Name|Levels; ..." - leer = keine KI (s. AiServiceDirectory)
       STONEINTELLIGENCE_AI_SERVICES: ${STONEINTELLIGENCE_AI_SERVICES:-}
       STONEINTELLIGENCE_AI_WORKER_TOKEN: ${STONEINTELLIGENCE_AI_WORKER_TOKEN:-}
+      # Dateien (ADR 0009): Grenzen je Datei und je Vault in MB
+      STONEINTELLIGENCE_FILE_MAX_MB: ${STONEINTELLIGENCE_FILE_MAX_MB:-200}
+      STONEINTELLIGENCE_FILE_QUOTA_MB: ${STONEINTELLIGENCE_FILE_QUOTA_MB:-5120}
+    volumes:
+      # Gehostet statt dessen die Storage Box einhaengen (bind, create_host_path: false - sonst landen
+      # die Dateien bei nicht gemounteter Box unbemerkt auf der lokalen Platte).
+      - stoneintelligence-files:/data/files
     ports:
       - "8080:8080"
 
@@ -69,6 +76,7 @@ services:
 
 volumes:
   stoneintelligence-postgres:
+  stoneintelligence-files:
 
 secrets:
   # Maven-settings.xml mit Lesezugang zu packages.tstieh.de (server-id packages-releases)

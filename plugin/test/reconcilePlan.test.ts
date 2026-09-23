@@ -17,6 +17,19 @@ function input(overrides: Partial<ReconcileInput>): ReconcileInput {
 const file = (path: string, mtime = 1, size = 10) => ({ path, mtime, size });
 
 describe("planReconciliation", () => {
+  // Anderswo umbenannt, hier aber schon am neuen Ort (unterbrochenes Umbenennen): neu zuordnen -
+  // weder haengen bleiben noch die Datei als neue Notiz hochladen (das gaebe ein Duplikat).
+  it("should_relinkANoteThatAlreadyLivesAtTheServerPath_insteadOfUploadingADuplicate", () => {
+    const plan = planReconciliation(input({
+      serverNotes: [{ id: "n1", path: "Archiv/a.md", revision: 3 }],
+      localFiles: [file("Archiv/a.md")],
+      noteIds: { "a.md": "n1" },
+      meta: { n1: { revision: 3, mtime: 1, size: 10 } },
+    }));
+
+    expect(plan).toEqual([{ kind: "adopt", noteId: "n1", path: "Archiv/a.md" }]);
+  });
+
   it("should_downloadServerNotes_thatAreMissingLocally", () => {
     const plan = planReconciliation(input({ serverNotes: [{ id: "n1", path: "a.md", revision: 3 }] }));
 

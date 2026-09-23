@@ -178,6 +178,12 @@ describe("conflictCopyPath", () => {
     const taken = new Set(["Notiz (Konflikt 2026-09-23 11-42).md"]);
     expect(conflictCopyPath("Notiz.md", date, (path) => taken.has(path))).toBe("Notiz (Konflikt 2026-09-23 11-42) 2.md");
   });
+
+  // Dateien (ADR 0009): die Endung bleibt, sonst oeffnet sich die Kopie nicht mehr.
+  it("should_keepTheExtension_ofOtherFiles", () => {
+    expect(conflictCopyPath("Anhänge/Skript.v2.pdf", date, () => false)).toBe("Anhänge/Skript.v2 (Konflikt 2026-09-23 11-42).pdf");
+    expect(conflictCopyPath("Ordner.x/ohne-endung", date, () => false)).toBe("Ordner.x/ohne-endung (Konflikt 2026-09-23 11-42)");
+  });
 });
 
 describe("hasUnsyncedLocalEdits", () => {

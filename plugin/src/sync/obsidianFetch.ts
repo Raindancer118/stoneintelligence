@@ -11,7 +11,7 @@ import { requestUrl } from "obsidian";
  * dokumentierte Weg fuer Plugins, die beliebige externe APIs ansprechen muessen.
  *
  * <p>Deckt bewusst nur die Response-Oberflaeche ab, die dieses Plugin tatsaechlich nutzt
- * (`.ok`, `.status`, `.headers.get()`, `.json()`) - kein vollstaendiges `fetch()`-Polyfill.
+ * (`.ok`, `.status`, `.headers.get()`, `.json()`, `.text()`, `.arrayBuffer()`) - kein vollstaendiges `fetch()`-Polyfill.
  * `.headers` wird gebraucht, damit z. B. der `Retry-After`-Header des Rate-Limiters (s.
  * retryFetch.ts) den Client erreicht - ohne den musste der Client die Wartezeit blind raten.
  */
@@ -20,11 +20,22 @@ function headersFrom(raw: Record<string, string>): Pick<Headers, "get"> {
   return { get: (name: string) => lowercased.get(name.toLowerCase()) ?? null };
 }
 
+/** Datei-Inhalte (ADR 0009): `requestUrl` nimmt Bytes als ArrayBuffer - genau den Ausschnitt, nicht den ganzen Puffer. */
+function binaryBody(body: unknown): ArrayBuffer | undefined {
+  if (body instanceof ArrayBuffer) {
+    return body;
+  }
+  if (ArrayBuffer.isView(body)) {
+    return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer;
+  }
+  return undefined;
+}
+
 export const obsidianFetch: typeof fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input.toString();
   const method = (init?.method ?? "GET").toUpperCase();
   const headers = init?.headers as Record<string, string> | undefined;
-  const body = typeof init?.body === "string" ? init.body : undefined;
+  const body = typeof init?.body === "string" ? init.body : binaryBody(init?.body);
 
   const response = await requestUrl({ url, method, headers, body, throw: false });
 
@@ -34,5 +45,6 @@ export const obsidianFetch: typeof fetch = async (input, init) => {
     headers: headersFrom(response.headers ?? {}),
     json: async () => response.json,
     text: async () => response.text,
+    arrayBuffer: async () => response.arrayBuffer,
   } as Response;
 };

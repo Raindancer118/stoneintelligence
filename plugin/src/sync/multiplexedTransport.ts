@@ -22,6 +22,8 @@ export const VAULT_NOTE_UPDATED = 9;
 const TYPE_SUBSCRIBE_CONTENT_UPDATES = 10;
 /** Client->Server: "ich verstehe VAULT_FOLDERS_CHANGED" - aus demselben Grund opt-in wie Typ 10. */
 const TYPE_SUBSCRIBE_FOLDER_EVENTS = 11;
+/** Client->Server: "ich kenne Dateien" (ADR 0009) - ihre Ereignisse kommen dann in den Frames 6-9. */
+const TYPE_SUBSCRIBE_FILE_EVENTS = 13;
 /** Ordner unter diesem Pfad angelegt/geloescht/verschoben - Anlass, die Ordnerliste zu holen. */
 export const VAULT_FOLDERS_CHANGED = 12;
 const NIL_NOTE_ID = "00000000-0000-0000-0000-000000000000";
@@ -104,6 +106,8 @@ export interface MultiplexedTransportOptions {
   subscribeContentUpdates?: boolean;
   /** Ordner-Ankuendigungen abonnieren (nach jedem Connect erneut). */
   subscribeFolderEvents?: boolean;
+  /** Datei-Ankuendigungen abonnieren (nach jedem Connect erneut). */
+  subscribeFileEvents?: boolean;
   /** Nach JEDEM erfolgreichen (Re-)Connect - Anlass, verpasste Vault-Ereignisse per Abgleich nachzuholen. */
   onConnected?: () => void;
   sleep?: (ms: number) => Promise<void>;
@@ -165,6 +169,7 @@ export class MultiplexedTransport {
   private readonly onConnected: (() => void) | null;
   private readonly subscribeContentUpdates: boolean;
   private readonly subscribeFolderEvents: boolean;
+  private readonly subscribeFileEvents: boolean;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly onVaultEvent: VaultEventHandler | null;
 
@@ -181,6 +186,7 @@ export class MultiplexedTransport {
     this.onConnected = options.onConnected ?? null;
     this.subscribeContentUpdates = options.subscribeContentUpdates ?? false;
     this.subscribeFolderEvents = options.subscribeFolderEvents ?? false;
+    this.subscribeFileEvents = options.subscribeFileEvents ?? false;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.onVaultEvent = options.onVaultEvent ?? null;
   }
@@ -265,6 +271,9 @@ export class MultiplexedTransport {
         }
         if (this.subscribeFolderEvents) {
           this.sendFramed(TYPE_SUBSCRIBE_FOLDER_EVENTS, NIL_NOTE_ID, new Uint8Array(0));
+        }
+        if (this.subscribeFileEvents) {
+          this.sendFramed(TYPE_SUBSCRIBE_FILE_EVENTS, NIL_NOTE_ID, new Uint8Array(0));
         }
         if (this.everConnected) {
           // RECONNECT (nicht der allererste Connect): der Server kennt keine alten Joins einer

@@ -167,7 +167,9 @@ class FilesEndToEndIT {
         assertThat(sendJson("PATCH", base + "/notes/" + file.get("id"), tom, Map.of("path", "Archiv/Skript.md")).statusCode()).isEqualTo(400);
         assertThat(sendJson("GET", base + "/notes/" + file.get("id") + "/content", tom, null).statusCode()).isEqualTo(409);
 
-        // Grenzen: je Datei 1 MB, je Vault 3 MB.
+        // Grenzen: je Datei 1 MB, je Vault 3 MB - das Plugin fragt sie vorab ab, statt 200 MB umsonst zu senden.
+        assertThat(ok(sendJson("GET", "/api/v1/files/limits", tom, null)))
+            .containsEntry("maxFileBytes", 1024 * 1024).containsEntry("vaultQuotaBytes", 3 * 1024 * 1024);
         var big = ok(sendJson("POST", base + "/files", tom, Map.of("path", "gross.bin")));
         assertThat(upload(base + "/files/" + big.get("id") + "/content", tom, "\"0\"", new byte[1024 * 1024 + 1]).statusCode()).isEqualTo(413);
         // Drei Teile knapp unter 1 MB passen noch in 3 MB, der vierte nicht mehr.

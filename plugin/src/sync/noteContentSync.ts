@@ -162,12 +162,16 @@ function pad(value: number): string {
 
 /** "Ordner/Notiz.md" -> "Ordner/Notiz (Konflikt 2026-09-23 11-42).md", bei Kollision mit Zaehler. */
 export function conflictCopyPath(path: string, date: Date, exists: (candidate: string) => boolean): string {
-  const base = path.replace(/\.md$/i, "");
+  // Endung = alles ab dem letzten Punkt im Dateinamen (nicht im Ordner) - bei Dateien ohne Endung keine.
+  const nameStart = path.lastIndexOf("/") + 1;
+  const dot = path.lastIndexOf(".");
+  const extension = dot > nameStart ? path.slice(dot) : "";
+  const base = extension ? path.slice(0, dot) : path;
   const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
     + `${pad(date.getHours())}-${pad(date.getMinutes())}`;
-  let candidate = `${base} (Konflikt ${stamp}).md`;
+  let candidate = `${base} (Konflikt ${stamp})${extension}`;
   for (let counter = 2; exists(candidate); counter++) {
-    candidate = `${base} (Konflikt ${stamp}) ${counter}.md`;
+    candidate = `${base} (Konflikt ${stamp}) ${counter}${extension}`;
   }
   return candidate;
 }

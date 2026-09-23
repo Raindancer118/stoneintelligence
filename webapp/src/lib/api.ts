@@ -29,6 +29,8 @@ export interface PathRule {
 
 export interface Note {
   id: string; vaultId: string; path: string; noteLevel: number; createdBy: string; createdAt: string;
+  /** Dateien (PDFs, Bilder, Anhänge) stehen mit in der Liste; fehlt bei älteren Servern. */
+  kind?: "NOTE" | "FILE"; sha256?: string | null; size?: number | null; revision?: number;
 }
 export interface NotePage { epochId: string; complete: boolean; nextCursor: string | null; notes: Note[]; }
 export interface NoteContent { revision: number; updates: string[]; }
@@ -108,7 +110,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   permissions: (vaultId: string) => request<string[]>(`/api/v1/vaults/${vaultId}/permissions`),
   listNotes: (vaultId: string, cursor?: string) => request<NotePage>(
-    `/api/v1/vaults/${vaultId}/notes?${new URLSearchParams({ pageSize: "100", ...(cursor ? { cursor } : {}) })}`),
+    `/api/v1/vaults/${vaultId}/notes?${new URLSearchParams({ pageSize: "100", kinds: "note,file", ...(cursor ? { cursor } : {}) })}`),
+  /** Inhalt einer Datei - mit Anmeldung geladen, angezeigt über eine Blob-URL (die API liefert immer als Anhang). */
+  fileBlob: async (vaultId: string, fileId: string) => {
+    const response = await fetch(`${baseUrl}/api/v1/vaults/${vaultId}/files/${fileId}/content`, {
+      signal: AbortSignal.timeout(300_000), headers: { Authorization: `Bearer ${await getAccessToken()}` },
+    });
+    if (!response.ok) throw new ApiError(response.status, await problemDetail(response));
+    return await response.blob();
+  },
   createNote: (vaultId: string, path: string) => request<Note>(`/api/v1/vaults/${vaultId}/notes`,
     { method: "POST", body: JSON.stringify({ path, noteLevel: 1 }) }),
   renameNote: (vaultId: string, noteId: string, path: string) => request<Note>(`/api/v1/vaults/${vaultId}/notes/${noteId}`,
