@@ -63,20 +63,26 @@ public final class VaultWriter {
         return new VaultWriter(config, protection, clock, index, store, true);
     }
 
+    public WriteResult write(DraftNote note, String documentHash, String sourceLink) throws IOException {
+        return write(note, documentHash, sourceLink, null);
+    }
+
     /**
      * @param documentHash hash of the source document — makes the managed block id stable across
      *                     runs and distinct per source
-     * @param sourceLink   a wikilink to the source note, written into the frontmatter
+     * @param sourceLink   a wikilink to the source note; citations link there when there is no original
+     * @param original     the original document stored in the vault, or {@code null} - page
+     *                     citations of a PDF open it at that page
      */
-    public WriteResult write(DraftNote note, String documentHash, String sourceLink) throws IOException {
+    public WriteResult write(DraftNote note, String documentHash, String sourceLink, Path original) throws IOException {
         Path file = fileFor(note);
         // Register before rendering, so a note can be linked from the very block that creates it.
         index.register(note.title(), note.aliases(), file);
         String blockId = blockId(documentHash, note);
-        String block = renderBlock(note, file);
+        String block = renderBlock(note, file, sourceLink, original);
 
         if (!store.exists(file)) {
-            String content = renderNewNote(note, sourceLink, blockId, block);
+            String content = renderNewNote(note, file, blockId, block);
             if (!dryRun) {
                 try {
                     store.write(file, content);
@@ -94,8 +100,8 @@ public final class VaultWriter {
         }
 
         Frontmatter.Document document = Frontmatter.of(existing);
-        Frontmatter merged = document.frontmatter()
-                .mergeAdditively(frontmatterFor(note, sourceLink))
+        Frontmatter merged = withoutLegacyProperties(document.frontmatter(), file)
+                .mergeAdditively(frontmatterFor(note, file))
                 .withScalar("updated", today());
         String body = ManagedBlock.apply(document.body(), blockId, block);
         String content = merged.render() + "\n" + body;
@@ -134,21 +140,21 @@ public final class VaultWriter {
         return prefix + "-" + key;
     }
 
-    private String renderNewNote(DraftNote note, String sourceLink, String blockId, String block) {
-        String header = frontmatterFor(note, sourceLink).render();
+    private String renderNewNote(DraftNote note, Path file, String blockId, String block) {
+        String header = frontmatterFor(note, file).render();
         String body = "#" + config.notes().tag() + "\n\n"
                 + ManagedBlock.apply("", blockId, block);
         return header + "\n" + body;
     }
 
     /** The generated text itself: definition first, then the body, then where it came from. */
-    private String renderBlock(DraftNote note, Path self) {
+    private String renderBlock(DraftNote note, Path self, String sourceLink, Path original) {
         StringBuilder block = new StringBuilder();
         if (note.definition() != null && !note.definition().isBlank()) {
             block.append("> ").append(resolveLinks(de.raindancer118.stoneai.note.MathDelimiters.forObsidian(note.definition().strip()))
                     .replace("\n", "\n> ")).append("\n\n");
         }
-        block.append(resolveLinks(de.raindancer118.stoneai.note.MathDelimiters.forObsidian(note.body().strip())));
+        block.append(escapeLinksInTables(resolveLinks(de.raindancer118.stoneai.note.MathDelimiters.forObsidian(note.body().strip()))));
 
         // Only link to notes that exist or are being written in this same run. A vault full of
         // broken links is worse than no links: Obsidian's graph fills up with phantom nodes and
@@ -164,12 +170,52 @@ public final class VaultWriter {
             block.append("\n\n**Siehe auch:** ").append(String.join(", ", links));
         }
 
-        String sources = note.sources().stream().map(Provenance::label).distinct()
-                .reduce((a, b) -> a + "; " + b).orElse("");
+        String sources = note.sources().stream()
+                .collect(java.util.stream.Collectors.toMap(Provenance::label, source -> source, (a, b) -> a,
+                        java.util.LinkedHashMap::new))
+                .values().stream()
+                .map(source -> cite(source, sourceLink, original))
+                .collect(java.util.stream.Collectors.joining("; "));
         if (!sources.isBlank()) {
             block.append("\n\n*Quelle: ").append(sources).append('*');
         }
         return block.toString();
+    }
+
+    /**
+     * One citation, as a link to where it can be checked: the page of the stored PDF (Obsidian
+     * opens it there), else the source note. Plain text only when neither exists.
+     */
+    private String cite(Provenance source, String sourceLink, Path original) {
+        String label = source.label().replace("|", "-").replace("]", ")").replace("[", "(");
+        if (original != null && source.page() != null && original.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".pdf")) {
+            Path root = config.vault().resolvedPath();
+            String target = original.startsWith(root)
+                    ? root.relativize(original).toString().replace('\\', '/')
+                    : original.getFileName().toString();
+            return "[[" + target + "#page=" + source.page() + "|" + label + "]]";
+        }
+        if (sourceLink != null && sourceLink.startsWith("[[") && sourceLink.endsWith("]]")) {
+            String target = sourceLink.substring(2, sourceLink.length() - 2);
+            int alias = target.indexOf('|');
+            return "[[" + (alias >= 0 ? target.substring(0, alias) : target) + "|" + label + "]]";
+        }
+        return label;
+    }
+
+    private static final java.util.regex.Pattern ALIASED_LINK =
+            java.util.regex.Pattern.compile("(\\[\\[[^\\]|]*?)(?<!\\\\)\\|([^\\]]*\\]\\])");
+
+    /**
+     * In a Markdown table the | of {@code [[Ziel|Text]]} would end the cell - Obsidian expects it
+     * escaped there. Everywhere else the link stays as it is.
+     */
+    private static String escapeLinksInTables(String text) {
+        return text.lines()
+                .map(line -> line.stripLeading().startsWith("|")
+                        ? ALIASED_LINK.matcher(line).replaceAll("$1\\\\|$2")
+                        : line)
+                .collect(java.util.stream.Collectors.joining("\n"));
     }
 
     private static final java.util.regex.Pattern WIKILINK =
@@ -183,7 +229,8 @@ public final class VaultWriter {
         java.util.regex.Matcher matcher = WIKILINK.matcher(text);
         StringBuilder resolved = new StringBuilder();
         while (matcher.find()) {
-            String target = matcher.group(1).strip();
+            // In einer Tabelle schreibt das Modell [[Ziel\\|Text]] - der Backslash gehoert nicht zum Ziel.
+            String target = matcher.group(1).strip().replaceAll("\\\\+$", "");
             String shown = matcher.group(3) == null ? target : matcher.group(3).strip();
             String replacement = index.resolve(target, config.notes().similarityThreshold())
                     .map(file -> {
@@ -198,34 +245,42 @@ public final class VaultWriter {
         return resolved.toString();
     }
 
-    private Frontmatter frontmatterFor(DraftNote note, String sourceLink) {
-        Frontmatter frontmatter = Frontmatter.empty()
-                .withScalar("title", note.title())
-                .withList("aliases", note.aliases())
-                .withList("tags", tagsFor(note))
-                .withScalar("type", "concept");
-
-        if (sourceLink != null && !sourceLink.isBlank()) {
-            frontmatter = frontmatter.withScalar("source", sourceLink);
+    /**
+     * Only what Obsidian itself uses (aliases, tags) and the dates. Where a note comes from stands
+     * linked in its text, related notes under "Siehe auch" - as properties they only got in the way
+     * of reading (issue #1). The title is kept only where the file name had to differ from it.
+     */
+    private Frontmatter frontmatterFor(DraftNote note, Path file) {
+        Frontmatter frontmatter = Frontmatter.empty();
+        if (!IndexedNote.titleOf(file).equals(note.title())) {
+            frontmatter = frontmatter.withScalar("title", note.title());
         }
-        Integer page = note.sources().stream()
-                .map(Provenance::page)
-                .filter(java.util.Objects::nonNull)
-                .findFirst().orElse(null);
-        if (page != null) {
-            frontmatter = frontmatter.withScalar("source_page", String.valueOf(page));
-        }
-        if (!note.entities().isEmpty()) {
-            frontmatter = frontmatter.withNested("entities", note.entities());
-        }
-        // Plain titles, not links: they cost nothing while missing and let a later run connect them.
-        if (!note.related().isEmpty()) {
-            frontmatter = frontmatter.withList("related", note.related());
+        if (!note.aliases().isEmpty()) {
+            frontmatter = frontmatter.withList("aliases", note.aliases());
         }
         return frontmatter
+                .withList("tags", tagsFor(note))
                 .withScalar("created", today())
-                .withScalar("updated", today())
-                .withScalar("confidence", trim(note.confidence()));
+                .withScalar("updated", today());
+    }
+
+    /** Bookkeeping earlier versions wrote into the properties of their own notes. */
+    private static final Set<String> LEGACY_PROPERTIES =
+            Set.of("type", "source", "source_page", "entities", "related", "confidence");
+
+    /**
+     * A note the AI created ({@code type: concept}) loses the bookkeeping properties of earlier
+     * versions; a note a person started keeps every property as it is.
+     */
+    private static Frontmatter withoutLegacyProperties(Frontmatter frontmatter, Path file) {
+        if (!"concept".equals(frontmatter.scalar("type"))) {
+            return frontmatter;
+        }
+        Set<String> drop = new java.util.HashSet<>(LEGACY_PROPERTIES);
+        if (IndexedNote.titleOf(file).equals(frontmatter.scalar("title"))) {
+            drop.add("title");
+        }
+        return frontmatter.without(drop);
     }
 
     private List<String> tagsFor(DraftNote note) {

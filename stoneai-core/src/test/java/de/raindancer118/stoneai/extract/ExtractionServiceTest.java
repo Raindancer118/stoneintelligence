@@ -272,4 +272,33 @@ class ExtractionServiceTest {
             return new LlmAnswer("", 0, "fake");
         }
     }
+
+    // Issue #1: Tabellen des Dokuments blieben nicht als Tabellen erhalten.
+    @Nested
+    @DisplayName("Tables")
+    class Tables {
+
+        @Test
+        @DisplayName("should ask for the document's tables as Markdown tables")
+        void should_askForMarkdownTables() {
+            assertThat(Prompts.extractionSystem("de", false)).contains("Markdown-Tabelle");
+            assertThat(Prompts.ocr(1, "de")).contains("Markdown-Tabelle");
+            assertThat(Prompts.extractionSystem("de", false)).contains("Erfinde keine Zellen");
+        }
+    }
+
+    // Die KI darf nur verwenden, was im Dokument und im Vault steht - nie Wissen von aussen.
+    @Nested
+    @DisplayName("Sources only")
+    class SourcesOnly {
+
+        @Test
+        @DisplayName("should forbid knowledge from outside the document when planning and writing")
+        void should_restrictToTheDocument() {
+            assertThat(Prompts.extractionSystem("de", true)).contains("ausschließlich Informationen aus dem Text")
+                    .contains("Kein Wissen von außen");
+            assertThat(Prompts.planSystem("de")).contains("ausschließlich aus dem Dokument und den schon vorhandenen");
+            assertThat(Prompts.ocr(1, "de")).contains("ergänze nichts");
+        }
+    }
 }

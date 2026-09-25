@@ -130,6 +130,13 @@ public final class Frontmatter {
         return merged;
     }
 
+    /** A copy without the given keys; the remaining keys keep their order. */
+    public Frontmatter without(Set<String> keys) {
+        Map<String, Object> kept = new LinkedHashMap<>(values);
+        kept.keySet().removeAll(keys);
+        return new Frontmatter(kept);
+    }
+
     /** The frontmatter block including both delimiters, ending with a newline. */
     public String render() {
         StringBuilder out = new StringBuilder(DELIMITER).append('\n');

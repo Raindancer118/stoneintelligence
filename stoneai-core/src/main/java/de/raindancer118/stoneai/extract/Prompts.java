@@ -49,6 +49,8 @@ final class Prompts {
                   Satz, keine Frage, keine Dateiendung, nicht die Art ("kind") in Klammern. Nimm in
                   den Titel nur Angaben, die der Text ausdrücklich so nennt (z. B. den Unfallort
                   nur, wenn er als Ort des Geschehens genannt wird, nicht aus einer Anschrift).
+                - Themen stammen ausschließlich aus dem Dokument und den schon vorhandenen
+                  Notizen - kein Wissen von außen.
                 - "scope" sagt in einem Satz, was in die Notiz gehört.
                 - "kind" ist eines von: ereignis, vorgang, person, organisation, ort, figur,
                   begriff, thema.
@@ -98,7 +100,10 @@ final class Prompts {
                 - Alle Einzelheiten gehören in die Notiz ihres Themas: Nummern, Aktenzeichen,
                   Adressen, Telefonnummern, Daten, Beträge, Nebenpersonen, Gegenstände,
                   Abbildungen. Nichts davon wird eine eigene Notiz.
-                - Extrahiere nur, was im Text steht. Ergänze kein Wissen von außen und rate nicht.
+                - Verwende ausschließlich Informationen aus dem Text unten. Kein Wissen von außen,
+                  auch kein allgemein bekanntes: keine Beispiele, Erklärungen, Zahlen oder Namen,
+                  die dort nicht stehen, und keine Vermutungen. Vorhandene Notizen des Vaults
+                  bindest du nur per [[Titel]] ein, ohne ihren Inhalt zu ergänzen.
                 - Schreibe nur Inhalt: keine Bemerkungen darüber, was der Abschnitt nicht enthält
                   oder wo etwas „nur im Inhaltsverzeichnis“ steht. Nennt ein Abschnitt ein Thema
                   bloß in einer Gliederung, schreibst du dazu nichts.
@@ -109,6 +114,11 @@ final class Prompts {
                 - "body" ist gut gegliedertes Markdown: kurze Absätze, Stichpunkte für Fakten
                   ("- **Schadennummer:** …"), bei Bedarf Zwischenüberschriften ab ###. Keine
                   Überschrift der Ebene 1 oder 2, kein Frontmatter.
+                - Tabellen des Dokuments gibst du als Markdown-Tabelle wieder (Kopfzeile,
+                  Trennzeile |---|, eine Zeile je Tabellenzeile), nicht als Stichpunkte. Auch
+                  wenn die Zellen im Text untereinander stehen: erkennst du Spalten und Zeilen,
+                  wird daraus eine Tabelle. Erfinde keine Zellen - was fehlt, bleibt leer. Ein |
+                  innerhalb einer Zelle schreibst du als \\|.
                 - Auf ein anderes Thema der Liste darfst du im body mit [[Titel]] verweisen,
                   auf nichts anderes.
                 - "related" nennt die Titel der anderen Themen der Liste, die mit dieser Notiz
@@ -167,7 +177,8 @@ final class Prompts {
     static String ocr(int pageNumber, String language) {
         return """
                 Gib den gesamten Text dieser Seite (Seite %d) wörtlich wieder.
-                Behalte Absätze, Listen und Formeln bei; Formeln als LaTeX.
+                Behalte Absätze, Listen und Formeln bei; Formeln als LaTeX, Tabellen als
+                Markdown-Tabelle (Kopfzeile, Trennzeile |---|, eine Zeile je Tabellenzeile).
                 Beschreibe nichts, kommentiere nichts, ergänze nichts.
                 Ist die Seite leer oder unlesbar, antworte mit einer leeren Zeile.
                 Sprache des Dokuments: %s""".formatted(pageNumber, language);
