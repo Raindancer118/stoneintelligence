@@ -121,7 +121,7 @@ public final class Consolidator {
         String body = mergedBody(group.get(0).title(), parts);
 
         return new DraftNote(best.title(), union(group, ExtractedConcept::aliases),
-                best.definition(), body, union(group, ExtractedConcept::tags),
+                best.definition(), body, frequentTags(group),
                 mergedEntities(group), union(group, ExtractedConcept::related),
                 best.confidence(), group.stream().map(ExtractedConcept::provenance).toList());
     }
@@ -240,6 +240,34 @@ public final class Consolidator {
         Set<String> merged = new LinkedHashSet<>();
         group.forEach(concept -> merged.addAll(field.apply(concept)));
         return List.copyOf(merged);
+    }
+
+    /** Most tags a merged note keeps - a tag is a keyword for the note, not an index of its parts. */
+    public static final int MAX_TAGS = 8;
+
+    /**
+     * The tags most parts agree on, first come first on a tie, spelled as they were seen first.
+     * The union of fifteen sections gave one note forty tags ("Kaffee", "Tür", "Familie" and
+     * "familie"); the tags that recur are what the note is about.
+     */
+    private static List<String> frequentTags(List<ExtractedConcept> group) {
+        Map<String, String> spelling = new LinkedHashMap<>();
+        Map<String, Integer> count = new LinkedHashMap<>();
+        for (ExtractedConcept concept : group) {
+            Set<String> seenHere = new LinkedHashSet<>();
+            for (String tag : concept.tags()) {
+                String key = tag.strip().toLowerCase(java.util.Locale.ROOT);
+                if (key.isEmpty() || !seenHere.add(key)) {
+                    continue;
+                }
+                spelling.putIfAbsent(key, tag.strip());
+                count.merge(key, 1, Integer::sum);
+            }
+        }
+        List<String> keys = new ArrayList<>(count.keySet());
+        // Stable sort: equally frequent tags keep the order they first appeared in.
+        keys.sort(Comparator.comparingInt((String key) -> count.get(key)).reversed());
+        return keys.stream().limit(MAX_TAGS).map(spelling::get).toList();
     }
 
     private static Map<String, List<String>> mergedEntities(List<ExtractedConcept> group) {
