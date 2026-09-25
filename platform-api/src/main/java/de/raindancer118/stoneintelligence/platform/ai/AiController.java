@@ -24,9 +24,12 @@ public class AiController {
     private final AiServiceDirectory services;
     private final VaultAccessGuard access;
     private final AiJobService jobs;
+    private final AiCapacityBoard capacity;
 
-    public AiController(@Lazy AiWriteService ai, AiServiceDirectory services, VaultAccessGuard access, AiJobService jobs) {
+    public AiController(@Lazy AiWriteService ai, AiServiceDirectory services, VaultAccessGuard access, AiJobService jobs,
+                        AiCapacityBoard capacity) {
         this.jobs = jobs;
+        this.capacity = capacity;
         this.ai = ai;
         this.services = services;
         this.access = access;
@@ -36,6 +39,12 @@ public class AiController {
     @GetMapping("/api/v1/ai/services")
     public List<AiServiceResponse> services() {
         return services.all().stream().map(AiServiceResponse::from).toList();
+    }
+
+    /** Wie viel Kontingent der Dienst noch hat und, wenn keins, ab wann wieder - laut letzter Worker-Meldung. */
+    @GetMapping("/api/v1/ai/services/{serviceId}/capacity")
+    public AiCapacityBoard.ServiceCapacity capacity(@PathVariable String serviceId) {
+        return capacity.of(serviceId);
     }
 
     @GetMapping("/api/v1/vaults/{vaultId}/ai/change-sets")
@@ -98,8 +107,8 @@ public class AiController {
     public JobResponse cancel(@PathVariable String vaultId, @PathVariable UUID jobId, Authentication auth) {
         var vId = VaultId.of(vaultId);
         access.require(vId, auth.getName(), Permission.CREATE);
-        if (!jobs.cancel(vId, jobId)) {
-            throw new AiWriteRefusedException("Nur wartende Dokumente lassen sich abbrechen");
+        if (!jobs.cancel(vId, jobId, auth.getName())) {
+            throw new AiWriteRefusedException("Nur wartende oder laufende Verarbeitungen lassen sich abbrechen");
         }
         return jobs.list(vId, LIST_LIMIT).stream().filter(job -> job.id().equals(jobId)).findFirst().map(JobResponse::from)
             .orElseThrow(() -> new AiWriteRefusedException("Job nicht gefunden"));
@@ -114,10 +123,11 @@ public class AiController {
 
     public record JobResponse(UUID id, String service, String requestedBy, String fileName, long size, int level, String status,
                               String progress, Integer percent, String error, UUID changeSetId, Instant createdAt,
-                              Instant finishedAt) {
+                              Instant finishedAt, Instant availableAt, boolean waitingForCapacity) {
         static JobResponse from(AiJob job) {
             return new JobResponse(job.id(), job.service(), job.requestedBy(), job.fileName(), job.size(), job.level(),
-                job.status().name(), job.progress(), job.percent(), job.error(), job.changeSetId(), job.createdAt(), job.finishedAt());
+                job.status().name(), job.progress(), job.percent(), job.error(), job.changeSetId(), job.createdAt(), job.finishedAt(),
+                job.status() == AiJob.Status.PENDING ? job.availableAt() : null, job.waitingForCapacity());
         }
     }
 

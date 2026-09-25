@@ -2,8 +2,10 @@ package de.raindancer118.stoneai.llm;
 
 import de.raindancer118.stoneai.config.StoneAiConfig;
 import de.raindancer118.stoneai.extract.LlmAnswer;
+import de.raindancer118.stoneai.extract.LlmCapacityException;
 import de.raindancer118.stoneai.extract.LlmClient;
 import de.raindancer118.stoneai.extract.Tier;
+import io.github.raindancer118.aigateway.AiCapacityExhaustedException;
 import io.github.raindancer118.aigateway.AiGateway;
 import io.github.raindancer118.aigateway.AiGatewayException;
 import io.github.raindancer118.aigateway.AiProvider;
@@ -11,6 +13,7 @@ import io.github.raindancer118.aigateway.ChatMessage;
 import io.github.raindancer118.aigateway.ChatRequest;
 import io.github.raindancer118.aigateway.ChatResponse;
 import io.github.raindancer118.aigateway.ModelTier;
+import io.github.raindancer118.aigateway.ProviderCapacity;
 import io.github.raindancer118.aigateway.Route;
 import io.github.raindancer118.aigateway.provider.GoogleGeminiProvider;
 import io.github.raindancer118.aigateway.provider.OpenAiCompatibleProvider;
@@ -40,6 +43,9 @@ public final class GatewayLlmClient implements LlmClient {
             "google", "GOOGLE",
             "mistral", "MISTRAL",
             "openrouter", "OPENROUTER");
+
+    /** Longest rate limit a call waits out itself; anything longer goes back to the caller. */
+    private static final java.time.Duration MAX_CAPACITY_WAIT = java.time.Duration.ofMinutes(2);
 
     private final AiGateway gateway;
     private final StoneAiConfig config;
@@ -107,6 +113,16 @@ public final class GatewayLlmClient implements LlmClient {
         return summary;
     }
 
+    /** What each provider can still serve, as far as known from its answers - without any keys. */
+    public Map<String, ProviderCapacity> capacity() {
+        return gateway.capacity();
+    }
+
+    /** Like {@link #capacity()}, asking providers that offer a quota endpoint. */
+    public Map<String, ProviderCapacity> refreshCapacity() {
+        return gateway.refreshCapacity();
+    }
+
     @Override
     public LlmAnswer complete(Tier tier, String system, String user) {
         ChatRequest.Builder request = ChatRequest.builder().temperature(config.llm().temperature())
@@ -148,6 +164,15 @@ public final class GatewayLlmClient implements LlmClient {
                 ChatResponse response = gateway.chat(tier, request);
                 return new LlmAnswer(response.content(), response.usage().totalTokens(),
                         response.provider() + "/" + response.model());
+            } catch (AiCapacityExhaustedException e) {
+                // A per-minute limit is waited out; a quota that is back only in hours ends the run
+                // with the moment to come back, instead of holding it (and the worker) that long.
+                java.time.Instant back = e.availableAgainAt();
+                java.time.Duration wait = back == null ? null : java.time.Duration.between(java.time.Instant.now(), back);
+                if (wait == null || wait.compareTo(MAX_CAPACITY_WAIT) > 0 || attempt >= attempts) {
+                    throw new LlmCapacityException("kein Kontingent frei: " + e.getMessage(), back, e);
+                }
+                sleeper.accept(wait.isNegative() ? java.time.Duration.ZERO : wait.plusSeconds(1));
             } catch (AiGatewayException e) {
                 boolean passing = e.getFailures().stream()
                         .anyMatch(failure -> failure instanceof io.github.raindancer118.aigateway.RetryableAiException);

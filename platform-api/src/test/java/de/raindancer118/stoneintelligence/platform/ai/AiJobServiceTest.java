@@ -24,10 +24,11 @@ class AiJobServiceTest {
     private final List<String> startedChangeSets = new ArrayList<>();
     private AiServiceDirectory services = new AiServiceDirectory(List.of(
         new AiService("gemini", "Gemini", Set.of(1)), new AiService("lokal", "Ollama lokal", Set.of(1, 2))));
+    private final List<String> revertedChangeSets = new ArrayList<>();
     private final AiJobService service = new AiJobService(jobs, () -> services, (vault, aiService, requestedBy, label) -> {
         startedChangeSets.add(aiService.id() + ":" + requestedBy + ":" + label);
         return UUID.randomUUID();
-    }, now::get);
+    }, (vault, changeSetId, actor) -> revertedChangeSets.add(changeSetId + ":" + actor), now::get);
 
     private static AiJobService.Upload pdf(String name) {
         return new AiJobService.Upload(name, "application/pdf", PDF);
@@ -187,6 +188,90 @@ class AiJobServiceTest {
             service.complete(job.id());
             assertThatThrownBy(() -> service.progress(job.id(), "zu spaet", 90)).isInstanceOf(AiWriteRefusedException.class);
             assertThatThrownBy(() -> service.progress(job.id(), "x", 101)).isInstanceOf(AiWriteRefusedException.class);
+        }
+    }
+
+    @Nested
+    class KapazitaetUndAbbrechen {
+
+        @Test
+        void should_waitForCapacity_untilItIsBack_withoutUsingUpAnAttempt() {
+            var job = service.upload(vaultId, "tom", "gemini", 1, List.of(pdf("a.pdf"))).getFirst();
+            service.claim();
+            var back = now.get().plus(Duration.ofHours(5));
+
+            service.waitForCapacity(job.id(), "Kontingent von Gemini aufgebraucht", back);
+
+            var waiting = jobs.find(vaultId, job.id()).orElseThrow();
+            assertThat(waiting.status()).isEqualTo(AiJob.Status.PENDING);
+            assertThat(waiting.waitingForCapacity()).isTrue();
+            assertThat(waiting.attempts()).isZero();
+            assertThat(waiting.availableAt()).isEqualTo(back);
+            assertThat(waiting.error()).isEqualTo("Kontingent von Gemini aufgebraucht");
+        }
+
+        @Test
+        void should_waitForCapacity_withinSaneBounds() {
+            var job = service.upload(vaultId, "tom", "gemini", 1, List.of(pdf("a.pdf"))).getFirst();
+            service.claim();
+            service.waitForCapacity(job.id(), "x", null);
+            assertThat(jobs.find(vaultId, job.id()).orElseThrow().availableAt()).isEqualTo(now.get().plus(AiJobService.UNKNOWN_CAPACITY_WAIT));
+
+            now.set(now.get().plus(AiJobService.UNKNOWN_CAPACITY_WAIT));
+            service.claim();
+            service.waitForCapacity(job.id(), "x", now.get().minusSeconds(30));
+            assertThat(jobs.find(vaultId, job.id()).orElseThrow().availableAt()).isEqualTo(now.get().plus(AiJobService.MIN_CAPACITY_WAIT));
+
+            now.set(now.get().plus(AiJobService.MIN_CAPACITY_WAIT));
+            service.claim();
+            service.waitForCapacity(job.id(), "x", now.get().plus(Duration.ofDays(30)));
+            assertThat(jobs.find(vaultId, job.id()).orElseThrow().availableAt()).isEqualTo(now.get().plus(AiJobService.MAX_CAPACITY_WAIT));
+        }
+
+        @Test
+        void should_giveUp_whenNoCapacityCameBackForDays() {
+            var job = service.upload(vaultId, "tom", "gemini", 1, List.of(pdf("a.pdf"))).getFirst();
+            now.set(now.get().plus(AiJobService.CAPACITY_PATIENCE).plusSeconds(1));
+            service.claim();
+
+            service.waitForCapacity(job.id(), "Kontingent aufgebraucht", now.get().plusSeconds(600));
+
+            var failed = jobs.find(vaultId, job.id()).orElseThrow();
+            assertThat(failed.status()).isEqualTo(AiJob.Status.FAILED);
+            assertThat(failed.error()).contains("Kontingent aufgebraucht");
+        }
+
+        @Test
+        void should_cancelAWaitingJob_withoutTouchingTheVault() {
+            var job = service.upload(vaultId, "tom", "gemini", 1, List.of(pdf("a.pdf"))).getFirst();
+
+            assertThat(service.cancel(vaultId, job.id(), "anna")).isTrue();
+
+            assertThat(jobs.find(vaultId, job.id()).orElseThrow().status()).isEqualTo(AiJob.Status.CANCELLED);
+            assertThat(revertedChangeSets).isEmpty();
+        }
+
+        @Test
+        void should_cancelARunningJob_andUndoWhatItWroteSoFar() {
+            var job = service.upload(vaultId, "tom", "gemini", 1, List.of(pdf("a.pdf"))).getFirst();
+            var claimed = service.claim().orElseThrow();
+
+            assertThat(service.cancel(vaultId, job.id(), "anna")).isTrue();
+
+            assertThat(jobs.find(vaultId, job.id()).orElseThrow().status()).isEqualTo(AiJob.Status.CANCELLED);
+            assertThat(revertedChangeSets).containsExactly(claimed.changeSetId() + ":anna");
+            assertThatThrownBy(() -> service.progress(job.id(), "weiter", 50)).isInstanceOf(AiJobGoneException.class);
+            assertThatThrownBy(() -> service.document(job.id())).isInstanceOf(AiJobGoneException.class);
+        }
+
+        @Test
+        void should_notCancelFinishedJobs() {
+            var job = service.upload(vaultId, "tom", "gemini", 1, List.of(pdf("a.pdf"))).getFirst();
+            service.claim();
+            service.complete(job.id());
+
+            assertThat(service.cancel(vaultId, job.id(), "anna")).isFalse();
+            assertThat(revertedChangeSets).isEmpty();
         }
     }
 }

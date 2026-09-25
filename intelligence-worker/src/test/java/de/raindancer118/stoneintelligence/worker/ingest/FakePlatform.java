@@ -12,7 +12,7 @@ import de.raindancer118.stoneintelligence.worker.platform.PlatformApi;
 import de.raindancer118.stoneintelligence.worker.platform.PlatformRefusedException;
 
 /** platform-api im Kleinen: Notizen eines Vaults, Jobs, und was der Worker gemeldet hat. */
-final class FakePlatform implements PlatformApi {
+class FakePlatform implements PlatformApi {
 
     record Stored(String noteId, String path, int level, String createdBy, String text, String kind) {
 
@@ -28,6 +28,12 @@ final class FakePlatform implements PlatformApi {
     final Map<UUID, byte[]> documents = new LinkedHashMap<>();
     final List<String> events = new ArrayList<>();
     String agent = "ki:Gemini";
+    final List<String> services = new ArrayList<>(List.of("gemini"));
+    final Map<String, List<de.raindancer118.stoneintelligence.worker.platform.ProviderReport>> capacityReports = new LinkedHashMap<>();
+    /** Nach so vielen Fortschrittsmeldungen gilt der Job als abgebrochen (-1 = nie). */
+    int cancelAfterProgress = -1;
+    private int progressCalls;
+    private boolean cancelled;
 
     void human(String path, String text, int level) {
         var id = UUID.randomUUID().toString();
@@ -46,7 +52,26 @@ final class FakePlatform implements PlatformApi {
 
     @Override
     public void progress(UUID jobId, String message, Integer percent) {
+        if (cancelled || cancelAfterProgress >= 0 && progressCalls++ >= cancelAfterProgress) {
+            cancelled = true;
+            throw new de.raindancer118.stoneintelligence.worker.platform.JobGoneException("HTTP 410: Dieser Job läuft nicht (mehr)");
+        }
         events.add("progress " + percent + " " + message);
+    }
+
+    @Override
+    public void waitForCapacity(UUID jobId, String error, java.time.Instant availableAt) {
+        events.add("wait " + availableAt + " " + error);
+    }
+
+    @Override
+    public List<String> services() {
+        return List.copyOf(services);
+    }
+
+    @Override
+    public void reportCapacity(String serviceId, List<de.raindancer118.stoneintelligence.worker.platform.ProviderReport> providers) {
+        capacityReports.put(serviceId, List.copyOf(providers));
     }
 
     @Override
@@ -75,6 +100,9 @@ final class FakePlatform implements PlatformApi {
 
     @Override
     public String create(String vaultId, UUID changeSetId, String path, String text, int level) {
+        if (cancelled) {
+            throw new PlatformRefusedException("HTTP 422: Diese KI-Änderung wurde rückgängig gemacht");
+        }
         if (notes.values().stream().anyMatch(n -> n.path().equals(path))) {
             throw new PlatformRefusedException("Unter " + path + " liegt schon eine Notiz");
         }

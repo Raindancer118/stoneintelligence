@@ -3,18 +3,25 @@ package de.raindancer118.stoneintelligence.worker.ingest;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Map;
 import java.util.Comparator;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import de.raindancer118.stoneai.config.ConfigSchema;
+import de.raindancer118.stoneai.extract.LlmCapacityException;
 import de.raindancer118.stoneai.pipeline.IngestPipeline;
 import de.raindancer118.stoneai.pipeline.ProgressSink;
 import de.raindancer118.stoneintelligence.worker.platform.ClaimedJob;
+import de.raindancer118.stoneintelligence.worker.platform.JobGoneException;
 import de.raindancer118.stoneintelligence.worker.platform.PlatformApi;
 import de.raindancer118.stoneintelligence.worker.platform.PlatformRefusedException;
+import io.github.raindancer118.aigateway.ProviderCapacity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,29 +34,50 @@ import org.slf4j.LoggerFactory;
 final class JobProcessor {
 
     private static final Logger LOG = LoggerFactory.getLogger(JobProcessor.class);
-    /** Deutlich kuerzer als die Lease (10 min), damit ein langer Lauf nicht als abgestuerzt gilt. */
-    private static final long HEARTBEAT_SECONDS = 120;
+    /**
+     * Deutlich kuerzer als die Lease (10 min), damit ein langer Lauf nicht als abgestuerzt gilt - und
+     * kurz genug, dass ein Abbruch im Dashboard auch waehrend einer langen Modellantwort bald greift.
+     */
+    private static final long HEARTBEAT_SECONDS = 30;
     /** Untergrenze zwischen zwei Fortschrittsmeldungen an platform-api, egal wie viele Abschnitte pro Sekunde durchlaufen. */
-    private static final long PROGRESS_MIN_INTERVAL_MILLIS = 3_000;
+    private static final Duration PROGRESS_MIN_INTERVAL = Duration.ofSeconds(3);
 
     private final PlatformApi platform;
     private final LlmFactory llms;
     private final ServiceModels models;
     private final Supplier<LocalDate> clock;
+    private final Duration progressInterval;
 
     JobProcessor(PlatformApi platform, LlmFactory llms, ServiceModels models, Supplier<LocalDate> clock) {
+        this(platform, llms, models, clock, PROGRESS_MIN_INTERVAL);
+    }
+
+    JobProcessor(PlatformApi platform, LlmFactory llms, ServiceModels models, Supplier<LocalDate> clock, Duration progressInterval) {
         this.platform = platform;
         this.llms = llms;
         this.models = models;
         this.clock = clock;
+        this.progressInterval = progressInterval;
+    }
+
+    /** Der Job wurde abgebrochen (platform-api sagt 410) - die Pipeline hoert an der naechsten Meldung auf. */
+    private static final class Cancelled extends RuntimeException {
+        Cancelled() {
+            super("abgebrochen", null, false, false);
+        }
     }
 
     void process(ClaimedJob job) {
         var heartbeat = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().factory());
+        var cancelled = new AtomicBoolean();
         Path workDir = null;
         try {
+            var model = models.forService(job.service());
+            if (waitedForCapacity(job, model)) {
+                return;
+            }
             platform.progress(job.jobId(), "Dokument wird gelesen", 5);
-            heartbeat.scheduleAtFixedRate(() -> beat(job), HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+            heartbeat.scheduleAtFixedRate(() -> beat(job, cancelled), HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
             var content = platform.document(job.jobId());
             if (content == null || content.length == 0) {
                 platform.fail(job.jobId(), "Das Dokument war nicht abrufbar", true);
@@ -59,12 +87,11 @@ final class JobProcessor {
             var document = workDir.resolve(safeFileName(job.fileName()));
             Files.write(document, content);
 
-            var model = models.forService(job.service());
             var config = GatewayLlmFactory.configFor(model);
             ConfigSchema.byPath("vault.path").set(config, PlatformNoteStore.ROOT.toString());
             var store = PlatformNoteStore.load(platform, job.vaultId(), job.changeSetId(), job.level());
             var report = IngestPipeline.hosted(config, llms.forService(model), clock)
-                    .withProgress(throttled(job))
+                    .withProgress(throttled(job, cancelled))
                     .ingestInto(document, store);
 
             if (report.wasSkipped()) {
@@ -75,15 +102,68 @@ final class JobProcessor {
                 platform.progress(job.jobId(), summary(report), 100);
                 platform.complete(job.jobId());
             }
+        } catch (JobGoneException | Cancelled gone) {
+            // Im Dashboard abgebrochen: platform-api hat Geschriebenes schon rueckgaengig gemacht.
+            LOG.info("Job {} wurde abgebrochen - Verarbeitung beendet", job.jobId());
+        } catch (LlmCapacityException outOfCapacity) {
+            if (cancelled.get()) {
+                LOG.info("Job {} wurde abgebrochen - Verarbeitung beendet", job.jobId());
+                return;
+            }
+            LOG.info("Job {}: kein Kontingent frei, wartet bis {}", job.jobId(), outOfCapacity.availableAgainAt());
+            waitForCapacity(job, capacityMessage(outOfCapacity.getMessage()), outOfCapacity.availableAgainAt());
         } catch (PlatformRefusedException refused) {
+            if (cancelled.get()) {
+                LOG.info("Job {} wurde abgebrochen - Verarbeitung beendet", job.jobId());
+                return;
+            }
             LOG.warn("Job {} von platform-api abgelehnt: {}", job.jobId(), refused.getMessage());
             report(job, refused.getMessage(), false);
         } catch (IOException | RuntimeException problem) {
+            if (cancelled.get()) {
+                LOG.info("Job {} wurde abgebrochen - Verarbeitung beendet", job.jobId());
+                return;
+            }
             LOG.warn("Job {} fehlgeschlagen, wird erneut versucht: {}", job.jobId(), problem.getMessage());
             report(job, message(problem), true);
         } finally {
             heartbeat.shutdownNow();
             delete(workDir);
+        }
+    }
+
+    /**
+     * Wissen die Anbieter schon, dass keiner von ihnen gerade kann, wartet der Job gleich - ohne das
+     * Dokument erst zu lesen und zu zerlegen, nur um dann am ersten Modellaufruf zu scheitern.
+     */
+    private boolean waitedForCapacity(ClaimedJob job, ServiceModels.ServiceModel model) {
+        Map<String, ProviderCapacity> capacity;
+        try {
+            capacity = llms.capacity(model);
+        } catch (RuntimeException unknown) {
+            return false;
+        }
+        if (capacity.isEmpty() || !capacity.values().stream().allMatch(ProviderCapacity::exhausted)) {
+            return false;
+        }
+        var back = capacity.values().stream().map(ProviderCapacity::availableAgainAt).filter(java.util.Objects::nonNull)
+            .min(Instant::compareTo).orElse(null);
+        LOG.info("Job {}: {} ohne Kontingent, wartet bis {}", job.jobId(), CapacityReporter.exhaustedNames(capacity), back);
+        waitForCapacity(job, capacityMessage(CapacityReporter.exhaustedNames(capacity)), back);
+        return true;
+    }
+
+    static String capacityMessage(String detail) {
+        return "Kein Kontingent mehr frei (" + detail + ") – nichts wurde geschrieben, der Lauf startet von selbst neu,"
+            + " sobald wieder Kapazität da ist";
+    }
+
+    private void waitForCapacity(ClaimedJob job, String message, Instant availableAt) {
+        try {
+            platform.waitForCapacity(job.jobId(), message.length() > 500 ? message.substring(0, 500) : message, availableAt);
+        } catch (RuntimeException unreachable) {
+            // Abgebrochen oder platform-api weg - im zweiten Fall gibt die Lease den Job wieder frei.
+            LOG.warn("Warten auf Kontingent fuer Job {} nicht meldbar: {}", job.jobId(), unreachable.getMessage());
         }
     }
 
@@ -102,25 +182,33 @@ final class JobProcessor {
      * Forwards the pipeline's stage progress to platform-api, without a network call for every
      * one of the potentially hundreds of chunks of a long document.
      */
-    private ProgressSink throttled(ClaimedJob job) {
-        AtomicLong lastSentAt = new AtomicLong(0);
+    private ProgressSink throttled(ClaimedJob job, AtomicBoolean cancelled) {
+        AtomicLong lastSentAt = new AtomicLong(Long.MIN_VALUE / 2);
         return (message, percent) -> {
+            if (cancelled.get()) {
+                throw new Cancelled();
+            }
             long now = System.currentTimeMillis();
-            if (percent < 100 && now - lastSentAt.get() < PROGRESS_MIN_INTERVAL_MILLIS) {
+            if (percent < 100 && now - lastSentAt.get() < progressInterval.toMillis()) {
                 return;
             }
             lastSentAt.set(now);
             try {
                 platform.progress(job.jobId(), message, percent);
+            } catch (JobGoneException gone) {
+                cancelled.set(true);
+                throw new Cancelled();
             } catch (RuntimeException ignored) {
                 // Naechste Meldung versucht es erneut; die Lease haelt der Heartbeat ohnehin am Leben.
             }
         };
     }
 
-    private void beat(ClaimedJob job) {
+    private void beat(ClaimedJob job, AtomicBoolean cancelled) {
         try {
             platform.progress(job.jobId(), "Wird verarbeitet", null);
+        } catch (JobGoneException gone) {
+            cancelled.set(true);
         } catch (RuntimeException ignored) {
             // Naechster Herzschlag versucht es erneut; faellt er ganz aus, uebernimmt die Lease.
         }

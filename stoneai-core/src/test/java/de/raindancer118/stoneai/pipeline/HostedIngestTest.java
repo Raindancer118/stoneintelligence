@@ -71,6 +71,32 @@ class HostedIngestTest {
     }
 
     @Test
+    @DisplayName("should write nothing at all when the model runs out of capacity mid-run")
+    void should_writeNothing_when_outOfCapacity() throws IOException {
+        Path document = upload.resolve("Skript.md");
+        Files.writeString(document, "# Relationen\n\nEine Relation ist eine Teilmenge.\n");
+        LlmClient llm = new LlmClient() {
+            @Override
+            public LlmAnswer complete(Tier tier, String system, String user) {
+                if (system.contains("Themenplan")) {
+                    return new LlmAnswer(IngestPipelineTest.PLAN, 10, "fake/model");
+                }
+                throw new de.raindancer118.stoneai.extract.LlmCapacityException("groq: Kontingent aufgebraucht", null);
+            }
+
+            @Override
+            public LlmAnswer readImage(byte[] pngImage, String prompt) {
+                return new LlmAnswer("", 0, "fake/vision");
+            }
+        };
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> IngestPipeline.hosted(config, llm, () -> LocalDate.of(2026, 9, 23))
+                        .ingestInto(document, store))
+                .isInstanceOf(de.raindancer118.stoneai.extract.LlmCapacityException.class);
+        assertThat(store.writes).isEmpty();
+    }
+
+    @Test
     @DisplayName("should write notes, source note and index through the store only")
     void should_writeEverythingThroughTheStore() throws IOException {
         IngestReport report = ingest("Skript.md", "# Relationen\n\nEine Relation ist eine Teilmenge.\n");

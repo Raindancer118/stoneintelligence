@@ -223,6 +223,67 @@ class AiEndToEndIT {
         assertThat(jobs).filteredOn(j -> j.get("id").equals(job.get("jobId"))).singleElement().satisfies(done -> {
             assertThat(done).containsEntry("status", "SUCCEEDED").containsEntry("changeSetId", job.get("changeSetId"));
         });
-        assertThat(send("GET", "/internal/ai/jobs/" + job.get("jobId") + "/document", WORKER, null).statusCode()).isEqualTo(422);
+        // Beendet: der Worker bekommt 410 und hoert auf.
+        assertThat(send("GET", "/internal/ai/jobs/" + job.get("jobId") + "/document", WORKER, null).statusCode()).isEqualTo(410);
+    }
+
+    // Kein Kontingent: der Lauf wartet ohne verbrauchten Versuch; abbrechen geht wartend wie laufend,
+    // und was ein laufender Job schon geschrieben hat, verschwindet wieder.
+    @Test
+    void should_waitForCapacity_andCancelWaitingAndRunningJobs() throws Exception {
+        var anna = user("ai-berta");
+        var vault = ok(send("POST", "/api/v1/vaults", anna, Map.of("name", "Kontingent")));
+        var base = "/api/v1/vaults/" + vault.get("id");
+        var pdf = "%PDF-1.7\nInhalt".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
+        var waiting = okList(upload(base + "/ai/jobs", anna, Map.of("service", "gemini", "level", "1"), Map.of("Skript.pdf", pdf))).getFirst();
+        var claimed = ok(send("POST", "/internal/ai/jobs/claim", WORKER, null));
+        assertThat(claimed).containsEntry("jobId", waiting.get("id"));
+        var back = java.time.Instant.now().plusSeconds(3600);
+        ok(send("POST", "/internal/ai/jobs/" + claimed.get("jobId") + "/wait-for-capacity", WORKER,
+            Map.of("error", "Kontingent von Gemini aufgebraucht", "availableAt", back.toString())));
+        assertThat(okList(send("GET", base + "/ai/jobs", anna, null))).singleElement().satisfies(job -> {
+            assertThat(job).containsEntry("status", "PENDING").containsEntry("waitingForCapacity", true)
+                .containsEntry("error", "Kontingent von Gemini aufgebraucht");
+            assertThat(java.time.Instant.parse((String) job.get("availableAt"))).isCloseTo(back, org.assertj.core.api.Assertions.within(1, java.time.temporal.ChronoUnit.SECONDS));
+        });
+        assertThat(send("POST", "/internal/ai/jobs/claim", WORKER, null).statusCode()).isEqualTo(204);
+        assertThat(ok(send("POST", base + "/ai/jobs/" + waiting.get("id") + "/cancel", anna, null))).containsEntry("status", "CANCELLED");
+
+        var running = okList(upload(base + "/ai/jobs", anna, Map.of("service", "gemini", "level", "1"), Map.of("Folien.pdf", pdf))).getFirst();
+        var job = ok(send("POST", "/internal/ai/jobs/claim", WORKER, null));
+        assertThat(job).containsEntry("jobId", running.get("id"));
+        var internal = "/internal/ai/vaults/" + vault.get("id") + "/change-sets/" + job.get("changeSetId");
+        ok(send("POST", internal + "/notes", WORKER, Map.of("path", "Wissen/Halbfertig.md", "text", "# Halb\n", "level", 1)));
+        assertThat(ok(send("GET", base + "/notes", anna, null)).toString()).contains("Halbfertig");
+
+        assertThat(ok(send("POST", base + "/ai/jobs/" + running.get("id") + "/cancel", anna, null))).containsEntry("status", "CANCELLED");
+
+        assertThat(ok(send("GET", base + "/notes", anna, null)).toString()).doesNotContain("Halbfertig");
+        assertThat(send("POST", "/internal/ai/jobs/" + job.get("jobId") + "/progress", WORKER, Map.of("message", "weiter", "percent", 60))
+            .statusCode()).isEqualTo(410);
+        assertThat(send("POST", internal + "/notes", WORKER, Map.of("path", "Wissen/Nachzuegler.md", "text", "# x\n", "level", 1))
+            .statusCode()).isEqualTo(422);
+        assertThat(send("POST", base + "/ai/jobs/" + running.get("id") + "/cancel", anna, null).statusCode()).isEqualTo(422);
+    }
+
+    @Test
+    void should_showTheCapacityTheWorkerReported() throws Exception {
+        var anna = user("ai-carla");
+        assertThat(ok(send("GET", "/api/v1/ai/services/lokal/capacity", anna, null))).containsEntry("reportedAt", null)
+            .containsEntry("exhausted", null);
+
+        var back = java.time.Instant.now().plusSeconds(600).toString();
+        var provider = new java.util.HashMap<String, Object>(Map.of("provider", "lokal", "keys", 1, "usableKeys", 0, "exhausted", true,
+            "availableAgainAt", back, "tokens", Map.of("remaining", 0, "limit", 6000, "resetsAt", back)));
+        assertThat(send("PUT", "/internal/ai/services/lokal/capacity", anna, Map.of("providers", List.of(provider))).statusCode())
+            .isIn(401, 403);
+        ok(send("PUT", "/internal/ai/services/lokal/capacity", WORKER, Map.of("providers", List.of(provider))));
+
+        var capacity = ok(send("GET", "/api/v1/ai/services/lokal/capacity", anna, null));
+        assertThat(capacity).containsEntry("exhausted", true).containsEntry("stale", false);
+        assertThat(java.time.Instant.parse((String) capacity.get("availableAgainAt"))).isEqualTo(java.time.Instant.parse(back));
+        assertThat(capacity.get("providers").toString()).contains("remaining=0").doesNotContain("key=");
+        assertThat(send("GET", "/api/v1/ai/services/gibtsnicht/capacity", anna, null).statusCode()).isEqualTo(422);
     }
 }

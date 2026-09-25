@@ -34,10 +34,12 @@ public class AiInternalController {
     private final VaultAccessGuard access;
     private final NoteRepository notes;
     private final AiJobService jobs;
+    private final AiCapacityBoard capacity;
 
     public AiInternalController(@Lazy AiWriteService ai, AiServiceDirectory services, VaultAccessGuard access, NoteRepository notes,
-                                AiJobService jobs) {
+                                AiJobService jobs, AiCapacityBoard capacity) {
         this.jobs = jobs;
+        this.capacity = capacity;
         this.ai = ai;
         this.services = services;
         this.access = access;
@@ -47,6 +49,13 @@ public class AiInternalController {
     @GetMapping("/services")
     public List<AiServiceResponse> services() {
         return services.all().stream().map(AiServiceResponse::from).toList();
+    }
+
+    /** Der Worker meldet, wie viel Kontingent die Anbieter hinter einem Dienst noch haben. */
+    @PutMapping("/services/{serviceId}/capacity")
+    public AiCapacityBoard.ServiceCapacity reportCapacity(@PathVariable String serviceId, @RequestBody CapacityReport report) {
+        capacity.report(serviceId, report.providers());
+        return capacity.of(serviceId);
     }
 
     @PostMapping("/vaults/{vaultId}/change-sets")
@@ -168,6 +177,12 @@ public class AiInternalController {
         return new JobAck(jobId);
     }
 
+    @PostMapping("/jobs/{jobId}/wait-for-capacity")
+    public JobAck waitForCapacity(@PathVariable UUID jobId, @RequestBody WaitForCapacityRequest request) {
+        jobs.waitForCapacity(jobId, request.error(), request.availableAt());
+        return new JobAck(jobId);
+    }
+
     private AiChangeSet changeSet(VaultId vaultId, UUID changeSetId) {
         return ai.changeSet(vaultId, changeSetId).orElseThrow(() -> new AiWriteRefusedException("KI-Änderung nicht gefunden"));
     }
@@ -177,6 +192,12 @@ public class AiInternalController {
             throw new AiWriteRefusedException("text fehlt oder ist länger als " + MAX_TEXT_LENGTH + " Zeichen");
         }
         return text;
+    }
+
+    /** Abgebrochen oder beendet: der Worker hoert daran auf, statt weiterzurechnen. */
+    @org.springframework.web.bind.annotation.ExceptionHandler(AiJobGoneException.class)
+    public org.springframework.http.ProblemDetail gone(AiJobGoneException gone) {
+        return org.springframework.http.ProblemDetail.forStatusAndDetail(org.springframework.http.HttpStatus.GONE, gone.getMessage());
     }
 
     /** Die Texte sind fuer Menschen geschrieben und verraten nichts Internes - direkt anzeigen lassen. */
@@ -194,6 +215,8 @@ public class AiInternalController {
     public record ListedNote(String noteId, String path, int level, String createdBy, String kind) { }
     public record ProgressRequest(String message, Integer percent) { }
     public record FailRequest(String error, Boolean retryable) { }
+    public record WaitForCapacityRequest(String error, java.time.Instant availableAt) { }
+    public record CapacityReport(List<AiCapacityBoard.ProviderReport> providers) { }
     public record JobAck(UUID jobId) { }
 
     /** Was der Worker fuer einen Job braucht - das Dokument holt er gesondert. */

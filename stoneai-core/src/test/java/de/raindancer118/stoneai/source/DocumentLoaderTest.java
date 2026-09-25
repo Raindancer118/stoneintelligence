@@ -143,6 +143,23 @@ class DocumentLoaderTest {
             assertThat(document.unreadablePages()).containsExactly(1);
         }
 
+        // Out of quota is not one bad page: every further page would fail the same way, and a run
+        // that quietly drops them looks finished. The whole run waits for capacity instead.
+        @Test
+        @DisplayName("should stop when the vision model is out of capacity instead of dropping the page")
+        void should_propagate_when_ocrIsOutOfCapacity() throws Exception {
+            Path pdf = scannedPdf();
+            appendTextPage(pdf, "Seite mit Text");
+            java.time.Instant back = java.time.Instant.parse("2026-09-26T07:00:00Z");
+            OcrService exhausted = (png, page) -> {
+                throw new de.raindancer118.stoneai.extract.LlmCapacityException("gemini: Tageskontingent aufgebraucht", back);
+            };
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> new PdfLoader(config, exhausted).load(pdf))
+                    .isInstanceOfSatisfying(de.raindancer118.stoneai.extract.LlmCapacityException.class,
+                            e -> assertThat(e.availableAgainAt()).isEqualTo(back));
+        }
+
         // A document that is nothing but a scan would come out empty - better to try again later.
         @Test
         @DisplayName("should fail when no page at all could be read")

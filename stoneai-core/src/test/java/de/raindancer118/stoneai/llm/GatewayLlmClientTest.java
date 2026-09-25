@@ -185,4 +185,44 @@ class GatewayLlmClientTest {
         assertThatThrownBy(() -> client.complete(Tier.FAST, "s", "t")).isInstanceOf(IllegalStateException.class);
         assertThat(waits).isEmpty();
     }
+
+    // An empty daily quota does not pass in a minute - sleeping through it would hold the job
+    // (and the worker) for hours. The caller gets told when to come back instead.
+    @Test
+    @DisplayName("should hand back the moment capacity returns instead of waiting hours for it")
+    void should_throwCapacity_when_exhaustedForLong() {
+        java.time.Instant back = java.time.Instant.now().plus(java.time.Duration.ofHours(5));
+        FlakyProvider gemini = new FlakyProvider(new io.github.raindancer118.aigateway.CapacityExhaustedException("gemini: 429", back));
+        List<java.time.Duration> waits = new ArrayList<>();
+        GatewayLlmClient client = GatewayLlmClient.withProviders(oneRoute(), Map.of("gemini", gemini)).sleepingWith(waits::add);
+
+        assertThatThrownBy(() -> client.complete(Tier.FAST, "s", "t"))
+                .isInstanceOfSatisfying(de.raindancer118.stoneai.extract.LlmCapacityException.class,
+                        e -> assertThat(e.availableAgainAt()).isEqualTo(back));
+        assertThat(waits).isEmpty();
+        assertThat(gemini.calls).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("should wait out a short rate limit and carry on")
+    void should_waitOutShortRateLimit() {
+        java.time.Instant back = java.time.Instant.now().plusSeconds(30);
+        FlakyProvider gemini = new FlakyProvider(new io.github.raindancer118.aigateway.CapacityExhaustedException("gemini: 429", back));
+        List<java.time.Duration> waits = new ArrayList<>();
+        GatewayLlmClient client = GatewayLlmClient.withProviders(oneRoute(), Map.of("gemini", gemini)).sleepingWith(waits::add);
+
+        assertThat(client.complete(Tier.FAST, "s", "t").text()).isEqualTo("antwort");
+        assertThat(waits).hasSize(1);
+        assertThat(waits.get(0)).isBetween(java.time.Duration.ofSeconds(25), java.time.Duration.ofSeconds(32));
+    }
+
+    @Test
+    @DisplayName("should report each provider's capacity without its keys")
+    void should_reportCapacity() {
+        FlakyProvider gemini = new FlakyProvider();
+        GatewayLlmClient client = GatewayLlmClient.withProviders(oneRoute(), Map.of("gemini", gemini));
+
+        assertThat(client.capacity()).containsOnlyKeys("gemini");
+        assertThat(client.refreshCapacity().get("gemini").exhausted()).isFalse();
+    }
 }

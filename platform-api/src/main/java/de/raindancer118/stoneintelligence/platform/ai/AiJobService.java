@@ -27,6 +27,14 @@ public class AiJobService {
     static final int MAX_ATTEMPTS = 3;
     static final Duration LEASE = Duration.ofMinutes(10);
     private static final Duration FIRST_RETRY_PAUSE = Duration.ofMinutes(1);
+    /** Frueher nachsehen lohnt nicht - und ein Job, der sofort wieder scheitert, soll nicht kreisen. */
+    static final Duration MIN_CAPACITY_WAIT = Duration.ofMinutes(1);
+    /** Wenn kein Anbieter sagt, wann er wieder kann. */
+    static final Duration UNKNOWN_CAPACITY_WAIT = Duration.ofMinutes(15);
+    /** Tageskontingente kommen spaetestens nach einem Tag zurueck; mehr ist eine Fehlangabe. */
+    static final Duration MAX_CAPACITY_WAIT = Duration.ofHours(26);
+    /** So lange nach dem Hochladen wartet ein Dokument hoechstens auf Kontingent, dann gibt es auf. */
+    static final Duration CAPACITY_PATIENCE = Duration.ofDays(7);
     private static final int MAX_FILE_NAME_LENGTH = 200;
 
     /** Legt das Change-Set fuer einen Job an; liefert dessen Id. */
@@ -35,18 +43,26 @@ public class AiJobService {
         UUID start(VaultId vaultId, AiService service, String requestedBy, String label);
     }
 
+    /** Macht die Aenderungen eines abgebrochenen Laufs rueckgaengig. */
+    @FunctionalInterface
+    public interface ChangeSetReverter {
+        void revert(VaultId vaultId, UUID changeSetId, String actor);
+    }
+
     public record Upload(String fileName, String contentType, byte[] content) { }
 
     private final AiJobRepository jobs;
     private final Supplier<AiServiceDirectory> services;
     private final ChangeSetStarter changeSets;
+    private final ChangeSetReverter reverter;
     private final Supplier<Instant> clock;
 
     public AiJobService(AiJobRepository jobs, Supplier<AiServiceDirectory> services, ChangeSetStarter changeSets,
-                        Supplier<Instant> clock) {
+                        ChangeSetReverter reverter, Supplier<Instant> clock) {
         this.jobs = jobs;
         this.services = services;
         this.changeSets = changeSets;
+        this.reverter = reverter;
         this.clock = clock;
     }
 
@@ -71,8 +87,24 @@ public class AiJobService {
         return jobs.list(vaultId, limit);
     }
 
-    public boolean cancel(VaultId vaultId, UUID jobId) {
-        return jobs.cancel(vaultId, jobId, clock.get());
+    /**
+     * Bricht einen wartenden oder laufenden Job ab. Was ein laufender schon geschrieben hat, wird
+     * rueckgaengig gemacht (im Namen von {@code actor}); der Worker merkt den Abbruch an der
+     * naechsten Rueckmeldung ({@link AiJobGoneException}) und hoert auf.
+     */
+    public boolean cancel(VaultId vaultId, UUID jobId, String actor) {
+        var job = jobs.find(vaultId, jobId).filter(AiJob::open);
+        if (job.isEmpty() || !jobs.cancel(vaultId, jobId, clock.get())) {
+            return false;
+        }
+        if (job.get().status() == AiJob.Status.RUNNING && job.get().changeSetId() != null) {
+            try {
+                reverter.revert(vaultId, job.get().changeSetId(), actor);
+            } catch (AiWriteRefusedException alreadyReverted) {
+                // Schon rueckgaengig gemacht - nichts mehr zu tun.
+            }
+        }
+        return true;
     }
 
     /**
@@ -100,7 +132,7 @@ public class AiJobService {
 
     public AiJob running(UUID jobId) {
         return jobs.findById(jobId).filter(job -> job.status() == AiJob.Status.RUNNING)
-            .orElseThrow(() -> new AiWriteRefusedException("Dieser Job läuft nicht (mehr)"));
+            .orElseThrow(AiJobGoneException::new);
     }
 
     public byte[] document(UUID jobId) {
@@ -113,13 +145,13 @@ public class AiJobService {
             throw new AiWriteRefusedException("percent 0..100, message höchstens 300 Zeichen");
         }
         if (!jobs.progress(jobId, message, percent, clock.get().plus(LEASE))) {
-            throw new AiWriteRefusedException("Dieser Job läuft nicht (mehr)");
+            throw new AiJobGoneException();
         }
     }
 
     public void complete(UUID jobId) {
         if (!jobs.finish(jobId, AiJob.Status.SUCCEEDED, null, clock.get())) {
-            throw new AiWriteRefusedException("Dieser Job läuft nicht (mehr)");
+            throw new AiJobGoneException();
         }
     }
 
@@ -132,7 +164,33 @@ public class AiJobService {
             ? jobs.retryLater(jobId, message, clock.get().plus(FIRST_RETRY_PAUSE.multipliedBy(1L << (job.attempts() - 1))))
             : jobs.finish(jobId, AiJob.Status.FAILED, message, clock.get());
         if (!done) {
-            throw new AiWriteRefusedException("Dieser Job läuft nicht (mehr)");
+            throw new AiJobGoneException();
+        }
+    }
+
+    /**
+     * Der Lauf brach ab, weil der KI-Dienst kein Kontingent mehr hatte: nichts wurde geschrieben,
+     * der Job startet von selbst neu, sobald es wieder da ist - ohne dass das als Versuch zaehlt.
+     * {@code availableAt} ist die Angabe des Anbieters ({@code null} = unbekannt), in vernuenftigen
+     * Grenzen. Nach {@link #CAPACITY_PATIENCE} ab dem Hochladen gibt der Job auf.
+     */
+    public void waitForCapacity(UUID jobId, String error, Instant availableAt) {
+        var job = running(jobId);
+        var now = clock.get();
+        var message = error == null || error.isBlank() ? "Kein Kontingent mehr frei" : error.strip();
+        message = message.length() > 1000 ? message.substring(0, 1000) : message;
+        boolean done;
+        if (job.createdAt().plus(CAPACITY_PATIENCE).isBefore(now)) {
+            done = jobs.finish(jobId, AiJob.Status.FAILED, "Seit " + CAPACITY_PATIENCE.toDays()
+                + " Tagen kein Kontingent frei – aufgegeben. Zuletzt: " + message, now);
+        } else {
+            var at = availableAt == null ? now.plus(UNKNOWN_CAPACITY_WAIT) : availableAt;
+            at = at.isBefore(now.plus(MIN_CAPACITY_WAIT)) ? now.plus(MIN_CAPACITY_WAIT) : at;
+            at = at.isAfter(now.plus(MAX_CAPACITY_WAIT)) ? now.plus(MAX_CAPACITY_WAIT) : at;
+            done = jobs.waitForCapacity(jobId, message, at);
+        }
+        if (!done) {
+            throw new AiJobGoneException();
         }
     }
 

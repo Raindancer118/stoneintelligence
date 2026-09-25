@@ -93,6 +93,9 @@ public final class PdfLoader implements DocumentLoader {
                 String transcribed;
                 try {
                     transcribed = normalise(ocr.read(renderPng(renderer, number), number));
+                } catch (de.raindancer118.stoneai.extract.LlmCapacityException outOfCapacity) {
+                    // Every further page would fail alike - the run waits for capacity instead.
+                    throw outOfCapacity;
                 } catch (RuntimeException unavailable) {
                     // One unreadable diagram must not cost the rest of the document; it is named instead.
                     unreadable.add(number);

@@ -25,9 +25,20 @@ public class WorkerConfig {
         return new PlatformHttpClient(url, token);
     }
 
+    /** Ein gemeinsamer Satz Clients: Verarbeitung und Kapazitaetsmeldung sehen dieselben Schluessel-Pools. */
     @Bean
-    public WorkerLoop workerLoop(PlatformApi platform) {
-        var processor = new JobProcessor(platform, new GatewayLlmFactory(), ServiceModels.from(System.getenv()), LocalDate::now);
-        return new WorkerLoop(platform, processor);
+    public GatewayLlmFactory gatewayLlmFactory() {
+        return new GatewayLlmFactory();
+    }
+
+    @Bean
+    public CapacityReporter capacityReporter(PlatformApi platform, GatewayLlmFactory llms) {
+        return new CapacityReporter(platform, llms, ServiceModels.from(System.getenv()));
+    }
+
+    @Bean
+    public WorkerLoop workerLoop(PlatformApi platform, GatewayLlmFactory llms, CapacityReporter capacity) {
+        var processor = new JobProcessor(platform, llms, ServiceModels.from(System.getenv()), LocalDate::now);
+        return new WorkerLoop(platform, processor, capacity);
     }
 }

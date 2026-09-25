@@ -14,10 +14,12 @@ public class WorkerLoop {
 
     private final PlatformApi platform;
     private final JobProcessor processor;
+    private final CapacityReporter capacity;
 
-    WorkerLoop(PlatformApi platform, JobProcessor processor) {
+    WorkerLoop(PlatformApi platform, JobProcessor processor, CapacityReporter capacity) {
         this.platform = platform;
         this.processor = processor;
+        this.capacity = capacity;
     }
 
     @Scheduled(initialDelayString = "${STONEINTELLIGENCE_WORKER_POLL_MS:5000}", fixedDelayString = "${STONEINTELLIGENCE_WORKER_POLL_MS:5000}")
@@ -26,6 +28,7 @@ public class WorkerLoop {
             for (var job = platform.claim(); job.isPresent(); job = platform.claim()) {
                 LOG.info("Verarbeite {} ({}, Versuch {})", job.get().fileName(), job.get().service(), job.get().attempt());
                 processor.process(job.get());
+                capacity.report(job.get().service());
             }
         } catch (UncheckedIOException | PlatformRefusedException unreachable) {
             LOG.warn("platform-api nicht erreichbar: {}", unreachable.getMessage());

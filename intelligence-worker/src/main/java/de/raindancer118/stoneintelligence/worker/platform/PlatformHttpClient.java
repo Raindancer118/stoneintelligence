@@ -76,6 +76,27 @@ public final class PlatformHttpClient implements PlatformApi {
     }
 
     @Override
+    public void waitForCapacity(UUID jobId, String error, java.time.Instant availableAt) {
+        var body = new LinkedHashMap<String, Object>();
+        body.put("error", error);
+        body.put("availableAt", availableAt == null ? null : availableAt.toString());
+        post("/internal/ai/jobs/" + jobId + "/wait-for-capacity", body);
+    }
+
+    @Override
+    public List<String> services() {
+        return parse(send(request("/internal/ai/services").GET()), new TypeReference<List<ServiceRef>>() { }).stream()
+            .map(ServiceRef::id).toList();
+    }
+
+    @Override
+    public void reportCapacity(String serviceId, List<ProviderReport> providers) {
+        send(request("/internal/ai/services/" + java.net.URLEncoder.encode(serviceId, java.nio.charset.StandardCharsets.UTF_8) + "/capacity")
+            .PUT(HttpRequest.BodyPublishers.ofString(write(Map.of("providers", providers))))
+            .header("Content-Type", "application/json"));
+    }
+
+    @Override
     public List<ListedNote> notes(String vaultId, UUID changeSetId) {
         return parse(send(request(notesPath(vaultId, changeSetId)).GET()), new TypeReference<List<ListedNote>>() { });
     }
@@ -131,8 +152,11 @@ public final class PlatformHttpClient implements PlatformApi {
         }
     }
 
-    /** 4xx: fachlich abgelehnt (mit der Begruendung des Servers); 5xx: voruebergehend. */
+    /** 410: Job abgebrochen/beendet; sonst 4xx: fachlich abgelehnt (mit der Begruendung des Servers); 5xx: voruebergehend. */
     private static void check(int status, java.util.function.Supplier<String> body) throws IOException {
+        if (status == 410) {
+            throw new JobGoneException("HTTP 410: " + reason(body.get()));
+        }
         if (status >= 400 && status < 500) {
             throw new PlatformRefusedException("HTTP " + status + ": " + reason(body.get()));
         }
@@ -167,4 +191,5 @@ public final class PlatformHttpClient implements PlatformApi {
 
     record NoteText(String noteId, String path, String text) { }
     record NoteRef(String noteId, String path) { }
+    record ServiceRef(String id) { }
 }

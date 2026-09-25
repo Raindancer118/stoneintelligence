@@ -11,6 +11,7 @@ import de.raindancer118.stoneai.config.StoneAiConfig;
 import de.raindancer118.stoneai.extract.LlmClient;
 import de.raindancer118.stoneai.llm.GatewayLlmClient;
 import io.github.raindancer118.aigateway.AiProvider;
+import io.github.raindancer118.aigateway.ProviderCapacity;
 import io.github.raindancer118.aigateway.provider.GoogleGeminiProvider;
 import io.github.raindancer118.aigateway.provider.OpenAiCompatibleProvider;
 
@@ -20,12 +21,26 @@ import io.github.raindancer118.aigateway.provider.OpenAiCompatibleProvider;
  * Einmal gebaut, wird der Client wiederverwendet - die Schluessel-Pools behalten so ihre
  * Rate-Limit-Erfahrung.
  */
-final class GatewayLlmFactory implements LlmFactory {
+public final class GatewayLlmFactory implements LlmFactory {
 
-    private final Map<String, LlmClient> clients = new ConcurrentHashMap<>();
+    private final Map<String, GatewayLlmClient> clients = new ConcurrentHashMap<>();
 
     @Override
     public LlmClient forService(ServiceModels.ServiceModel model) {
+        return client(model);
+    }
+
+    @Override
+    public Map<String, ProviderCapacity> capacity(ServiceModels.ServiceModel model) {
+        return client(model).capacity();
+    }
+
+    @Override
+    public Map<String, ProviderCapacity> refreshCapacity(ServiceModels.ServiceModel model) {
+        return client(model).refreshCapacity();
+    }
+
+    private GatewayLlmClient client(ServiceModels.ServiceModel model) {
         return clients.computeIfAbsent(model.serviceId(), id -> build(model));
     }
 
@@ -37,7 +52,7 @@ final class GatewayLlmFactory implements LlmFactory {
         return config;
     }
 
-    private static LlmClient build(ServiceModels.ServiceModel model) {
+    private static GatewayLlmClient build(ServiceModels.ServiceModel model) {
         try {
             Map<String, AiProvider> providers = new LinkedHashMap<>();
             addKeyed(providers, "groq", "GROQ");
