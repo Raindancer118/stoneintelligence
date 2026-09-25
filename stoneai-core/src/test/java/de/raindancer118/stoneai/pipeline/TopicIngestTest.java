@@ -159,6 +159,29 @@ class TopicIngestTest {
         assertEveryLinkResolves();
     }
 
+    // Issue #1: die Quellenangabe oeffnet das Original an der Seite, von der der Inhalt stammt.
+    @Test
+    @DisplayName("should link the citation of a note to the page of the stored original")
+    void should_linkCitationsToTheOriginalPage() throws IOException {
+        ingest(pdf("Brief_LVM.pdf", "Am 5. Juni 2026 fuhr ein BMW auf."));
+
+        assertThat(note("Notizen/Verkehrsunfall am 5. Juni 2026.md"))
+                .contains("*Quelle: [[Anhänge/Brief_LVM.pdf#page=1|Brief_LVM, S. 1]]*");
+        assertEveryLinkResolves();
+    }
+
+    // Issue #1: in den Eigenschaften nur noch, was man beim Lesen braucht - der Rest steht im Text.
+    @Test
+    @DisplayName("should keep the source note's properties short and say the rest in the text")
+    void should_keepSourceNotePropertiesShort() throws IOException {
+        ingest(pdf("Brief_LVM.pdf", "Am 5. Juni 2026 fuhr ein BMW auf."));
+
+        String source = note("Quellen/Brief_LVM.md");
+        assertThat(de.raindancer118.stoneai.vault.Frontmatter.of(source).frontmatter().keys())
+                .containsExactly("tags", "created", "updated");
+        assertThat(source).contains("1 Seite");
+    }
+
     // A text upload is already readable as a note - copying it would only add a duplicate.
     @Test
     @DisplayName("should not copy a markdown source into the vault")

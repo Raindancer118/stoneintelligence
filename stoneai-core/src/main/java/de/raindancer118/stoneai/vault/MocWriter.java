@@ -53,11 +53,17 @@ public final class MocWriter {
 
         String existing = store.exists(file) ? store.read(file) : "";
         Frontmatter.Document parsed = Frontmatter.of(existing);
-        Frontmatter frontmatter = parsed.frontmatter()
-                .mergeAdditively(Frontmatter.empty()
-                        .withScalar("title", INDEX_TITLE)
+        // Nur Tags und Daten als Eigenschaften (Issue #1); fruehere Fassungen schrieben mehr.
+        Frontmatter own = parsed.frontmatter();
+        if ("moc".equals(own.scalar("type"))) {
+            own = own.without(IndexedNote.titleOf(file).equals(own.scalar("title"))
+                    ? java.util.Set.of("type", "title") : java.util.Set.of("type"));
+        }
+        Frontmatter incoming = IndexedNote.titleOf(file).equals(INDEX_TITLE)
+                ? Frontmatter.empty() : Frontmatter.empty().withScalar("title", INDEX_TITLE);
+        Frontmatter frontmatter = own
+                .mergeAdditively(incoming
                         .withList("tags", List.of(config.notes().tag(), "moc"))
-                        .withScalar("type", "moc")
                         .withScalar("created", today))
                 .withScalar("updated", today);
 

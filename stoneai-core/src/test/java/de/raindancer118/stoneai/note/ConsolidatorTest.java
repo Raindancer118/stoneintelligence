@@ -54,6 +54,20 @@ class ConsolidatorTest {
             assertThat(llm.calls()).isEqualTo(1);
         }
 
+        // Issue #1: beim Zusammenfuehren durften Tabellen nicht wieder zu Stichpunkten werden.
+        @Test
+        @DisplayName("should ask to keep tables as tables when merging")
+        void should_keepTables_when_merging() {
+            ScriptedLlm llm = new ScriptedLlm("Zusammengeführter Text über Gruppen.");
+
+            new Consolidator(config, llm).consolidate(List.of(
+                    concept("Gruppe", "| a | b |\n|---|---|\n| 1 | 2 |", 3),
+                    concept("Gruppe", "Zweite Erklärung.", 9)));
+
+            assertThat(llm.prompts).singleElement().asString().contains("Tabellen bleiben Markdown-Tabellen")
+                    .contains("Verwende ausschließlich", "kein Wissen von außen");
+        }
+
         @Test
         @DisplayName("should merge titles that differ only slightly")
         void should_merge_when_titlesAreNearlyIdentical() {

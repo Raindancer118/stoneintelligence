@@ -157,9 +157,12 @@ public final class Consolidator {
                 Unten stehen mehrere Teile derselben Notiz aus einem Dokument.
                 Schreibe daraus EINEN gut gegliederten Text in Markdown: ohne Wiederholungen,
                 Fakten als Stichpunkte, bei Bedarf Zwischenüberschriften ab ###, keine Überschrift
-                der Ebene 1 oder 2, kein Frontmatter, keine Quellenmarker. Behalte jeden Fakt und
-                jeden [[Verweis]]. Nimm nichts hinzu, was nicht in den Teilen steht, und lass
-                Bemerkungen weg, die nur sagen, dass etwas fehlt oder nicht behandelt wird.
+                der Ebene 1 oder 2, kein Frontmatter, keine Quellenmarker.
+                Tabellen bleiben Markdown-Tabellen; gleichartige Tabellen darfst du zu einer
+                zusammenführen. Behalte jeden Fakt und jeden [[Verweis]]. Verwende ausschließlich,
+                was in den Teilen steht: kein Wissen von außen, keine Ergänzungen, keine
+                Vermutungen. Lass Bemerkungen weg, die nur sagen, dass etwas fehlt oder nicht
+                behandelt wird.
                 Antworte nur mit dem Text.
                 %s""".formatted(title, texts);
         int input = batch.stream().mapToInt(part -> part.text().length()).sum();

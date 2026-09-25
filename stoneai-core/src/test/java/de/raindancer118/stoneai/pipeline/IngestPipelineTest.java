@@ -94,9 +94,9 @@ class IngestPipelineTest {
 
             pipeline(new FixedLlm(ANSWER)).ingest(document);
 
-            Frontmatter frontmatter = Frontmatter.of(
-                    Files.readString(vault.resolve("Notizen/Äquivalenzrelation.md"))).frontmatter();
-            assertThat(frontmatter.scalar("source")).isEqualTo("[[Quellen/Skript]]");
+            // Die Herkunft steht verlinkt in der Quellenangabe, nicht mehr in den Eigenschaften (Issue #1).
+            assertThat(Files.readString(vault.resolve("Notizen/Äquivalenzrelation.md")))
+                    .contains("*Quelle: [[Quellen/Skript|Skript — Relationen]]*");
         }
 
         @Test

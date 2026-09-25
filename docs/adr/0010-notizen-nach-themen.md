@@ -70,3 +70,21 @@ Token-Budget reichte für etwa 80, der Rest fiel still weg.
    für große Abschnitte ungeeignet, nur Rückfallebene. Hauptlast trägt Gemini mit breiten Ketten
    (3.6-flash, 3.8-flash, flash-latest, 3.5-flash, flash-lite-latest; Bilder zuletzt über Qwen auf
    Groq).
+
+## Nachtrag: Tabellen, Quellenlinks, schlanke Eigenschaften (2026-09-25, Issue #1)
+
+1. **Nur aus den Quellen**: Planer, Extraktion und Zusammenführen verwenden ausschließlich den
+   Dokumenttext und die Titel vorhandener Notizen – kein Wissen von außen, keine Beispiele oder
+   Zahlen, die nicht im Text stehen, keine Vermutungen.
+2. **Tabellen bleiben Tabellen**: Extraktion, Bild-Lesen und Zusammenführen geben Tabellen als
+   Markdown-Tabellen wieder (fehlende Zellen bleiben leer). `[[Ziel|Text]]` in einer Tabellenzeile
+   wird zu `[[Ziel\|Text]]`, sonst beendet das `|` die Zelle.
+3. **Quellenangabe als Link**: `*Quelle: …*` verlinkt jede Stelle – bei gespeichertem PDF auf die
+   Seite (`[[Anhänge/X.pdf#page=12|X, S. 12–18]]`, Obsidian öffnet das PDF dort), sonst auf die
+   Quellnotiz. Dafür wird das Original vor den Notizen gespeichert.
+4. **Eigenschaften**: KI-Notizen tragen nur noch `aliases` (falls vorhanden), `tags`, `created`,
+   `updated`; `title` nur, wenn der Dateiname abweichen musste. `type`, `source`, `source_page`,
+   `entities`, `related`, `confidence` entfallen – Herkunft steht verlinkt im Text, Verwandtes
+   unter „Siehe auch“. Beim nächsten Schreiben verlieren ältere KI-Notizen (`type: concept`) diese
+   Felder; Notizen, die ein Mensch angelegt hat, behalten alle Eigenschaften. Quellnotiz und Index
+   ebenso (Seitenzahl steht jetzt im Text der Quellnotiz).

@@ -147,10 +147,13 @@ public final class IngestPipeline {
         // resolves regardless of the order the notes happen to be written in.
         notes.forEach(note -> index.register(note.title(), note.aliases(), noteWriter.fileFor(note)));
 
+        // The original goes in first: every page citation of the notes links into it.
+        Path attachment = hosted ? storeOriginal(source, store) : copyAttachment(source);
+
         List<WriteResult> writes = new ArrayList<>();
         Set<String> links = new LinkedHashSet<>();
         for (DraftNote note : notes) {
-            WriteResult result = noteWriter.write(note, source.sha256(), sourceLink);
+            WriteResult result = noteWriter.write(note, source.sha256(), sourceLink, attachment);
             writes.add(result);
             if (result.wrote() || result.outcome() == WriteResult.Outcome.UNCHANGED) {
                 links.add(index.linkTo(result.file(), vaultRoot));
@@ -164,7 +167,6 @@ public final class IngestPipeline {
         source.unreadablePages().forEach(page -> unread.add(read.title() + ", S. " + page + " (Bild nicht lesbar)"));
         unread.addAll(extraction.unprocessed());
 
-        Path attachment = hosted ? storeOriginal(source, store) : copyAttachment(source);
         if (config.notes().writeSourceNote()) {
             sourceWriter.write(source, List.copyOf(links), attachment, unread,
                     extraction.failures().stream().map(failure -> failure.provenanceLabel()).distinct().toList());
