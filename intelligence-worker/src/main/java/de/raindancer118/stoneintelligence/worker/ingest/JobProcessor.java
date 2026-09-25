@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import de.raindancer118.stoneai.config.ConfigSchema;
 import de.raindancer118.stoneai.extract.LlmCapacityException;
+import de.raindancer118.stoneai.llm.ResumableLlmClient;
 import de.raindancer118.stoneai.pipeline.IngestPipeline;
 import de.raindancer118.stoneai.pipeline.ProgressSink;
 import de.raindancer118.stoneintelligence.worker.platform.ClaimedJob;
@@ -41,23 +42,39 @@ final class JobProcessor {
     private static final long HEARTBEAT_SECONDS = 30;
     /** Untergrenze zwischen zwei Fortschrittsmeldungen an platform-api, egal wie viele Abschnitte pro Sekunde durchlaufen. */
     private static final Duration PROGRESS_MIN_INTERVAL = Duration.ofSeconds(3);
+    /**
+     * So lange bleiben die Antworten eines Jobs liegen, der nicht wiederkam - laenger als platform-api
+     * auf Kontingent wartet (7 Tage), danach waeren sie nur noch Kopien fremder Dokumente.
+     */
+    static final Duration RESUME_KEEP = Duration.ofDays(8);
 
     private final PlatformApi platform;
     private final LlmFactory llms;
     private final ServiceModels models;
     private final Supplier<LocalDate> clock;
     private final Duration progressInterval;
+    private final Path resumeRoot;
 
-    JobProcessor(PlatformApi platform, LlmFactory llms, ServiceModels models, Supplier<LocalDate> clock) {
-        this(platform, llms, models, clock, PROGRESS_MIN_INTERVAL);
+    JobProcessor(PlatformApi platform, LlmFactory llms, ServiceModels models, Supplier<LocalDate> clock, Path resumeRoot) {
+        this(platform, llms, models, clock, PROGRESS_MIN_INTERVAL, resumeRoot);
     }
 
-    JobProcessor(PlatformApi platform, LlmFactory llms, ServiceModels models, Supplier<LocalDate> clock, Duration progressInterval) {
+    JobProcessor(PlatformApi platform, LlmFactory llms, ServiceModels models, Supplier<LocalDate> clock, Duration progressInterval,
+                 Path resumeRoot) {
         this.platform = platform;
         this.llms = llms;
         this.models = models;
         this.clock = clock;
         this.progressInterval = progressInterval;
+        this.resumeRoot = resumeRoot;
+    }
+
+    /** Wo die Antworten laufender Jobs liegen: {@code STONEAI_RESUME_DIR}, sonst im temporaeren Verzeichnis. */
+    static Path resumeRootFrom(Map<String, String> env) {
+        var configured = env.get("STONEAI_RESUME_DIR");
+        return configured == null || configured.isBlank()
+            ? Path.of(System.getProperty("java.io.tmpdir"), "stoneai-resume")
+            : Path.of(configured);
     }
 
     /** Der Job wurde abgebrochen (platform-api sagt 410) - die Pipeline hoert an der naechsten Meldung auf. */
@@ -67,13 +84,22 @@ final class JobProcessor {
         }
     }
 
+    /**
+     * Die Antworten der Modelle bleiben ueber einen Versuch hinaus liegen, solange der Job wiederkommt
+     * (Kontingent leer, Anbieter weg): der naechste Versuch fragt nur, was noch fehlt. Fertig,
+     * abgebrochen oder endgueltig gescheitert, werden sie geloescht.
+     */
     void process(ClaimedJob job) {
         var heartbeat = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().factory());
         var cancelled = new AtomicBoolean();
         Path workDir = null;
+        var answers = resumeRoot.resolve(job.jobId().toString());
+        var keepAnswers = false;
+        ResumableLlmClient.purgeOlderThan(resumeRoot, RESUME_KEEP);
         try {
             var model = models.forService(job.service());
             if (waitedForCapacity(job, model)) {
+                keepAnswers = true;
                 return;
             }
             platform.progress(job.jobId(), "Dokument wird gelesen", 5);
@@ -90,13 +116,18 @@ final class JobProcessor {
             var config = GatewayLlmFactory.configFor(model);
             ConfigSchema.byPath("vault.path").set(config, PlatformNoteStore.ROOT.toString());
             var store = PlatformNoteStore.load(platform, job.vaultId(), job.changeSetId(), job.level());
-            var report = IngestPipeline.hosted(config, llms.forService(model), clock)
+            var llm = new ResumableLlmClient(llms.forService(model), answers);
+            var report = IngestPipeline.hosted(config, llm, clock)
                     .withProgress(throttled(job, cancelled))
                     .ingestInto(document, store);
+            if (llm.replayed() > 0) {
+                LOG.info("Job {}: {} Antworten aus dem letzten Versuch uebernommen", job.jobId(), llm.replayed());
+            }
 
             if (report.wasSkipped()) {
                 platform.fail(job.jobId(), report.skippedReason(), false);
             } else if (report.notesWritten() == 0 && !report.failures().isEmpty()) {
+                // Dieselben Antworten noch einmal auszuwerten brächte dasselbe - der neue Versuch fragt neu.
                 platform.fail(job.jobId(), "Die Antworten des Modells waren nicht auswertbar", true);
             } else {
                 platform.progress(job.jobId(), summary(report), 100);
@@ -111,6 +142,7 @@ final class JobProcessor {
                 return;
             }
             LOG.info("Job {}: kein Kontingent frei, wartet bis {}", job.jobId(), outOfCapacity.availableAgainAt());
+            keepAnswers = true;
             waitForCapacity(job, capacityMessage(outOfCapacity.getMessage()), outOfCapacity.availableAgainAt());
         } catch (PlatformRefusedException refused) {
             if (cancelled.get()) {
@@ -125,10 +157,14 @@ final class JobProcessor {
                 return;
             }
             LOG.warn("Job {} fehlgeschlagen, wird erneut versucht: {}", job.jobId(), problem.getMessage());
+            keepAnswers = true;
             report(job, message(problem), true);
         } finally {
             heartbeat.shutdownNow();
             delete(workDir);
+            if (!keepAnswers) {
+                ResumableLlmClient.delete(answers);
+            }
         }
     }
 
@@ -155,7 +191,7 @@ final class JobProcessor {
 
     static String capacityMessage(String detail) {
         return "Kein Kontingent mehr frei (" + detail + ") – nichts wurde geschrieben, der Lauf startet von selbst neu,"
-            + " sobald wieder Kapazität da ist";
+            + " sobald wieder Kapazität da ist, und macht dort weiter, wo er aufgehört hat";
     }
 
     private void waitForCapacity(ClaimedJob job, String message, Instant availableAt) {

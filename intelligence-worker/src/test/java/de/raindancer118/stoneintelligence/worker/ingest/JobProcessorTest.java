@@ -24,6 +24,9 @@ class JobProcessorTest {
 
     private final FakePlatform platform = new FakePlatform();
 
+    @org.junit.jupiter.api.io.TempDir
+    java.nio.file.Path resumeRoot;
+
     private static LlmClient answering(String answer) {
         return new LlmClient() {
             @Override
@@ -65,7 +68,7 @@ class JobProcessorTest {
 
     private JobProcessor processor(LlmFactory llms) {
         return new JobProcessor(platform, llms, ServiceModels.from(java.util.Map.of()), () -> LocalDate.of(2026, 9, 23),
-            java.time.Duration.ZERO);
+            java.time.Duration.ZERO, resumeRoot);
     }
 
     private static final java.time.Instant BACK = java.time.Instant.parse("2026-09-26T07:00:00Z");
@@ -143,9 +146,15 @@ class JobProcessorTest {
         };
         var section = "Licht ".repeat(2_000);
 
-        processor(llm).process(job("Skript.md", "# Teil 1\n\n" + section + "\n\n# Teil 2\n\n" + section));
+        var skript = new StringBuilder();
+        for (int part = 1; part <= 6; part++) {
+            skript.append("# Teil ").append(part).append("\n\n").append(section).append("\n\n");
+        }
 
-        assertThat(platform.events).anySatisfy(event -> assertThat(event).startsWith("progress 100").contains("nicht verarbeitet").contains("Teil 2"));
+        processor(llm).process(job("Skript.md", skript.toString()));
+
+        // Four sections start together (llm.parallelCalls), then the budget is spent.
+        assertThat(platform.events).anySatisfy(event -> assertThat(event).startsWith("progress 100").contains("nicht verarbeitet").contains("Teil 6"));
         assertThat(platform.events).last().isEqualTo("complete");
     }
 
@@ -228,5 +237,85 @@ class JobProcessorTest {
         processor(answering(ANSWER)).process(job("Skript.md", "# Photosynthese\n\nText.\n"));
 
         assertThat(platform.events).isEmpty();
+    }
+
+    // Ein 800-Seiten-Buch, dem nach der Haelfte das Kontingent ausgeht: der naechste Versuch fragt
+    // nur, was noch fehlt - sonst verbraucht er das neue Kontingent wieder fuer die erste Haelfte.
+    @Test
+    void should_goOnWhereItStopped_whenTheQuotaRanOutHalfway() {
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+        var quotaLeft = new java.util.concurrent.atomic.AtomicInteger(4);
+        var llm = new LlmClient() {
+            @Override
+            public LlmAnswer complete(Tier tier, String system, String user) {
+                if (quotaLeft.getAndDecrement() <= 0) {
+                    throw new de.raindancer118.stoneai.extract.LlmCapacityException("kein Kontingent frei: gemini 429", BACK);
+                }
+                asked.incrementAndGet();
+                return new LlmAnswer(system.contains("Themenplan") ? PLAN : ANSWER, 5, "fake/model");
+            }
+
+            @Override
+            public LlmAnswer readImage(byte[] pngImage, String prompt) {
+                return new LlmAnswer("", 0, "fake/vision");
+            }
+        };
+        var section = "Licht ".repeat(2_000);
+        var skript = new StringBuilder();
+        for (int part = 1; part <= 8; part++) {
+            skript.append("# Teil ").append(part).append("\n\n").append(section).append(" ").append(part).append("\n\n");
+        }
+        var job = job("Buch.md", skript.toString());
+
+        processor(llm).process(job);
+        assertThat(platform.events).last().asString().startsWith("wait ");
+        int firstAttempt = asked.get();
+
+        quotaLeft.set(1_000);
+        platform.events.clear();
+        processor(llm).process(job);
+
+        assertThat(platform.events).last().isEqualTo("complete");
+        // Together the two attempts asked exactly what one uninterrupted run asks - nothing twice.
+        var uninterrupted = new FakePlatform();
+        var fresh = new ClaimedJob(UUID.randomUUID(), "vault-1", "gemini", "tom", "Buch.md", "text/markdown",
+            skript.length(), 1, UUID.randomUUID(), 1);
+        uninterrupted.documents.put(fresh.jobId(), skript.toString().getBytes(StandardCharsets.UTF_8));
+        int before = asked.get();
+        new JobProcessor(uninterrupted, service -> llm, ServiceModels.from(java.util.Map.of()), () -> LocalDate.of(2026, 9, 23),
+            java.time.Duration.ZERO, resumeRoot.resolve("other")).process(fresh);
+        int oneRun = asked.get() - before;
+        assertThat(firstAttempt).isGreaterThan(0);
+        assertThat(before).isEqualTo(oneRun);
+    }
+
+    @Test
+    void should_forgetTheAnswers_onceTheJobIsDone() throws Exception {
+        processor(answering(ANSWER)).process(job("Skript.md", "# Photosynthese\n\nLicht und Wasser.\n"));
+
+        assertThat(platform.events).last().isEqualTo("complete");
+        try (var left = java.nio.file.Files.list(resumeRoot)) {
+            assertThat(left).isEmpty();
+        }
+    }
+
+    @Test
+    void should_keepTheAnswers_whileTheJobWaitsForCapacity() throws Exception {
+        var job = job("Skript.md", "# Photosynthese\n\nLicht und Wasser.\n");
+
+        processor(outOfCapacity()).process(job);
+
+        assertThat(resumeRoot.resolve(job.jobId().toString())).isDirectory();
+    }
+
+    @Test
+    void should_forgetTheAnswers_whenTheJobWasCancelled() throws Exception {
+        platform.cancelAfterProgress = 2;
+
+        processor(answering(ANSWER)).process(job("Skript.md", "# Photosynthese\n\nLicht und Wasser.\n"));
+
+        try (var left = java.nio.file.Files.list(resumeRoot)) {
+            assertThat(left).isEmpty();
+        }
     }
 }

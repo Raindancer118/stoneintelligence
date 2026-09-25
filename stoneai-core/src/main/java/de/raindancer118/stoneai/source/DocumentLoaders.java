@@ -1,6 +1,7 @@
 package de.raindancer118.stoneai.source;
 
 import de.raindancer118.stoneai.config.StoneAiConfig;
+import de.raindancer118.stoneai.pipeline.ProgressSink;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -16,7 +17,12 @@ public final class DocumentLoaders implements DocumentLoader {
     }
 
     public static DocumentLoaders forConfig(StoneAiConfig config, OcrService ocr) {
-        return new DocumentLoaders(List.of(new PdfLoader(config, ocr), new TextLoader()));
+        return forConfig(config, ocr, ProgressSink.NONE);
+    }
+
+    /** Loaders that report how far a long PDF has been read - page by page, image pages included. */
+    public static DocumentLoaders forConfig(StoneAiConfig config, OcrService ocr, ProgressSink progress) {
+        return new DocumentLoaders(List.of(new PdfLoader(config, ocr, progress), new TextLoader()));
     }
 
     @Override

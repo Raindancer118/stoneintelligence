@@ -3,14 +3,16 @@ package de.raindancer118.stoneai.extract;
 import de.raindancer118.stoneai.chunk.Chunk;
 import de.raindancer118.stoneai.config.StoneAiConfig;
 import de.raindancer118.stoneai.note.TextSimilarity;
+import de.raindancer118.stoneai.pipeline.BoundedParallel;
 import de.raindancer118.stoneai.pipeline.ProgressSink;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Runs the per-chunk extraction: one cheap call per chunk, one repair round when the answer does
- * not hold up, and a hard stop once the run's token budget is spent.
+ * Runs the per-chunk extraction: one cheap call per chunk, several chunks at once, one repair
+ * round when the answer does not hold up, and a hard stop once the run's token budget is spent.
  *
  * <p>Two decisions worth stating. A chunk that fails twice is <em>recorded</em>, never guessed
  * at — writing a note from an answer that broke its own contract is how wrong facts enter a
@@ -37,58 +39,78 @@ public final class ExtractionService {
         return extract(chunks, TopicPlan.none());
     }
 
+    /** Extracts the planned topics within {@code llm.maxTokensPerRun}; see {@link #extract(List, TopicPlan, int)}. */
+    public ExtractionResult extract(List<Chunk> chunks, TopicPlan plan) {
+        return extract(chunks, plan, config.llm().maxTokensPerRun());
+    }
+
     /**
      * Extracts the planned topics. When the planner read the whole document, a
      * note outside the plan is a detail the model split off after all - it is folded into the
      * topic it resembles, or else the main topic. Only in a long document, where the planner saw
      * excerpts, may a chunk add a topic of its own.
+     *
+     * <p>Up to {@code llm.parallelCalls} chunks are read at once. The budget is checked before
+     * each chunk starts, so a run may overshoot it by the calls already under way - never by more.
      */
-    public ExtractionResult extract(List<Chunk> chunks, TopicPlan plan) {
-        List<ExtractedConcept> concepts = new ArrayList<>();
-        List<ChunkFailure> failures = new ArrayList<>();
+    public ExtractionResult extract(List<Chunk> chunks, TopicPlan plan, int budget) {
         boolean mayAddTopics = plan.isEmpty() || !plan.complete();
         String system = Prompts.extractionSystem(config.llm().language(), mayAddTopics);
-        int budget = config.llm().maxTokensPerRun();
-        int used = 0;
-        boolean exhausted = false;
+        AtomicInteger used = new AtomicInteger();
+        int[] done = {0};
 
-        List<String> unprocessed = new ArrayList<>();
-        for (int index = 0; index < chunks.size(); index++) {
-            Chunk chunk = chunks.get(index);
-            progress.report("Abschnitt " + (index + 1) + "/" + chunks.size() + " wird gelesen",
-                    index * 100 / chunks.size());
-            if (used >= budget) {
-                exhausted = true;
-                // Named, not just counted: the source note tells the reader what is missing.
-                chunks.subList(index, chunks.size()).forEach(rest -> unprocessed.add(rest.provenance().label()));
-                break;
-            }
-            LlmAnswer answer = llm.complete(Tier.FAST, system, Prompts.extractionUser(chunk, plan));
-            used += answer.tokensUsed();
-
-            try {
-                concepts.addAll(fitted(ConceptJson.parse(answer.text(), chunk.provenance()), plan, mayAddTopics));
-                continue;
-            } catch (ExtractionException first) {
-                if (used >= budget) {
-                    failures.add(failure(chunk, first.getMessage() + " (Budget vor Reparatur erschöpft)"));
-                    exhausted = true;
-                    chunks.subList(index + 1, chunks.size()).forEach(rest -> unprocessed.add(rest.provenance().label()));
-                    break;
-                }
-                LlmAnswer repaired = llm.complete(Tier.FAST, system,
-                        Prompts.repairUser(answer.text(), first.getMessage()));
-                used += repaired.tokensUsed();
-                try {
-                    concepts.addAll(fitted(ConceptJson.parse(repaired.text(), chunk.provenance()), plan, mayAddTopics));
-                } catch (ExtractionException second) {
-                    failures.add(failure(chunk, second.getMessage()));
-                }
-            }
-        }
+        progress.report("Abschnitt 1/" + chunks.size() + " wird gelesen", 0);
+        List<Outcome> outcomes = BoundedParallel.run(chunks.size(), config.llm().parallelCalls(),
+                index -> read(chunks.get(index), plan, mayAddTopics, system, used, budget),
+                index -> used.get() < budget,
+                (index, outcome) -> {
+                    done[0]++;
+                    progress.report("Abschnitt " + done[0] + "/" + chunks.size() + " gelesen", done[0] * 100 / chunks.size());
+                });
         progress.report("Abschnitte gelesen", 100);
 
-        return new ExtractionResult(concepts, failures, used, exhausted, unprocessed.stream().distinct().toList());
+        List<ExtractedConcept> concepts = new ArrayList<>();
+        List<ChunkFailure> failures = new ArrayList<>();
+        List<String> unprocessed = new ArrayList<>();
+        boolean exhausted = false;
+        for (int index = 0; index < chunks.size(); index++) {
+            Outcome outcome = outcomes.get(index);
+            if (outcome == null) {
+                // Named, not just counted: the source note tells the reader what is missing.
+                unprocessed.add(chunks.get(index).provenance().label());
+                exhausted = true;
+                continue;
+            }
+            concepts.addAll(outcome.concepts());
+            if (outcome.failure() != null) {
+                failures.add(outcome.failure());
+            }
+            exhausted |= outcome.budgetStopped();
+        }
+        return new ExtractionResult(concepts, failures, used.get(), exhausted, unprocessed.stream().distinct().toList());
+    }
+
+    private record Outcome(List<ExtractedConcept> concepts, ChunkFailure failure, boolean budgetStopped) {
+    }
+
+    /** One chunk: the call, and one repair round if the answer does not hold up. */
+    private Outcome read(Chunk chunk, TopicPlan plan, boolean mayAddTopics, String system, AtomicInteger used, int budget) {
+        LlmAnswer answer = llm.complete(Tier.FAST, system, Prompts.extractionUser(chunk, plan));
+        used.addAndGet(answer.tokensUsed());
+        try {
+            return new Outcome(fitted(ConceptJson.parse(answer.text(), chunk.provenance()), plan, mayAddTopics), null, false);
+        } catch (ExtractionException first) {
+            if (used.get() >= budget) {
+                return new Outcome(List.of(), failure(chunk, first.getMessage() + " (Budget vor Reparatur erschöpft)"), true);
+            }
+            LlmAnswer repaired = llm.complete(Tier.FAST, system, Prompts.repairUser(answer.text(), first.getMessage()));
+            used.addAndGet(repaired.tokensUsed());
+            try {
+                return new Outcome(fitted(ConceptJson.parse(repaired.text(), chunk.provenance()), plan, mayAddTopics), null, false);
+            } catch (ExtractionException second) {
+                return new Outcome(List.of(), failure(chunk, second.getMessage()), false);
+            }
+        }
     }
 
     private List<ExtractedConcept> fitted(List<ExtractedConcept> parsed, TopicPlan plan, boolean mayAddTopics) {

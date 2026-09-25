@@ -221,6 +221,8 @@ class TopicIngestTest {
     @DisplayName("should say in the report and in the source note which parts were not read")
     void should_reportWhatTheBudgetLeftUnread() throws IOException {
         ConfigSchema.byPath("llm.maxTokensPerRun").set(config, "1000");
+        ConfigSchema.byPath("llm.maxTokensPerPage").set(config, "0");
+        ConfigSchema.byPath("llm.parallelCalls").set(config, "1");
         tokensPerCall = 1_000;
         String section = "Inhalt ".repeat(1_200);
 
@@ -230,6 +232,25 @@ class TopicIngestTest {
         assertThat(report.budgetExhausted()).isTrue();
         assertThat(report.unprocessed()).containsExactly("Skript — Kapitel 2", "Skript — Kapitel 3");
         assertThat(note("Quellen/Skript.md")).contains("Nicht verarbeitet").contains("Skript — Kapitel 2");
+    }
+
+    // Ein Lehrbuch brach nach etwa 170 dichten Seiten am festen Budget ab.
+    @Test
+    @DisplayName("should give a long document a budget that grows with its length")
+    void should_readALongDocumentToTheEnd() throws IOException {
+        ConfigSchema.byPath("llm.maxTokensPerRun").set(config, "1000");
+        ConfigSchema.byPath("llm.maxTokensPerPage").set(config, "3000");
+        tokensPerCall = 1_000;
+        String section = "Inhalt ".repeat(1_200);
+        StringBuilder book = new StringBuilder();
+        for (int chapter = 1; chapter <= 12; chapter++) {
+            book.append("# Kapitel ").append(chapter).append("\n\n").append(section).append("\n\n");
+        }
+
+        IngestReport report = ingest(markdown("Lehrbuch.md", book.toString()));
+
+        assertThat(report.budgetExhausted()).isFalse();
+        assertThat(report.unprocessed()).isEmpty();
     }
 
     @Test
