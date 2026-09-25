@@ -149,7 +149,8 @@ public class JdbcAiJobRepository implements AiJobRepository {
     @Override
     public boolean progress(UUID id, String message, Integer percent, Instant leaseUntil) {
         return jdbcClient.sql("""
-                UPDATE platform.ai_jobs SET progress = :message, percent = :percent, lease_until = :leaseUntil
+                UPDATE platform.ai_jobs
+                SET progress = :message, percent = COALESCE(:percent, percent), lease_until = :leaseUntil
                 WHERE id = :id AND status = 'RUNNING'
                 """)
             .param("id", id)

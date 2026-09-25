@@ -3,6 +3,7 @@ package de.raindancer118.stoneai.extract;
 import de.raindancer118.stoneai.chunk.Chunk;
 import de.raindancer118.stoneai.chunk.Provenance;
 import de.raindancer118.stoneai.config.StoneAiConfig;
+import de.raindancer118.stoneai.pipeline.ProgressSink;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,8 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -284,6 +287,26 @@ class ExtractionServiceTest {
             assertThat(Prompts.extractionSystem("de", false)).contains("Markdown-Tabelle");
             assertThat(Prompts.ocr(1, "de")).contains("Markdown-Tabelle");
             assertThat(Prompts.extractionSystem("de", false)).contains("Erfinde keine Zellen");
+        }
+    }
+
+    // Der Job muss einer 550-Seiten-Vorlage einen echten Zwischenstand zeigen koennen, nicht nur
+    // "gestartet" und "fertig".
+    @Nested
+    @DisplayName("Progress")
+    class Progress {
+
+        @Test
+        @DisplayName("should report progress per chunk, ending at 100")
+        void should_reportProgress_perChunk() {
+            ScriptedLlm llm = new ScriptedLlm("{\"concepts\":[]}", "{\"concepts\":[]}", "{\"concepts\":[]}");
+            Map<Integer, String> reported = new TreeMap<>();
+            ProgressSink sink = (message, percent) -> reported.put(percent, message);
+
+            new ExtractionService(config, llm, sink).extract(List.of(chunk("A"), chunk("B"), chunk("C")));
+
+            assertThat(reported.keySet()).contains(0, 33, 66, 100);
+            assertThat(reported.get(100)).isNotBlank();
         }
     }
 

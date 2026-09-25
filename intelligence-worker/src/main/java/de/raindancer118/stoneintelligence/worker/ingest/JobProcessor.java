@@ -7,9 +7,11 @@ import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import de.raindancer118.stoneai.config.ConfigSchema;
 import de.raindancer118.stoneai.pipeline.IngestPipeline;
+import de.raindancer118.stoneai.pipeline.ProgressSink;
 import de.raindancer118.stoneintelligence.worker.platform.ClaimedJob;
 import de.raindancer118.stoneintelligence.worker.platform.PlatformApi;
 import de.raindancer118.stoneintelligence.worker.platform.PlatformRefusedException;
@@ -27,6 +29,8 @@ final class JobProcessor {
     private static final Logger LOG = LoggerFactory.getLogger(JobProcessor.class);
     /** Deutlich kuerzer als die Lease (10 min), damit ein langer Lauf nicht als abgestuerzt gilt. */
     private static final long HEARTBEAT_SECONDS = 120;
+    /** Untergrenze zwischen zwei Fortschrittsmeldungen an platform-api, egal wie viele Abschnitte pro Sekunde durchlaufen. */
+    private static final long PROGRESS_MIN_INTERVAL_MILLIS = 3_000;
 
     private final PlatformApi platform;
     private final LlmFactory llms;
@@ -59,7 +63,9 @@ final class JobProcessor {
             var config = GatewayLlmFactory.configFor(model);
             ConfigSchema.byPath("vault.path").set(config, PlatformNoteStore.ROOT.toString());
             var store = PlatformNoteStore.load(platform, job.vaultId(), job.changeSetId(), job.level());
-            var report = IngestPipeline.hosted(config, llms.forService(model), clock).ingestInto(document, store);
+            var report = IngestPipeline.hosted(config, llms.forService(model), clock)
+                    .withProgress(throttled(job))
+                    .ingestInto(document, store);
 
             if (report.wasSkipped()) {
                 platform.fail(job.jobId(), report.skippedReason(), false);
@@ -90,6 +96,26 @@ final class JobProcessor {
         }
         var listed = String.join("; ", gaps.size() > 5 ? gaps.subList(0, 5) : gaps) + (gaps.size() > 5 ? " …" : "");
         return done + " – nicht verarbeitet: " + listed;
+    }
+
+    /**
+     * Forwards the pipeline's stage progress to platform-api, without a network call for every
+     * one of the potentially hundreds of chunks of a long document.
+     */
+    private ProgressSink throttled(ClaimedJob job) {
+        AtomicLong lastSentAt = new AtomicLong(0);
+        return (message, percent) -> {
+            long now = System.currentTimeMillis();
+            if (percent < 100 && now - lastSentAt.get() < PROGRESS_MIN_INTERVAL_MILLIS) {
+                return;
+            }
+            lastSentAt.set(now);
+            try {
+                platform.progress(job.jobId(), message, percent);
+            } catch (RuntimeException ignored) {
+                // Naechste Meldung versucht es erneut; die Lease haelt der Heartbeat ohnehin am Leben.
+            }
+        };
     }
 
     private void beat(ClaimedJob job) {

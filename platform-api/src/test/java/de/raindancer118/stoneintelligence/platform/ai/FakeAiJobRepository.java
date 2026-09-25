@@ -89,7 +89,8 @@ public final class FakeAiJobRepository implements AiJobRepository {
         if (job == null || job.status() != AiJob.Status.RUNNING) {
             return false;
         }
-        with(job, job.status(), job.attempts(), job.availableAt(), leaseUntil, message, percent, job.error(), job.changeSetId(), null);
+        with(job, job.status(), job.attempts(), job.availableAt(), leaseUntil, message,
+            percent != null ? percent : job.percent(), job.error(), job.changeSetId(), null);
         return true;
     }
 

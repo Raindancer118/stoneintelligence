@@ -3,6 +3,7 @@ package de.raindancer118.stoneai.extract;
 import de.raindancer118.stoneai.chunk.Chunk;
 import de.raindancer118.stoneai.config.StoneAiConfig;
 import de.raindancer118.stoneai.note.TextSimilarity;
+import de.raindancer118.stoneai.pipeline.ProgressSink;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,10 +21,16 @@ public final class ExtractionService {
 
     private final StoneAiConfig config;
     private final LlmClient llm;
+    private final ProgressSink progress;
 
     public ExtractionService(StoneAiConfig config, LlmClient llm) {
+        this(config, llm, ProgressSink.NONE);
+    }
+
+    public ExtractionService(StoneAiConfig config, LlmClient llm, ProgressSink progress) {
         this.config = config;
         this.llm = llm;
+        this.progress = progress;
     }
 
     public ExtractionResult extract(List<Chunk> chunks) {
@@ -48,6 +55,8 @@ public final class ExtractionService {
         List<String> unprocessed = new ArrayList<>();
         for (int index = 0; index < chunks.size(); index++) {
             Chunk chunk = chunks.get(index);
+            progress.report("Abschnitt " + (index + 1) + "/" + chunks.size() + " wird gelesen",
+                    index * 100 / chunks.size());
             if (used >= budget) {
                 exhausted = true;
                 // Named, not just counted: the source note tells the reader what is missing.
@@ -77,6 +86,7 @@ public final class ExtractionService {
                 }
             }
         }
+        progress.report("Abschnitte gelesen", 100);
 
         return new ExtractionResult(concepts, failures, used, exhausted, unprocessed.stream().distinct().toList());
     }
