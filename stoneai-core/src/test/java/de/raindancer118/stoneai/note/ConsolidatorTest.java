@@ -6,6 +6,7 @@ import de.raindancer118.stoneai.extract.ExtractedConcept;
 import de.raindancer118.stoneai.extract.LlmAnswer;
 import de.raindancer118.stoneai.extract.LlmClient;
 import de.raindancer118.stoneai.extract.Tier;
+import de.raindancer118.stoneai.pipeline.ProgressSink;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -233,6 +235,24 @@ class ConsolidatorTest {
                     concept("Benchmarking", "Zweiter Teil " + "b".repeat(2_000), 2)));
 
             assertThat(notes.getFirst().body()).contains("Erster Teil").contains("Zweiter Teil");
+        }
+    }
+
+    @Nested
+    @DisplayName("Progress")
+    class Progress {
+
+        @Test
+        @DisplayName("should report progress per merged note, ending at 100")
+        void should_reportProgress_perGroup() {
+            Map<Integer, String> reported = new TreeMap<>();
+            ProgressSink sink = (message, percent) -> reported.put(percent, message);
+
+            new Consolidator(config, new ScriptedLlm(), sink).consolidate(List.of(
+                    concept("Gruppe", "Erste.", 1), concept("Ring", "Zweite.", 2)));
+
+            assertThat(reported.keySet()).contains(50, 100);
+            assertThat(reported.get(100)).isNotBlank();
         }
     }
 

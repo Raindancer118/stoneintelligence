@@ -104,6 +104,21 @@ public abstract class AiJobRepositoryContractTest {
         assertThat(running.leaseUntil()).isEqualTo(now.plus(Duration.ofMinutes(20)));
     }
 
+    // Der Heartbeat meldet nur die Lease-Verlaengerung, ohne einen bekannten Prozentsatz - er
+    // darf den zuletzt gemeldeten Fortschritt nicht loeschen.
+    @Test
+    void should_keepTheLastPercent_whenAHeartbeatReportsNone() {
+        var job = upload("a.pdf", now);
+        jobs.claim(now, lease);
+        jobs.progress(job.id(), "Lese Seite 3", 30, now.plus(lease));
+
+        jobs.progress(job.id(), "Wird verarbeitet", null, now.plus(Duration.ofMinutes(20)));
+
+        var running = jobs.find(vaultId, job.id()).orElseThrow();
+        assertThat(running.progress()).isEqualTo("Wird verarbeitet");
+        assertThat(running.percent()).isEqualTo(30);
+    }
+
     // Datensparsamkeit: das hochgeladene Dokument wird nur so lange aufbewahrt, wie es gebraucht wird.
     @Test
     void should_dropTheDocument_whenFinished() {

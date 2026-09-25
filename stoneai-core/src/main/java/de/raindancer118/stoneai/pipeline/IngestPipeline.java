@@ -58,20 +58,22 @@ public final class IngestPipeline {
     private final Supplier<LocalDate> clock;
     private final boolean dryRun;
     private final boolean force;
+    private final ProgressSink progress;
 
     public IngestPipeline(StoneAiConfig config, LlmClient llm, ProcessingLedger ledger,
                           Supplier<LocalDate> clock, boolean dryRun) {
-        this(config, llm, ledger, clock, dryRun, false);
+        this(config, llm, ledger, clock, dryRun, false, ProgressSink.NONE);
     }
 
     private IngestPipeline(StoneAiConfig config, LlmClient llm, ProcessingLedger ledger,
-                           Supplier<LocalDate> clock, boolean dryRun, boolean force) {
+                           Supplier<LocalDate> clock, boolean dryRun, boolean force, ProgressSink progress) {
         this.config = config;
         this.llm = llm;
         this.ledger = ledger;
         this.clock = clock;
         this.dryRun = dryRun;
         this.force = force;
+        this.progress = progress;
     }
 
     /**
@@ -80,12 +82,17 @@ public final class IngestPipeline {
      * attachment is copied - the document is typically a temporary upload.
      */
     public static IngestPipeline hosted(StoneAiConfig config, LlmClient llm, Supplier<LocalDate> clock) {
-        return new IngestPipeline(config, llm, null, clock, false, true);
+        return new IngestPipeline(config, llm, null, clock, false, true, ProgressSink.NONE);
     }
 
     /** A pipeline that processes a document again even when the ledger has seen it. */
     public IngestPipeline force() {
-        return new IngestPipeline(config, llm, ledger, clock, dryRun, true);
+        return new IngestPipeline(config, llm, ledger, clock, dryRun, true, progress);
+    }
+
+    /** A pipeline that reports each stage's progress (planning, per-chunk reading, merging) to {@code sink}. */
+    public IngestPipeline withProgress(ProgressSink sink) {
+        return new IngestPipeline(config, llm, ledger, clock, dryRun, force, sink);
     }
 
     public IngestReport ingest(Path file) throws IOException {
@@ -129,9 +136,16 @@ public final class IngestPipeline {
         VaultIndex index = VaultIndex.build(config, ProtectionPolicy.of(config, vaultRoot), store);
 
         // First decide what the document is about, then write exactly those notes.
+        progress.report("Gliederung wird geplant", 10);
         TopicPlanner.Result planned = new TopicPlanner(config, recorder).plan(source, chunks, index.titles());
-        ExtractionResult extraction = new ExtractionService(config, recorder).extract(chunks, planned.plan());
-        List<DraftNote> notes = new Consolidator(config, recorder).consolidate(extraction.concepts());
+
+        progress.report("Text wird gelesen", 15);
+        ExtractionResult extraction = new ExtractionService(config, recorder, progress.scaled(15, 75))
+                .extract(chunks, planned.plan());
+
+        progress.report("Notizen werden zusammengeführt", 78);
+        List<DraftNote> notes = new Consolidator(config, recorder, progress.scaled(78, 95)).consolidate(extraction.concepts());
+        progress.report("Notizen werden geschrieben", 96);
 
         VaultWriter writer = new VaultWriter(config, ProtectionPolicy.of(config, vaultRoot), clock, index, store);
         if (dryRun) {

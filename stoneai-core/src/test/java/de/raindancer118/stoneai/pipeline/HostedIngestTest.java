@@ -16,6 +16,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,6 +49,10 @@ class HostedIngestTest {
     }
 
     private IngestReport ingest(String name, String content) throws IOException {
+        return ingest(name, content, ProgressSink.NONE);
+    }
+
+    private IngestReport ingest(String name, String content, ProgressSink progress) throws IOException {
         Path document = upload.resolve(name);
         Files.writeString(document, content);
         LlmClient llm = new LlmClient() {
@@ -60,7 +66,8 @@ class HostedIngestTest {
                 return new LlmAnswer("", 0, "fake/vision");
             }
         };
-        return IngestPipeline.hosted(config, llm, () -> LocalDate.of(2026, 9, 23)).ingestInto(document, store);
+        return IngestPipeline.hosted(config, llm, () -> LocalDate.of(2026, 9, 23)).withProgress(progress)
+                .ingestInto(document, store);
     }
 
     @Test
@@ -91,6 +98,20 @@ class HostedIngestTest {
         ingest("Skript.md", "# Relationen\n\nText.\n");
 
         assertThat(store.notes.get(VAULT.resolve("Quellen/Skript.md"))).contains("(obsidian://stoneintelligence-ai-changes)");
+    }
+
+    // A long document needs a real in-between reading, not just "started" and "done".
+    @Test
+    @DisplayName("should report real progress between planning and writing, not just start and end")
+    void should_reportProgress_throughTheStages() throws IOException {
+        List<Integer> percents = new ArrayList<>();
+        ingest("Skript.md", "# Relationen\n\nEine Relation ist eine Teilmenge.\n",
+                (message, percent) -> percents.add(percent));
+
+        assertThat(percents).isNotEmpty();
+        assertThat(percents).isSorted();
+        assertThat(percents.get(0)).isLessThan(50);
+        assertThat(percents.get(percents.size() - 1)).isGreaterThan(percents.get(0));
     }
 
     @Test

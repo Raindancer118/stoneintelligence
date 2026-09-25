@@ -5,6 +5,7 @@ import de.raindancer118.stoneai.extract.ExtractedConcept;
 import de.raindancer118.stoneai.extract.LlmAnswer;
 import de.raindancer118.stoneai.extract.LlmClient;
 import de.raindancer118.stoneai.extract.Tier;
+import de.raindancer118.stoneai.pipeline.ProgressSink;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -28,17 +29,26 @@ public final class Consolidator {
 
     private final StoneAiConfig config;
     private final LlmClient llm;
+    private final ProgressSink progress;
 
     public Consolidator(StoneAiConfig config, LlmClient llm) {
+        this(config, llm, ProgressSink.NONE);
+    }
+
+    public Consolidator(StoneAiConfig config, LlmClient llm, ProgressSink progress) {
         this.config = config;
         this.llm = llm;
+        this.progress = progress;
     }
 
     public List<DraftNote> consolidate(List<ExtractedConcept> concepts) {
         List<List<ExtractedConcept>> groups = group(concepts);
         List<DraftNote> notes = new ArrayList<>();
-        for (List<ExtractedConcept> group : groups) {
+        for (int i = 0; i < groups.size(); i++) {
+            List<ExtractedConcept> group = groups.get(i);
             notes.add(group.size() == 1 ? toNote(group.get(0)) : merge(group));
+            progress.report("Notiz " + (i + 1) + "/" + groups.size() + " wird zusammengeführt",
+                    (i + 1) * 100 / groups.size());
         }
         return capped(notes);
     }
