@@ -57,6 +57,8 @@ export interface StoneIntelligenceSettings {
   vaults: Record<string, VaultSyncState>;
   /** Von einem anderen Vault angelegt: beim ersten Start mit diesem gemeinsamen Vault verbinden. */
   pendingConnect: ConnectLink | null;
+  /** Eigenschaften einmalig ausgeblendet (s. propertiesDisplay) - danach entscheidet die Person. */
+  propertiesDefaultApplied: boolean;
 }
 
 /**
@@ -77,6 +79,7 @@ export const DEFAULT_SETTINGS: StoneIntelligenceSettings = {
   excludedFolders: [],
   vaults: {},
   pendingConnect: null,
+  propertiesDefaultApplied: false,
 };
 
 export function emptyVaultState(): VaultSyncState {

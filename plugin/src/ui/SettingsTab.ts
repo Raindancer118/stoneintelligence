@@ -25,6 +25,9 @@ export interface SettingsHost {
   applyConnectionConfig(json: string): Promise<void>;
   canInvite(): boolean;
   openInvite(): void;
+  /** null = diese Obsidian-Version erlaubt es nicht. */
+  propertiesHidden(): boolean | null;
+  setPropertiesHidden(hidden: boolean): void;
 }
 
 /**
@@ -54,6 +57,7 @@ export class StoneIntelligenceSettingTab extends PluginSettingTab {
     this.renderAccount(containerEl);
     this.renderVault(containerEl);
     this.renderSync(containerEl);
+    this.renderDisplay(containerEl);
     this.renderAdvanced(containerEl);
 
     this.unsubscribe?.();
@@ -230,6 +234,18 @@ export class StoneIntelligenceSettingTab extends PluginSettingTab {
           await this.host.saveSettings();
         });
       });
+  }
+
+  private renderDisplay(containerEl: HTMLElement): void {
+    const hidden = this.host.propertiesHidden();
+    if (hidden === null) {
+      return;
+    }
+    new Setting(containerEl).setName("Anzeige").setHeading();
+    new Setting(containerEl)
+      .setName("Eigenschaften in Notizen ausblenden")
+      .setDesc("Tags, Daten und Aliasse stehen dann nicht mehr oben in jeder Notiz, bleiben aber in der Seitenleiste „Dateieigenschaften“ erreichbar. Gilt für diesen ganzen Obsidian-Vault (wie die Obsidian-Einstellung „Eigenschaften im Dokument“).")
+      .addToggle((toggle) => toggle.setValue(hidden).onChange((value) => this.host.setPropertiesHidden(value)));
   }
 
   private renderAdvanced(containerEl: HTMLElement): void {
