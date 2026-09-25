@@ -100,6 +100,19 @@ class FrontmatterTest {
         }
 
         @Test
+        @DisplayName("should drop the given keys and keep the order of the rest")
+        void should_removeKeys_when_askedToDropThem() {
+            Frontmatter frontmatter = Frontmatter.empty()
+                    .withScalar("title", "Gruppe")
+                    .withList("tags", List.of("StoneAI"))
+                    .withScalar("confidence", "0.9")
+                    .withScalar("created", "2026-09-01");
+
+            assertThat(frontmatter.without(java.util.Set.of("title", "confidence", "fehlt")).keys())
+                    .containsExactly("tags", "created");
+        }
+
+        @Test
         @DisplayName("should quote values that would otherwise break the YAML")
         void should_quote_when_valueContainsColonOrHash() {
             String rendered = Frontmatter.empty().withScalar("title", "A: B #1").render();

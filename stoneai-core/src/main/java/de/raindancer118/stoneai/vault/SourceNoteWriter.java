@@ -66,19 +66,23 @@ public final class SourceNoteWriter {
         Path file = fileFor(document);
         String today = clock.get().toString();
 
-        Frontmatter frontmatter = Frontmatter.empty()
-                .withScalar("title", document.title())
+        // Nur Tags und Daten als Eigenschaften (Issue #1) - was gelesen wurde, steht im Text.
+        Frontmatter frontmatter = Frontmatter.empty();
+        if (!IndexedNote.titleOf(file).equals(document.title())) {
+            frontmatter = frontmatter.withScalar("title", document.title());
+        }
+        frontmatter = frontmatter
                 .withList("tags", List.of(config.notes().tag(), "quelle"))
-                .withScalar("type", "source")
-                .withScalar("document", document.file().getFileName().toString())
-                .withScalar("kind", document.kind().name().toLowerCase(java.util.Locale.ROOT))
-                .withScalar("pages", String.valueOf(document.pages().size()))
-                .withScalar("sha256", document.sha256())
                 .withScalar("created", today)
                 .withScalar("updated", today);
 
         StringBuilder block = new StringBuilder();
-        block.append("Verarbeitet am ").append(today).append(".\n\n");
+        block.append("Verarbeitet am ").append(today);
+        if (document.kind() == de.raindancer118.stoneai.source.DocumentKind.PDF) {
+            int pages = document.pages().size();
+            block.append(" · ").append(pages).append(pages == 1 ? " Seite" : " Seiten");
+        }
+        block.append(".\n\n");
         if (attachment != null) {
             block.append("**Original:** ![[").append(attachment.getFileName()).append("]]\n\n");
         } else if (store.localFiles()) {
@@ -115,7 +119,8 @@ public final class SourceNoteWriter {
         String blockId = "src-" + document.sha256().substring(0, 8);
         String existing = store.exists(file) ? store.read(file) : "";
         Frontmatter.Document parsed = Frontmatter.of(existing);
-        String content = parsed.frontmatter().mergeAdditively(frontmatter).withScalar("updated", today).render()
+        String content = withoutLegacyProperties(parsed.frontmatter(), file)
+                .mergeAdditively(frontmatter).withScalar("updated", today).render()
                 + "\n#" + config.notes().tag() + "\n\n"
                 + ManagedBlock.apply(stripLeadingTag(parsed.body()), blockId, block.toString());
 
@@ -123,6 +128,21 @@ public final class SourceNoteWriter {
             store.write(file, content);
         }
         return file;
+    }
+
+    /** Bookkeeping earlier versions kept in the source note's properties; the text says it now. */
+    private static final java.util.Set<String> LEGACY_PROPERTIES =
+            java.util.Set.of("type", "document", "kind", "pages", "sha256");
+
+    private static Frontmatter withoutLegacyProperties(Frontmatter frontmatter, Path file) {
+        if (!"source".equals(frontmatter.scalar("type"))) {
+            return frontmatter;
+        }
+        java.util.Set<String> drop = new java.util.HashSet<>(LEGACY_PROPERTIES);
+        if (IndexedNote.titleOf(file).equals(frontmatter.scalar("title"))) {
+            drop.add("title");
+        }
+        return frontmatter.without(drop);
     }
 
     /** Drops the inline tag line so re-rendering does not stack it up. */
