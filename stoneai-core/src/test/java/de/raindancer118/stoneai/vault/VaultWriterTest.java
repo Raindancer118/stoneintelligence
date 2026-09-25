@@ -86,20 +86,31 @@ class VaultWriterTest {
             assertThat(document.body()).contains("#StoneAI");
         }
 
+        // Issue #1: die Eigenschaften oben verwirrten beim Lesen. Was Obsidian selbst nutzt
+        // (Tags, Aliasse) und die Daten bleiben, Herkunft steht verlinkt im Text, der Rest entfaellt.
         @Test
-        @DisplayName("should record provenance, entities and confidence as queryable fields")
-        void should_writeStructuredFields_when_creatingANote() throws IOException {
+        @DisplayName("should keep only the properties Obsidian itself uses")
+        void should_writeOnlyTagsAndAliases_when_creatingANote() throws IOException {
             writer().write(note("Gruppe", "Inhalt."), documentHash, "[[Quellen/Skript]]");
 
             Frontmatter frontmatter = Frontmatter.of(
                     Files.readString(config.vault().notesDir().resolve("Gruppe.md"))).frontmatter();
 
-            assertThat(frontmatter.scalar("source")).isEqualTo("[[Quellen/Skript]]");
-            assertThat(frontmatter.scalar("source_page")).isEqualTo("42");
+            assertThat(frontmatter.keys()).containsExactly("aliases", "tags", "created", "updated");
+            assertThat(frontmatter.list("aliases")).containsExactly("Alias");
             assertThat(frontmatter.scalar("created")).isEqualTo("2026-09-01");
-            assertThat(frontmatter.scalar("confidence")).isEqualTo("0.86");
-            assertThat(frontmatter.list("aliases")).contains("Alias");
-            assertThat(frontmatter.nested("entities")).containsEntry("begriff", List.of("Reflexivität"));
+        }
+
+        @Test
+        @DisplayName("should leave out empty aliases")
+        void should_omitAliases_when_thereAreNone() throws IOException {
+            DraftNote plain = new DraftNote("Gruppe", List.of(), "", "Inhalt.", List.of(), Map.of(), List.of(), 0.9,
+                    List.of(new Provenance("Skript", Path.of("/tmp/Skript.pdf"), 1, null)));
+
+            writer().write(plain, documentHash, "[[Quellen/Skript]]");
+
+            assertThat(Frontmatter.of(Files.readString(config.vault().notesDir().resolve("Gruppe.md")))
+                    .frontmatter().keys()).containsExactly("tags", "created", "updated");
         }
 
         @Test
@@ -187,6 +198,48 @@ class VaultWriterTest {
         }
 
         @Test
+        @DisplayName("should drop the bookkeeping properties earlier versions wrote into their own notes")
+        void should_removeLegacyProperties_when_rewritingAnAiNote() throws IOException {
+            Path file = handwritten("Gruppe.md", """
+                    ---
+                    title: Gruppe
+                    aliases: [Alias]
+                    tags: [StoneAI, mathe]
+                    type: concept
+                    source: "[[Quellen/Skript]]"
+                    source_page: 42
+                    related: [Ring]
+                    created: 2026-08-01
+                    updated: 2026-08-01
+                    confidence: 0.8
+                    bewertung: 5
+                    ---
+
+                    Text
+                    """);
+
+            writer().write(note("Gruppe", "Ergänzung."), documentHash, "[[Q]]");
+
+            Frontmatter frontmatter = Frontmatter.of(Files.readString(file)).frontmatter();
+            assertThat(frontmatter.keys()).containsExactly("aliases", "tags", "created", "updated", "bewertung");
+            assertThat(frontmatter.scalar("created")).isEqualTo("2026-08-01");
+            assertThat(frontmatter.scalar("updated")).isEqualTo("2026-09-01");
+            assertThat(frontmatter.list("tags")).contains("mathe", "StoneAI");
+        }
+
+        @Test
+        @DisplayName("should leave the properties of a person's own note alone")
+        void should_keepProperties_when_noteWasNotWrittenByTheAi() throws IOException {
+            Path file = handwritten("Gruppe.md", "---\ntitle: Mein Titel\ncreated: 2020-01-01\nsource: Buch\n---\n\nText\n");
+
+            writer().write(note("Gruppe", "Ergänzung."), documentHash, "[[Q]]");
+
+            Frontmatter frontmatter = Frontmatter.of(Files.readString(file)).frontmatter();
+            assertThat(frontmatter.scalar("created")).isEqualTo("2020-01-01");
+            assertThat(frontmatter.scalar("source")).isEqualTo("Buch");
+        }
+
+        @Test
         @DisplayName("should update its own block rather than appending a second one on a re-run")
         void should_replaceOwnBlock_when_runTwice() throws IOException {
             writer().write(note("Gruppe", "Erste Fassung."), documentHash, "[[Q]]");
@@ -257,16 +310,82 @@ class VaultWriterTest {
         }
 
         @Test
-        @DisplayName("should still record the unresolved references in the frontmatter")
-        void should_keepUnresolvedInFrontmatter_when_linkIsNotWritten() throws IOException {
+        @DisplayName("should not name unresolved references anywhere")
+        void should_dropUnresolvedReferences_when_linkIsNotWritten() throws IOException {
             VaultWriter writer = new VaultWriter(config, ProtectionPolicy.of(config, vault),
                     () -> LocalDate.of(2026, 9, 1), VaultIndex.empty());
 
             writer.write(linking("Nicht-vorhandenes-Konzept"), documentHash, "[[Q]]");
 
-            Frontmatter frontmatter = Frontmatter.of(
-                    Files.readString(config.vault().notesDir().resolve("Gruppe.md"))).frontmatter();
-            assertThat(frontmatter.list("related")).containsExactly("Nicht-vorhandenes-Konzept");
+            assertThat(Files.readString(config.vault().notesDir().resolve("Gruppe.md")))
+                    .doesNotContain("Nicht-vorhandenes-Konzept");
+        }
+
+        @Test
+        @DisplayName("should keep a link with a display text intact inside a table")
+        void should_escapeLinkAlias_when_linkSitsInATableRow() throws IOException {
+            VaultIndex index = VaultIndex.empty();
+            index.register("Ring", List.of(), config.vault().notesDir().resolve("Ring.md"));
+            VaultWriter writer = new VaultWriter(config, ProtectionPolicy.of(config, vault),
+                    () -> LocalDate.of(2026, 9, 1), index);
+            DraftNote table = new DraftNote("Gruppe", List.of(), "", """
+                    | Struktur | Beispiel |
+                    |---|---|
+                    | [[Ring|Ringe]] | ℤ |
+
+                    Mehr über [[Ring|Ringe]].""", List.of(), Map.of(), List.of(), 0.8,
+                    List.of(new Provenance("Skript", Path.of("/tmp/Skript.pdf"), 1, null)));
+
+            writer.write(table, documentHash, "[[Q]]");
+
+            String content = Files.readString(config.vault().notesDir().resolve("Gruppe.md"));
+            assertThat(content).contains("| [[Ring\\|Ringe]] | ℤ |").contains("Mehr über [[Ring|Ringe]].");
+        }
+    }
+
+    // Issue #1: die Quellenangabe fuehrt zur genauen Stelle im Original.
+    @Nested
+    @DisplayName("Citing the source")
+    class Citing {
+
+        private DraftNote from(Provenance... sources) {
+            return new DraftNote("Gruppe", List.of(), "", "Inhalt.", List.of(), Map.of(), List.of(), 0.8,
+                    List.of(sources));
+        }
+
+        private String written() throws IOException {
+            return Files.readString(config.vault().notesDir().resolve("Gruppe.md"));
+        }
+
+        @Test
+        @DisplayName("should link each cited page to that page of the stored original")
+        void should_linkToThePdfPage_when_theOriginalIsInTheVault() throws IOException {
+            Path original = vault.resolve("Anhänge").resolve("Skript.pdf");
+
+            writer().write(from(new Provenance("Skript", Path.of("/tmp/Skript.pdf"), 42, null),
+                            new Provenance("Skript", Path.of("/tmp/Skript.pdf"), 12, null, 18)),
+                    documentHash, "[[Quellen/Skript]]", original);
+
+            assertThat(written()).contains(
+                    "*Quelle: [[Anhänge/Skript.pdf#page=42|Skript, S. 42]]; [[Anhänge/Skript.pdf#page=12|Skript, S. 12–18]]*");
+        }
+
+        @Test
+        @DisplayName("should link to the source note when the original is not in the vault")
+        void should_linkToTheSourceNote_when_thereIsNoOriginal() throws IOException {
+            writer().write(from(new Provenance("Skript", Path.of("/tmp/Skript.pdf"), 42, null)),
+                    documentHash, "[[Quellen/Skript]]", null);
+
+            assertThat(written()).contains("*Quelle: [[Quellen/Skript|Skript, S. 42]]*");
+        }
+
+        @Test
+        @DisplayName("should cite a section of a text document by its heading")
+        void should_linkToTheSourceNote_when_theSourceHasNoPages() throws IOException {
+            writer().write(from(new Provenance("Mitschrift", Path.of("/tmp/Mitschrift.md"), null, "Relationen")),
+                    documentHash, "[[Quellen/Mitschrift]]", vault.resolve("Anhänge").resolve("Mitschrift.md"));
+
+            assertThat(written()).contains("*Quelle: [[Quellen/Mitschrift|Mitschrift — Relationen]]*");
         }
     }
 
