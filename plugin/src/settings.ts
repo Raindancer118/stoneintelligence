@@ -1,4 +1,5 @@
 import type { StoredTokens } from "./sync/AuthentikAuthClient";
+import type { ConnectLink } from "./sync/connectLink";
 import type { FileMeta } from "./sync/filePlan";
 import type { NoteMeta } from "./sync/reconcilePlan";
 
@@ -54,6 +55,8 @@ export interface StoneIntelligenceSettings {
   /** Ordner, die nie synchronisiert werden (Praefix-Vergleich auf ganze Ordnernamen). */
   excludedFolders: string[];
   vaults: Record<string, VaultSyncState>;
+  /** Von einem anderen Vault angelegt: beim ersten Start mit diesem gemeinsamen Vault verbinden. */
+  pendingConnect: ConnectLink | null;
 }
 
 /**
@@ -73,6 +76,7 @@ export const DEFAULT_SETTINGS: StoneIntelligenceSettings = {
   paused: false,
   excludedFolders: [],
   vaults: {},
+  pendingConnect: null,
 };
 
 export function emptyVaultState(): VaultSyncState {

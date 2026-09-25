@@ -267,6 +267,33 @@
   color: var(--text-warning);
 }
 
+.stoneintelligence-connect-option {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 0.25em 1em 0.75em;
+  margin-bottom: 0.75em;
+}
+
+.stoneintelligence-connect-option h4 {
+  margin: 0.6em 0 0.2em;
+}
+
+.stoneintelligence-connect-option p {
+  margin: 0.3em 0;
+}
+
+.stoneintelligence-connect-path-row {
+  display: flex;
+  gap: 0.5em;
+}
+
+.stoneintelligence-connect-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+}
+
 .stoneintelligence-ai-active {
   border-left: 3px solid var(--interactive-accent);
   padding-left: 0.75em;
