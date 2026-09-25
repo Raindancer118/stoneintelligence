@@ -218,6 +218,27 @@ class ConsolidatorTest {
             assertThat(note.related()).contains("Ring", "Körper");
             assertThat(note.confidence()).isEqualTo(0.9);
         }
+
+        // Probelauf "Die Verwandlung": 15 Abschnitte gaben Gregor Samsa 40 Tags ("Kaffee", "Tür",
+        // "Familie" und "familie") - die Vereinigung aller Abschnitte ist kein Schlagwort mehr.
+        @Test
+        @DisplayName("should keep only the most frequent tags of a merged note, without case duplicates")
+        void should_keepTheMostFrequentTags_whenMergingManyParts() {
+            ScriptedLlm llm = new ScriptedLlm("Zusammengeführter Text über Gregor.");
+            List<ExtractedConcept> parts = new ArrayList<>();
+            for (int part = 0; part < 15; part++) {
+                List<String> tags = new ArrayList<>(List.of(part % 2 == 0 ? "Familie" : "familie", "figur/hauptfigur"));
+                tags.add("Einzelheit " + part);
+                parts.add(new ExtractedConcept("Gregor Samsa", List.of(), "d", "Teil " + part + ".", tags, Map.of(),
+                        List.of(), 0.8, new Provenance("S", Path.of("/tmp/s.pdf"), part + 1, null)));
+            }
+
+            DraftNote note = new Consolidator(config, llm).consolidate(parts).get(0);
+
+            assertThat(note.tags()).hasSizeLessThanOrEqualTo(Consolidator.MAX_TAGS);
+            assertThat(note.tags().subList(0, 2)).containsExactly("Familie", "figur/hauptfigur");
+            assertThat(note.tags()).filteredOn(tag -> tag.equalsIgnoreCase("familie")).hasSize(1);
+        }
     }
 
     @Nested
