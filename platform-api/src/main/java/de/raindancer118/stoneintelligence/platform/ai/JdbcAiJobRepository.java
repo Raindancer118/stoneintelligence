@@ -19,7 +19,7 @@ public class JdbcAiJobRepository implements AiJobRepository {
     /** Alles ausser dem Dokument - das wird nur gezielt geladen. */
     private static final String COLUMNS = """
         id, vault_id, service, requested_by, file_name, content_type, size, level, status, attempts, max_attempts,
-        available_at, lease_until, progress, percent, error, change_set_id, created_at, finished_at""";
+        available_at, lease_until, progress, percent, error, change_set_id, created_at, finished_at, waiting_for_capacity""";
 
     private final JdbcClient jdbcClient;
 
@@ -39,7 +39,8 @@ public class JdbcAiJobRepository implements AiJobRepository {
             rs.getString("requested_by"), rs.getString("file_name"), rs.getString("content_type"), rs.getLong("size"),
             rs.getInt("level"), AiJob.Status.valueOf(rs.getString("status")), rs.getInt("attempts"), rs.getInt("max_attempts"),
             instant(rs, "available_at"), instant(rs, "lease_until"), rs.getString("progress"), percent, rs.getString("error"),
-            changeSet == null ? null : UUID.fromString(changeSet), instant(rs, "created_at"), instant(rs, "finished_at"));
+            changeSet == null ? null : UUID.fromString(changeSet), instant(rs, "created_at"), instant(rs, "finished_at"),
+            rs.getBoolean("waiting_for_capacity"));
     }
 
     @Override
@@ -114,7 +115,8 @@ public class JdbcAiJobRepository implements AiJobRepository {
             .update();
         return jdbcClient.sql("""
                 UPDATE platform.ai_jobs
-                SET status = 'RUNNING', attempts = attempts + 1, lease_until = :leaseUntil, finished_at = NULL
+                SET status = 'RUNNING', attempts = attempts + 1, lease_until = :leaseUntil, finished_at = NULL,
+                    waiting_for_capacity = false
                 WHERE id = (
                     SELECT id FROM platform.ai_jobs
                     WHERE attempts < max_attempts
@@ -176,7 +178,22 @@ public class JdbcAiJobRepository implements AiJobRepository {
     @Override
     public boolean retryLater(UUID id, String error, Instant availableAt) {
         return jdbcClient.sql("""
-                UPDATE platform.ai_jobs SET status = 'PENDING', error = :error, available_at = :availableAt, lease_until = NULL
+                UPDATE platform.ai_jobs
+                SET status = 'PENDING', error = :error, available_at = :availableAt, lease_until = NULL, waiting_for_capacity = false
+                WHERE id = :id AND status = 'RUNNING'
+                """)
+            .param("id", id)
+            .param("error", error)
+            .param("availableAt", Timestamp.from(availableAt))
+            .update() == 1;
+    }
+
+    @Override
+    public boolean waitForCapacity(UUID id, String error, Instant availableAt) {
+        return jdbcClient.sql("""
+                UPDATE platform.ai_jobs
+                SET status = 'PENDING', error = :error, available_at = :availableAt, lease_until = NULL,
+                    attempts = GREATEST(attempts - 1, 0), waiting_for_capacity = true
                 WHERE id = :id AND status = 'RUNNING'
                 """)
             .param("id", id)
@@ -188,8 +205,9 @@ public class JdbcAiJobRepository implements AiJobRepository {
     @Override
     public boolean cancel(VaultId vaultId, UUID id, Instant at) {
         return jdbcClient.sql("""
-                UPDATE platform.ai_jobs SET status = 'CANCELLED', finished_at = :at, content = NULL
-                WHERE id = :id AND vault_id = :vaultId AND status = 'PENDING'
+                UPDATE platform.ai_jobs
+                SET status = 'CANCELLED', finished_at = :at, content = NULL, lease_until = NULL, waiting_for_capacity = false
+                WHERE id = :id AND vault_id = :vaultId AND status IN ('PENDING', 'RUNNING')
                 """)
             .param("id", id)
             .param("vaultId", vaultId.value())

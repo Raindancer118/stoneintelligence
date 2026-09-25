@@ -49,6 +49,22 @@ export interface AiJob {
   id: string; service: string; requestedBy: string; fileName: string; size: number; level: number; status: AiJobStatus;
   progress: string | null; percent: number | null; error: string | null; changeSetId: string | null; createdAt: string;
   finishedAt: string | null;
+  /** Wartend: ab wann der Job wieder geholt wird. */
+  availableAt: string | null;
+  /** Wartet, bis der KI-Dienst wieder Kontingent hat - kein Fehlversuch. */
+  waitingForCapacity: boolean;
+}
+/** Restmenge eines Zeitfensters; limit 0 = unbekannt. */
+export interface AiQuota { remaining: number; limit: number; resetsAt: string | null; }
+export interface AiProviderCapacity {
+  provider: string; keys: number; usableKeys: number; exhausted: boolean; availableAgainAt: string | null;
+  requests: AiQuota | null; tokens: AiQuota | null; credits: { remaining: number; limit: number | null } | null;
+  observedAt: string | null;
+}
+/** Wie viel Kontingent ein KI-Dienst laut letzter Meldung des Workers hat; exhausted null = unbekannt. */
+export interface AiServiceCapacity {
+  service: string; reportedAt: string | null; stale: boolean; exhausted: boolean | null; availableAgainAt: string | null;
+  providers: AiProviderCapacity[];
 }
 export interface AiChangeSet {
   id: string; service: string; agent: string; requestedBy: string; label: string; createdAt: string; revertedAt: string | null;
@@ -167,6 +183,7 @@ export const api = {
     request<{ vaultId: string; vaultName: string }>(`/api/v1/invitations/${encodeURIComponent(token)}/accept`, { method: "POST" }),
 
   aiServices: () => request<AiService[]>("/api/v1/ai/services"),
+  aiCapacity: (serviceId: string) => request<AiServiceCapacity>(`/api/v1/ai/services/${encodeURIComponent(serviceId)}/capacity`),
   listAiJobs: (vaultId: string) => request<AiJob[]>(`/api/v1/vaults/${vaultId}/ai/jobs`),
   /** Eine Datei je Anfrage - so bleibt jede unter dem Server-Limit und scheitert einzeln. */
   uploadAiDocument: (vaultId: string, service: string, level: number, file: File) => {

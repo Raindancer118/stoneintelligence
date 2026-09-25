@@ -17,8 +17,15 @@ public final class FakeAiJobRepository implements AiJobRepository {
 
     private AiJob with(AiJob j, AiJob.Status status, int attempts, Instant availableAt, Instant leaseUntil, String progress,
                        Integer percent, String error, UUID changeSetId, Instant finishedAt) {
+        return with(j, status, attempts, availableAt, leaseUntil, progress, percent, error, changeSetId, finishedAt,
+            j.waitingForCapacity() && status == AiJob.Status.PENDING);
+    }
+
+    private AiJob with(AiJob j, AiJob.Status status, int attempts, Instant availableAt, Instant leaseUntil, String progress,
+                       Integer percent, String error, UUID changeSetId, Instant finishedAt, boolean waitingForCapacity) {
         var updated = new AiJob(j.id(), j.vaultId(), j.service(), j.requestedBy(), j.fileName(), j.contentType(), j.size(), j.level(),
-            status, attempts, j.maxAttempts(), availableAt, leaseUntil, progress, percent, error, changeSetId, j.createdAt(), finishedAt);
+            status, attempts, j.maxAttempts(), availableAt, leaseUntil, progress, percent, error, changeSetId, j.createdAt(), finishedAt,
+            waitingForCapacity);
         jobs.put(j.id(), updated);
         return updated;
     }
@@ -26,7 +33,7 @@ public final class FakeAiJobRepository implements AiJobRepository {
     @Override
     public synchronized AiJob create(NewAiJob job, Instant at) {
         var created = new AiJob(UUID.randomUUID(), job.vaultId(), job.service(), job.requestedBy(), job.fileName(), job.contentType(),
-            job.content().length, job.level(), AiJob.Status.PENDING, 0, job.maxAttempts(), at, null, null, null, null, null, at, null);
+            job.content().length, job.level(), AiJob.Status.PENDING, 0, job.maxAttempts(), at, null, null, null, null, null, at, null, false);
         jobs.put(created.id(), created);
         contents.put(created.id(), job.content().clone());
         return created;
@@ -68,7 +75,7 @@ public final class FakeAiJobRepository implements AiJobRepository {
                 || job.status() == AiJob.Status.RUNNING && job.leaseUntil().isBefore(now))
             .min(Comparator.comparing(AiJob::createdAt))
             .map(job -> with(job, AiJob.Status.RUNNING, job.attempts() + 1, job.availableAt(), now.plus(lease), job.progress(),
-                job.percent(), job.error(), job.changeSetId(), null));
+                job.percent(), job.error(), job.changeSetId(), null, false));
     }
 
     @Override
@@ -111,14 +118,26 @@ public final class FakeAiJobRepository implements AiJobRepository {
         if (job == null || job.status() != AiJob.Status.RUNNING) {
             return false;
         }
-        with(job, AiJob.Status.PENDING, job.attempts(), availableAt, null, job.progress(), job.percent(), error, job.changeSetId(), null);
+        with(job, AiJob.Status.PENDING, job.attempts(), availableAt, null, job.progress(), job.percent(), error, job.changeSetId(), null,
+            false);
+        return true;
+    }
+
+    @Override
+    public synchronized boolean waitForCapacity(UUID id, String error, Instant availableAt) {
+        var job = jobs.get(id);
+        if (job == null || job.status() != AiJob.Status.RUNNING) {
+            return false;
+        }
+        with(job, AiJob.Status.PENDING, Math.max(job.attempts() - 1, 0), availableAt, null, job.progress(), job.percent(), error,
+            job.changeSetId(), null, true);
         return true;
     }
 
     @Override
     public synchronized boolean cancel(VaultId vaultId, UUID id, Instant at) {
         var job = jobs.get(id);
-        if (job == null || !job.vaultId().equals(vaultId) || job.status() != AiJob.Status.PENDING) {
+        if (job == null || !job.vaultId().equals(vaultId) || !job.open()) {
             return false;
         }
         with(job, AiJob.Status.CANCELLED, job.attempts(), job.availableAt(), null, job.progress(), job.percent(), job.error(),

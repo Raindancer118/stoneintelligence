@@ -150,14 +150,41 @@ public abstract class AiJobRepositoryContractTest {
     }
 
     @Test
-    void should_cancelOnlyWaitingJobs_ofTheOwnVault() {
+    void should_waitForCapacity_withoutUsingUpAnAttempt() {
+        var job = upload("a.pdf", now);
+        jobs.claim(now, lease);
+
+        assertThat(jobs.waitForCapacity(job.id(), "Kontingent aufgebraucht", now.plusSeconds(3600))).isTrue();
+
+        var waiting = jobs.find(vaultId, job.id()).orElseThrow();
+        assertThat(waiting.status()).isEqualTo(AiJob.Status.PENDING);
+        assertThat(waiting.attempts()).isZero();
+        assertThat(waiting.waitingForCapacity()).isTrue();
+        assertThat(waiting.error()).isEqualTo("Kontingent aufgebraucht");
+        assertThat(jobs.content(job.id())).isPresent();
+        assertThat(jobs.claim(now.plusSeconds(3599), lease)).isEmpty();
+        var again = jobs.claim(now.plusSeconds(3600), lease).orElseThrow();
+        assertThat(again.attempts()).isEqualTo(1);
+        assertThat(again.waitingForCapacity()).isFalse();
+        assertThat(jobs.waitForCapacity(UUID.randomUUID(), "x", now)).isFalse();
+    }
+
+    @Test
+    void should_cancelWaitingAndRunningJobs_onlyOfTheOwnVault() {
         var running = upload("a.pdf", now);
         var waiting = upload("b.pdf", now.plusSeconds(1));
         assertThat(jobs.claim(now.plusSeconds(2), lease)).get().extracting(AiJob::id).isEqualTo(running.id());
 
-        assertThat(jobs.cancel(vaultId, running.id(), now)).isFalse();
         assertThat(jobs.cancel(existingVault(), waiting.id(), now)).isFalse();
         assertThat(jobs.find(vaultId, waiting.id()).orElseThrow().status()).isEqualTo(AiJob.Status.PENDING);
+
+        assertThat(jobs.cancel(vaultId, running.id(), now.plusSeconds(3))).isTrue();
+        var cancelled = jobs.find(vaultId, running.id()).orElseThrow();
+        assertThat(cancelled.status()).isEqualTo(AiJob.Status.CANCELLED);
+        assertThat(cancelled.leaseUntil()).isNull();
+        assertThat(jobs.content(running.id())).isEmpty();
+        assertThat(jobs.progress(running.id(), "weiter", 50, now.plus(lease))).isFalse();
+        assertThat(jobs.cancel(vaultId, running.id(), now.plusSeconds(4))).isFalse();
     }
 
     @Test

@@ -60,7 +60,31 @@ class JobProcessorTest {
     }
 
     private JobProcessor processor(LlmClient llm) {
-        return new JobProcessor(platform, service -> llm, ServiceModels.from(java.util.Map.of()), () -> LocalDate.of(2026, 9, 23));
+        return processor(service -> llm);
+    }
+
+    private JobProcessor processor(LlmFactory llms) {
+        return new JobProcessor(platform, llms, ServiceModels.from(java.util.Map.of()), () -> LocalDate.of(2026, 9, 23),
+            java.time.Duration.ZERO);
+    }
+
+    private static final java.time.Instant BACK = java.time.Instant.parse("2026-09-26T07:00:00Z");
+
+    private static LlmClient outOfCapacity() {
+        return new LlmClient() {
+            @Override
+            public LlmAnswer complete(Tier tier, String system, String user) {
+                if (system.contains("Themenplan")) {
+                    return new LlmAnswer(PLAN, 5, "fake/model");
+                }
+                throw new de.raindancer118.stoneai.extract.LlmCapacityException("kein Kontingent frei: groq 429", BACK);
+            }
+
+            @Override
+            public LlmAnswer readImage(byte[] pngImage, String prompt) {
+                throw new UnsupportedOperationException();
+            }
+        };
     }
 
     @Test
@@ -149,5 +173,60 @@ class JobProcessorTest {
         processor(answering(ANSWER)).process(job);
 
         assertThat(platform.events).last().asString().startsWith("retry ");
+    }
+
+    // Leeres Kontingent: der Lauf schreibt nichts und wartet, statt als Fehlversuch zu zaehlen oder
+    // "fertig" mit Luecken zu melden.
+    @Test
+    void should_waitForCapacity_andWriteNothing_whenTheModelsRanOut() {
+        processor(outOfCapacity()).process(job("Skript.md", "# Photosynthese\n\nLicht und Wasser.\n"));
+
+        assertThat(platform.events).last().asString().startsWith("wait " + BACK + " ");
+        assertThat(platform.events).noneMatch(event -> event.startsWith("create") || event.startsWith("file")
+            || event.equals("complete") || event.startsWith("retry") || event.startsWith("fail"));
+        assertThat(platform.notes).isEmpty();
+    }
+
+    @Test
+    void should_notEvenStart_whenEveryProviderOfTheServiceIsKnownToBeExhausted() {
+        var called = new java.util.concurrent.atomic.AtomicBoolean();
+        var llms = new LlmFactory() {
+            @Override
+            public LlmClient forService(ServiceModels.ServiceModel model) {
+                called.set(true);
+                return answering(ANSWER);
+            }
+
+            @Override
+            public java.util.Map<String, io.github.raindancer118.aigateway.ProviderCapacity> capacity(ServiceModels.ServiceModel model) {
+                return java.util.Map.of("groq", new io.github.raindancer118.aigateway.ProviderCapacity("groq", 1, 0, true, BACK,
+                    new io.github.raindancer118.aigateway.ProviderCapacity.Quota(0, 1000, BACK), null, null, BACK.minusSeconds(60)));
+            }
+        };
+
+        processor(llms).process(job("Skript.md", "# Photosynthese\n\nText.\n"));
+
+        assertThat(called).isFalse();
+        assertThat(platform.events).singleElement().asString().startsWith("wait " + BACK + " ").contains("groq");
+    }
+
+    // Abgebrochen, waehrend er lief: der Worker hoert auf, schreibt nichts mehr und meldet nichts.
+    @Test
+    void should_stopQuietly_whenTheJobWasCancelledWhileRunning() {
+        platform.cancelAfterProgress = 2;
+
+        processor(answering(ANSWER)).process(job("Skript.md", "# Photosynthese\n\nLicht und Wasser.\n"));
+
+        assertThat(platform.events).allMatch(event -> event.startsWith("progress"));
+        assertThat(platform.notes).isEmpty();
+    }
+
+    @Test
+    void should_stopQuietly_whenTheJobWasCancelledBeforeItStarted() {
+        platform.cancelAfterProgress = 0;
+
+        processor(answering(ANSWER)).process(job("Skript.md", "# Photosynthese\n\nText.\n"));
+
+        assertThat(platform.events).isEmpty();
     }
 }

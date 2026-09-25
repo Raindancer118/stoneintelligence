@@ -76,7 +76,13 @@ public class AiConfig {
     @Bean
     public AiJobService aiJobService(AiJobRepository jobs, AiServiceDirectory services, @Lazy AiWriteService ai) {
         return new AiJobService(jobs, () -> services,
-            (vaultId, service, requestedBy, label) -> ai.startChangeSet(vaultId, service, requestedBy, label).id(), Instant::now);
+            (vaultId, service, requestedBy, label) -> ai.startChangeSet(vaultId, service, requestedBy, label).id(),
+            (vaultId, changeSetId, actor) -> ai.revert(vaultId, changeSetId, actor), Instant::now);
+    }
+
+    @Bean
+    public AiCapacityBoard aiCapacityBoard(AiServiceDirectory services) {
+        return new AiCapacityBoard(() -> services, Instant::now);
     }
 
     @Bean

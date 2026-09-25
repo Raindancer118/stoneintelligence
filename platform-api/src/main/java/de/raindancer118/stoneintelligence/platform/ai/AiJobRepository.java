@@ -44,7 +44,13 @@ public interface AiJobRepository {
     /** Laufenden Job spaeter erneut versuchen; das Dokument bleibt. */
     boolean retryLater(UUID id, String error, Instant availableAt);
 
-    /** Wartenden Job abbrechen; das Dokument wird verworfen. */
+    /**
+     * Laufenden Job zurueckstellen, bis der KI-Dienst wieder Kontingent hat - ohne dass der Lauf als
+     * Versuch zaehlt; das Dokument bleibt.
+     */
+    boolean waitForCapacity(UUID id, String error, Instant availableAt);
+
+    /** Wartenden oder laufenden Job abbrechen; das Dokument wird verworfen. */
     boolean cancel(VaultId vaultId, UUID id, Instant at);
 
     int purgeCreatedBefore(Instant cutoff);

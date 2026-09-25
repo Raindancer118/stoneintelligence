@@ -22,6 +22,15 @@ public interface PlatformApi {
 
     void fail(UUID jobId, String error, boolean retryable);
 
+    /** Lauf abgebrochen, weil kein Kontingent frei war; startet ab {@code availableAt} ({@code null} = unbekannt) neu. */
+    void waitForCapacity(UUID jobId, String error, java.time.Instant availableAt);
+
+    /** Ids der eingerichteten KI-Dienste. */
+    List<String> services();
+
+    /** Meldet, wie viel Kontingent die Anbieter hinter einem Dienst noch haben. */
+    void reportCapacity(String serviceId, List<ProviderReport> providers);
+
     List<ListedNote> notes(String vaultId, UUID changeSetId);
 
     String read(String vaultId, UUID changeSetId, String noteId);

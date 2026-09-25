@@ -181,6 +181,9 @@ public final class Consolidator {
                     "Du führst Textfassungen zusammen, ohne Inhalt zu erfinden oder zu verlieren.", user);
             String text = answer.text() == null ? "" : answer.text().strip();
             return text.length() < input * MIN_MERGE_SHARE ? concatenate(batch) : text;
+        } catch (de.raindancer118.stoneai.extract.LlmCapacityException outOfCapacity) {
+            // Unmerged text is a fallback for one odd answer, not for an empty quota.
+            throw outOfCapacity;
         } catch (RuntimeException e) {
             return concatenate(batch);
         }

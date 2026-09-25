@@ -256,6 +256,29 @@ class ConsolidatorTest {
         }
     }
 
+    // Falling back to the unmerged parts is right for one odd answer, wrong for an empty quota:
+    // the notes would come out worse with nobody told why. The run stops and waits instead.
+    @Test
+    @DisplayName("should stop instead of concatenating when the model is out of capacity")
+    void should_propagate_when_mergeIsOutOfCapacity() {
+        LlmClient exhausted = new LlmClient() {
+            @Override
+            public LlmAnswer complete(Tier tier, String system, String user) {
+                throw new de.raindancer118.stoneai.extract.LlmCapacityException("groq: Kontingent aufgebraucht", null);
+            }
+
+            @Override
+            public LlmAnswer readImage(byte[] pngImage, String prompt) {
+                throw new UnsupportedOperationException();
+            }
+        };
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new Consolidator(config, exhausted).consolidate(List.of(
+                        concept("Gruppe", "Erste Erklärung.", 3),
+                        concept("Gruppe", "Zweite Erklärung.", 9))))
+                .isInstanceOf(de.raindancer118.stoneai.extract.LlmCapacityException.class);
+    }
+
     private static final class ScriptedLlm implements LlmClient {
 
         private final Deque<String> answers = new ArrayDeque<>();
