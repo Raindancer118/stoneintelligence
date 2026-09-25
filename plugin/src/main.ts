@@ -38,6 +38,7 @@ import { CONNECT_ACTION, type ConnectLink, parseConnectLink } from "./sync/conne
 import { desktopVaults } from "./sync/desktopVaults";
 import { findLinkedVault, newVaultFiles, suggestVaultPath, vaultPathForPickedFolder } from "./sync/localVaultPlan";
 import { ConnectVaultModal } from "./ui/ConnectVaultModal";
+import { type PropertiesInDocument, propertiesDefault } from "./ui/propertiesDisplay";
 import { DeletionConflictModal } from "./ui/DeletionConflictModal";
 import { AiChangesModal } from "./ui/AiChangesModal";
 import { InviteModal } from "./ui/InviteModal";
@@ -239,6 +240,7 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   async onload(): Promise<void> {
     this.settings = migrateSettings(await this.loadData());
+    this.applyPropertiesDefault();
     await this.saveData(this.settings);
     this.stateStore = new NoteStateStore(this.app.vault.adapter, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/sync-state`);
     this.rebuildClients();
@@ -551,6 +553,40 @@ export default class StoneIntelligencePlugin extends Plugin {
     }
     const active = this.app.workspace.getActiveFile();
     new AiChangesModal(this.app, this.noteApiClient, this.settings.vaultId, active?.path ?? null).open();
+  }
+
+  /**
+   * Obsidians Vault-Einstellung "Eigenschaften im Dokument". `getConfig`/`setConfig` sind nicht Teil
+   * der oeffentlichen Plugin-API, aber seit Jahren stabil (geprueft gegen 1.13) - fehlen sie, bleibt
+   * alles, wie es ist.
+   */
+  private vaultConfig(): { getConfig(key: string): unknown; setConfig(key: string, value: unknown): void } | null {
+    const vault = this.app.vault as unknown as { getConfig?: unknown; setConfig?: unknown };
+    return typeof vault.getConfig === "function" && typeof vault.setConfig === "function"
+      ? (vault as unknown as { getConfig(key: string): unknown; setConfig(key: string, value: unknown): void })
+      : null;
+  }
+
+  private applyPropertiesDefault(): void {
+    const config = this.vaultConfig();
+    if (!config || this.settings.propertiesDefaultApplied) {
+      return;
+    }
+    const target = propertiesDefault(false, config.getConfig("propertiesInDocument") as string | undefined);
+    if (target) {
+      config.setConfig("propertiesInDocument", target);
+    }
+    this.settings.propertiesDefaultApplied = true;
+  }
+
+  propertiesHidden(): boolean | null {
+    const config = this.vaultConfig();
+    return config ? config.getConfig("propertiesInDocument") === "hidden" : null;
+  }
+
+  setPropertiesHidden(hidden: boolean): void {
+    const value: PropertiesInDocument = hidden ? "hidden" : "visible";
+    this.vaultConfig()?.setConfig("propertiesInDocument", value);
   }
 
   /**

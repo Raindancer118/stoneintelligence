@@ -12,6 +12,7 @@ describe("migrateSettings", () => {
     expect(settings.oidcClientId).toBe(DEFAULT_SETTINGS.oidcClientId);
     expect(settings.vaults).toEqual({});
     expect(settings.pendingConnect).toBeNull();
+    expect(settings.propertiesDefaultApplied).toBe(false);
   });
 
   // Ein frisch angelegter Obsidian-Vault bringt den Verbinden-Auftrag in seiner data.json mit.
