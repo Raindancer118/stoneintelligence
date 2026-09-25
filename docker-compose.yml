@@ -60,6 +60,10 @@ services:
     env_file:
       - path: worker.env
         required: false
+    # Antworten laufender Jobs: ein Job, der auf Kontingent wartet, macht nach einem Neustart weiter.
+    volumes:
+      - stoneintelligence-ai-resume:/data/ai-resume
+    mem_limit: 1536m
 
   mcp-adapter:
     build:
@@ -77,6 +81,7 @@ services:
 volumes:
   stoneintelligence-postgres:
   stoneintelligence-files:
+  stoneintelligence-ai-resume:
 
 secrets:
   # Maven-settings.xml mit Lesezugang zu packages.tstieh.de (server-id packages-releases)

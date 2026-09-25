@@ -21,7 +21,8 @@ import de.raindancer118.stoneintelligence.domain.notelevel.NoteLevel;
  */
 public class AiJobService {
 
-    static final int MAX_FILE_BYTES = 20 * 1024 * 1024;
+    /** Ein gescanntes Lehrbuch mit mehreren hundert Seiten; der Worker liest es mit 1,5 GB Speicher. */
+    static final int MAX_FILE_BYTES = 100 * 1024 * 1024;
     static final int MAX_FILES_PER_UPLOAD = 10;
     static final int MAX_OPEN_JOBS_PER_VAULT = 20;
     static final int MAX_ATTEMPTS = 3;

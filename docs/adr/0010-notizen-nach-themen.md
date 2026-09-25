@@ -113,7 +113,7 @@ Anlass: Lehrbücher und gescannte Skripte mit mehreren hundert Seiten. Vier Engp
    abgebrochen wurde, endgültig scheitert oder die Antworten „nicht auswertbar“ waren (dieselben
    Antworten ergäben dasselbe). Liegen gebliebene Antworten verfallen nach 8 Tagen (länger als
    platform-api auf Kontingent wartet). Ort: `STONEAI_RESUME_DIR`, sonst `$TMPDIR/stoneai-resume`
-   im Container; nach dem Neuerstellen des Containers fängt ein wartender Job wieder von vorn an.
+   im Container (gehostet auf einem Volume, s. u.).
 4. **Der Planer sieht das ganze Buch**: Bei mehr Abschnitten, als in 24.000 Zeichen Auszug passen,
    brach der Auszug nach etwa 70 Abschnitten ab. Jetzt ist er eine gleichmäßige Stichprobe vom
    ersten bis zum letzten Abschnitt (je ≥ 400 Zeichen).
@@ -121,5 +121,12 @@ Anlass: Lehrbücher und gescannte Skripte mit mehreren hundert Seiten. Vier Engp
 Dazu meldet der Job beim Laden, welche Seite bzw. Bildseite gerade gelesen wird, statt lange bei
 „Dokument wird gelesen“ zu stehen.
 
-Offen: KI-Uploads sind weiterhin auf 20 MB begrenzt (`AiJobService.MAX_FILE_BYTES`, multipart,
-Webapp). Gescannte Bücher sind oft größer.
+Mit dem Ausrollen (25.09.2026):
+
+- **Uploads bis 100 MB** (vorher 20 MB): gescannte Lehrbücher sind oft 30–80 MB. Jede Datei eine
+  Anfrage (`max-request-size` 110 MB). Der Worker hat 1,5 GB Speicher mit 70 % als Heap, weil ein
+  100-MB-Buch beim Einlesen mehrfach im Speicher liegt.
+- **Antworten auf einem Volume** (`/data/ai-resume`, `STONEAI_RESUME_DIR` im Image): ein wartender Job
+  übersteht auch das Neuerstellen des Containers.
+- **Notizgrenze wächst mit**: höchstens max(`notes.maxNotesPerDocument`, eine je 10 Seiten, bis 150).
+  Ein 1.000-Seiten-Buch darf 100 Themen haben statt 40.

@@ -36,6 +36,18 @@ public record SourceDocument(Path file,
         this(file, title, kind, pages, skippedPages, truncated, sha256, List.of());
     }
 
+    /** A dense book page, for sizing documents without pages (Markdown, text). */
+    private static final int CHARS_PER_PAGE = 3_000;
+
+    /**
+     * How long the document is, in pages - for its token budget and its note limit. A text file is
+     * one page however long it is, so it counts by its length.
+     */
+    public int lengthInPages() {
+        long chars = pages.stream().mapToLong(page -> page.text().length()).sum();
+        return (int) Math.max(pages.size(), chars / CHARS_PER_PAGE);
+    }
+
     public String fullText() {
         return pages.stream().map(Page::text).reduce((a, b) -> a + "\n\n" + b).orElse("");
     }

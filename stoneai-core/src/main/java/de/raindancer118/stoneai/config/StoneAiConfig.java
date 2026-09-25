@@ -365,6 +365,11 @@ public final class StoneAiConfig {
             this.maxNotesPerDocument = value;
         }
 
+        /** Most notes for a document of {@code pages} pages: one per ten pages of a long book, up to 150. */
+        public int maxNotesFor(int pages) {
+            return Math.max(maxNotesPerDocument, Math.min(150, Math.max(0, pages) / 10));
+        }
+
         public boolean writeSourceNote() {
             return writeSourceNote;
         }

@@ -8,7 +8,7 @@
   let { vault }: { vault: Vault } = $props();
 
   // Dieselben Grenzen wie der Server (AiJobService) - so scheitert nichts erst nach dem Hochladen.
-  const MAX_FILE_BYTES = 20 * 1024 * 1024;
+  const MAX_FILE_BYTES = 100 * 1024 * 1024;
   const MAX_FILES = 10;
   const READABLE = /\.(pdf|md|markdown|txt)$/i;
   const POLL_MS = 3000;
@@ -159,7 +159,7 @@
     for (const file of chosen) {
       if (!READABLE.test(file.name)) problems.push(`${file.name}: nur PDF-, Markdown- und Textdateien werden unterstützt`);
       else if (file.size === 0) problems.push(`${file.name} ist leer`);
-      else if (file.size > MAX_FILE_BYTES) problems.push(`${file.name} ist größer als 20 MB`);
+      else if (file.size > MAX_FILE_BYTES) problems.push(`${file.name} ist größer als 100 MB`);
       else accepted.push(file);
     }
     if (accepted.length > MAX_FILES) {
@@ -285,7 +285,7 @@
           <input type="file" multiple accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain"
             onchange={(event) => choose((event.currentTarget as HTMLInputElement).files)} />
         </label>
-        <p class="hint">PDF, Markdown oder Text, bis 20 MB je Datei, höchstens {MAX_FILES} auf einmal.</p>
+        <p class="hint">PDF, Markdown oder Text, bis 100 MB je Datei, höchstens {MAX_FILES} auf einmal.</p>
         {#if rejected.length}<ul class="rejected" role="alert">{#each rejected as problem (problem)}<li>{problem}</li>{/each}</ul>{/if}
         {#if uploadNotice}<p class="notice" role="status">{uploadNotice}</p>{/if}
         {#if files.length}

@@ -85,10 +85,10 @@ describe("KI-Bereich", () => {
     render(AiWorkspace, { vault });
     await screen.findByLabelText("Dokumente");
 
-    await choose([new File(["x"], "bild.png", { type: "image/png" }), pdf("riesig.pdf", 21 * 1024 * 1024)]);
+    await choose([new File(["x"], "bild.png", { type: "image/png" }), pdf("riesig.pdf", 101 * 1024 * 1024)]);
 
     await screen.findByText(/bild\.png: nur PDF-, Markdown- und Textdateien/);
-    await screen.findByText(/riesig\.pdf ist größer als 20 MB/);
+    await screen.findByText(/riesig\.pdf ist größer als 100 MB/);
     expect(screen.queryByRole("button", { name: /einlesen/ })).toBeNull();
     expect(api.uploadAiDocument).not.toHaveBeenCalled();
   });
