@@ -25,7 +25,7 @@
     <div class="quick">
       <div>
         <p class="quick-title">Obsidian und das Plugin hast du schon?</p>
-        <p>Ein Klick verbindet deinen Obsidian-Vault mit „{single.name}“.</p>
+        <p>Ein Klick – das Plugin legt für „{single.name}“ einen eigenen Obsidian-Vault an oder verbindet den geöffneten, wie du möchtest.</p>
       </div>
       <a class="action primary" href={connectLink(single)}>Mit „{single.name}“ verbinden</a>
     </div>
@@ -44,7 +44,7 @@
     </li>
     <li>
       <h2>Einen Obsidian-Vault öffnen</h2>
-      <p>Für einen gemeinsamen Vault lege am besten einen <strong>neuen, leeren</strong> Obsidian-Vault an. Verbindest du einen bestehenden, werden seine Notizen für alle Mitglieder hochgeladen.</p>
+      <p>Irgendeinen, auch deinen gewohnten. Beim Verbinden fragt das Plugin, ob der gemeinsame Vault in einen <strong>neuen</strong> Obsidian-Vault kommt – am Computer legt es ihn selbst an – oder in den geöffneten; dessen Notizen würden dann für alle Mitglieder hochgeladen. Auf dem Handy lege vorher selbst einen neuen, leeren Vault an.</p>
     </li>
     <li>
       <h2>BRAT installieren</h2>
@@ -64,7 +64,7 @@
       {:else if vaults.length === 0}
         <p>Du hast noch keinen Vault. Lege im Dashboard einen an oder nimm eine Einladung an – danach steht hier der passende Knopf.</p>
       {:else}
-        <p>Das Plugin fragt kurz nach, meldet dich an und beginnt mit dem Abgleich.</p>
+        <p>Das Plugin fragt, in welchen Obsidian-Vault die Notizen sollen, meldet dich an und beginnt mit dem Abgleich.</p>
         <div class="connect">
           {#each vaults as vault (vault.id)}
             <a class="action primary" href={connectLink(vault)}>Mit „{vault.name}“ verbinden</a>

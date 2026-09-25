@@ -1,6 +1,6 @@
 import { Compartment } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import { MarkdownView, Notice, Platform, Plugin, setIcon, TAbstractFile, TFile, TFolder } from "obsidian";
+import { FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, setIcon, TAbstractFile, TFile, TFolder } from "obsidian";
 import * as Y from "yjs";
 import {
   type FolderOp, isExcluded, isExcludedFolder, isNoteOp, migrateSettings, queueDelete, queueFolderOp, queueRename,
@@ -35,6 +35,8 @@ import { SyncActivity } from "./sync/SyncActivity";
 import { SyncClient } from "./sync/SyncClient";
 import { TicketClient } from "./sync/TicketClient";
 import { CONNECT_ACTION, type ConnectLink, parseConnectLink } from "./sync/connectLink";
+import { desktopVaults } from "./sync/desktopVaults";
+import { findLinkedVault, newVaultFiles, suggestVaultPath, vaultPathForPickedFolder } from "./sync/localVaultPlan";
 import { ConnectVaultModal } from "./ui/ConnectVaultModal";
 import { DeletionConflictModal } from "./ui/DeletionConflictModal";
 import { AiChangesModal } from "./ui/AiChangesModal";
@@ -296,6 +298,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         void this.refreshDisplayName();
       }
       this.startSyncEngine();
+      void this.completePendingConnect();
     });
   }
 
@@ -561,17 +564,88 @@ export default class StoneIntelligencePlugin extends Plugin {
       void this.activateStatusView();
       return;
     }
+    const basePath = this.app.vault.adapter instanceof FileSystemAdapter ? this.app.vault.adapter.getBasePath() : null;
+    const vaults = basePath !== null ? desktopVaults() : null;
+    let newVaultPath: string | null = null;
+    if (vaults && basePath !== null) {
+      try {
+        // Gibt es auf diesem Geraet schon einen Obsidian-Vault fuer den gemeinsamen Vault, dorthin.
+        const linked = findLinkedVault(vaults.list(), basePath, link.vaultId,
+          (path) => vaults.readPluginData(path, this.manifest.id));
+        if (linked) {
+          vaults.open(linked.path, false);
+          new Notice(`StoneIntelligence: „${displayName}“ liegt schon im Obsidian-Vault ${linked.path} – er wurde geöffnet.`, 8_000);
+          return;
+        }
+        newVaultPath = suggestVaultPath(basePath, link.vaultName, (path) => vaults.exists(path));
+      } catch (error) {
+        console.warn("StoneIntelligence: Obsidian-Vaults nicht lesbar - nur Verbinden dieses Vaults", error);
+      }
+    }
     const knownState = this.settings.vaults[link.vaultId];
     const localNoteCount = this.app.vault.getMarkdownFiles()
       .filter((file) => isSyncablePath(file.path) && !isExcluded(file.path, this.settings.excludedFolders))
       .filter((file) => !knownState?.noteIds[file.path]).length;
     new ConnectVaultModal(this.app, {
       vaultName: displayName,
+      thisVaultName: this.app.vault.getName(),
       localNoteCount,
       currentVaultName: this.settings.vaultId && this.settings.vaultId !== link.vaultId
         ? (this.settings.vaultName || "einem anderen Vault") : null,
       signedIn: this.isLoggedIn(),
-    }, () => void this.connectToVault(link)).open();
+      newVaultPath,
+    }, {
+      connectHere: () => void this.connectToVault(link),
+      pickFolder: (currentPath) => {
+        try {
+          const location = vaults?.pickFolder("Ordner für den neuen Vault", currentPath.replace(/[\\/][^\\/]*$/, ""));
+          return location && vaults
+            ? vaultPathForPickedFolder(location, vaults.isEmptyFolder(location), link.vaultName, (path) => vaults.exists(path))
+            : null;
+        } catch (error) {
+          new Notice(`StoneIntelligence: Ordner-Dialog nicht verfügbar – ${(error as Error).message}. Trag den Pfad direkt ein.`);
+          return null;
+        }
+      },
+      createNewVault: (path) => this.createObsidianVault(path, link, basePath as string),
+    }).open();
+  }
+
+  /**
+   * Neuer Obsidian-Vault fuer den gemeinsamen Vault: Plugin samt Server-Einstellungen hinein, in
+   * eigenem Fenster oeffnen. Dort verbindet `completePendingConnect` beim ersten Start.
+   */
+  private createObsidianVault(path: string, link: ConnectLink, basePath: string): void {
+    const vaults = desktopVaults();
+    try {
+      if (!vaults) {
+        throw new Error("auf diesem Gerät nicht möglich");
+      }
+      const pluginDir = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+      const files = newVaultFiles({
+        pluginId: this.manifest.id,
+        pluginFiles: vaults.readPluginFiles(`${basePath}/${pluginDir}`),
+        settings: this.settings,
+        link,
+      });
+      vaults.createFolder(path, files);
+      vaults.open(path, true);
+      new Notice(`StoneIntelligence: Neuer Obsidian-Vault angelegt (${path}). Melde dich im neuen Fenster an, dann kommen die Notizen.`, 10_000);
+    } catch (error) {
+      new Notice(`StoneIntelligence: Neuen Vault anlegen fehlgeschlagen – ${(error as Error).message}`, 10_000);
+    }
+  }
+
+  /** Erster Start eines von einem anderen Vault angelegten Obsidian-Vaults: jetzt verbinden. */
+  private async completePendingConnect(): Promise<void> {
+    const link = this.settings.pendingConnect;
+    if (!link) {
+      return;
+    }
+    // Vorher loeschen: ein abgebrochenes Anmelden soll nicht bei jedem Start erneut aufgehen.
+    this.settings.pendingConnect = null;
+    await this.saveSettings();
+    await this.connectToVault(link);
   }
 
   private async connectToVault(link: ConnectLink): Promise<void> {

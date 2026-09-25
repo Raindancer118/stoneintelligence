@@ -11,6 +11,13 @@ describe("migrateSettings", () => {
     expect(settings.platformApiUrl).toBe(DEFAULT_SETTINGS.platformApiUrl);
     expect(settings.oidcClientId).toBe(DEFAULT_SETTINGS.oidcClientId);
     expect(settings.vaults).toEqual({});
+    expect(settings.pendingConnect).toBeNull();
+  });
+
+  // Ein frisch angelegter Obsidian-Vault bringt den Verbinden-Auftrag in seiner data.json mit.
+  it("should_keepTheConnectRequest_ofANewlyCreatedVault", () => {
+    const link = { vaultId: "2f719285-2483-4e59-89e0-334af2813a70", vaultName: "Team" };
+    expect(migrateSettings({ pendingConnect: link }).pendingConnect).toEqual(link);
   });
 
   // Bestehende Installationen fuehren die Zuordnung Pfad -> NoteId noch global. Sie gehoert zu
