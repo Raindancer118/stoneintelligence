@@ -5,6 +5,7 @@ import de.raindancer118.stoneai.extract.ExtractedConcept;
 import de.raindancer118.stoneai.extract.LlmAnswer;
 import de.raindancer118.stoneai.extract.LlmClient;
 import de.raindancer118.stoneai.extract.Tier;
+import de.raindancer118.stoneai.pipeline.BoundedParallel;
 import de.raindancer118.stoneai.pipeline.ProgressSink;
 
 import java.util.ArrayList;
@@ -14,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Semaphore;
 
 /**
  * Turns the per-chunk concepts into the notes that will actually be written: the same idea found
@@ -30,6 +32,11 @@ public final class Consolidator {
     private final StoneAiConfig config;
     private final LlmClient llm;
     private final ProgressSink progress;
+    /**
+     * Notes are merged side by side, and so are the batches of one large note - this bounds the
+     * calls of both together to {@code llm.parallelCalls}.
+     */
+    private final Semaphore calls;
 
     public Consolidator(StoneAiConfig config, LlmClient llm) {
         this(config, llm, ProgressSink.NONE);
@@ -39,18 +46,21 @@ public final class Consolidator {
         this.config = config;
         this.llm = llm;
         this.progress = progress;
+        this.calls = new Semaphore(Math.max(1, config.llm().parallelCalls()));
     }
 
+    /** Up to {@code llm.parallelCalls} notes are merged at once; the notes keep the document's order. */
     public List<DraftNote> consolidate(List<ExtractedConcept> concepts) {
         List<List<ExtractedConcept>> groups = group(concepts);
-        List<DraftNote> notes = new ArrayList<>();
-        for (int i = 0; i < groups.size(); i++) {
-            List<ExtractedConcept> group = groups.get(i);
-            notes.add(group.size() == 1 ? toNote(group.get(0)) : merge(group));
-            progress.report("Notiz " + (i + 1) + "/" + groups.size() + " wird zusammengeführt",
-                    (i + 1) * 100 / groups.size());
-        }
-        return capped(notes);
+        int[] done = {0};
+        List<DraftNote> notes = BoundedParallel.run(groups.size(), config.llm().parallelCalls(), index -> {
+            List<ExtractedConcept> group = groups.get(index);
+            return group.size() == 1 ? toNote(group.get(0)) : merge(group);
+        }, index -> true, (index, note) -> {
+            done[0]++;
+            progress.report("Notiz " + done[0] + "/" + groups.size() + " zusammengeführt", done[0] * 100 / groups.size());
+        });
+        return capped(new ArrayList<>(notes));
     }
 
     /** Buckets concepts that describe the same thing, by title, alias or close similarity. */
@@ -126,12 +136,12 @@ public final class Consolidator {
             if (batches.size() == current.size()) {
                 return concatenate(current);
             }
-            List<Part> next = new ArrayList<>();
-            for (List<Part> batch : batches) {
-                String label = batch.size() == 1 ? batch.get(0).label() : "zusammengeführt";
-                next.add(new Part(label, batch.size() == 1 ? batch.get(0).text() : mergeBatch(title, batch)));
-            }
-            current = next;
+            // The main topic of a long book gathers hundreds of parts: its batches are merged side by side.
+            current = BoundedParallel.run(batches.size(), config.llm().parallelCalls(), index -> {
+                List<Part> batch = batches.get(index);
+                return batch.size() == 1 ? batch.get(0) : new Part("zusammengeführt", mergeBatch(title, batch));
+            }, index -> true, (index, part) -> {
+            });
         }
         return current.get(0).text();
     }
@@ -177,8 +187,8 @@ public final class Consolidator {
                 %s""".formatted(title, texts);
         int input = batch.stream().mapToInt(part -> part.text().length()).sum();
         try {
-            LlmAnswer answer = llm.complete(Tier.SMART,
-                    "Du führst Textfassungen zusammen, ohne Inhalt zu erfinden oder zu verlieren.", user);
+            LlmAnswer answer = limited(() -> llm.complete(Tier.SMART,
+                    "Du führst Textfassungen zusammen, ohne Inhalt zu erfinden oder zu verlieren.", user));
             String text = answer.text() == null ? "" : answer.text().strip();
             return text.length() < input * MIN_MERGE_SHARE ? concatenate(batch) : text;
         } catch (de.raindancer118.stoneai.extract.LlmCapacityException outOfCapacity) {
@@ -186,6 +196,20 @@ public final class Consolidator {
             throw outOfCapacity;
         } catch (RuntimeException e) {
             return concatenate(batch);
+        }
+    }
+
+    private LlmAnswer limited(java.util.function.Supplier<LlmAnswer> call) {
+        try {
+            calls.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("beim Warten auf einen freien KI-Aufruf unterbrochen", e);
+        }
+        try {
+            return call.get();
+        } finally {
+            calls.release();
         }
     }
 

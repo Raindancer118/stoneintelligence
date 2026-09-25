@@ -1,6 +1,8 @@
 package de.raindancer118.stoneai.source;
 
 import de.raindancer118.stoneai.config.StoneAiConfig;
+import de.raindancer118.stoneai.pipeline.BoundedParallel;
+import de.raindancer118.stoneai.pipeline.ProgressSink;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -43,10 +45,16 @@ public final class PdfLoader implements DocumentLoader {
 
     private final StoneAiConfig config;
     private final OcrService ocr;
+    private final ProgressSink progress;
 
     public PdfLoader(StoneAiConfig config, OcrService ocr) {
+        this(config, ocr, ProgressSink.NONE);
+    }
+
+    public PdfLoader(StoneAiConfig config, OcrService ocr, ProgressSink progress) {
         this.config = config;
         this.ocr = ocr;
+        this.progress = progress;
     }
 
     @Override
@@ -54,61 +62,82 @@ public final class PdfLoader implements DocumentLoader {
         return Documents.extension(file).equals(".pdf");
     }
 
+    /**
+     * Reads the text layer page by page first, then the image pages - up to
+     * {@code llm.parallelCalls} at once, since a scanned book is hundreds of vision calls. PDFBox
+     * renders one page at a time; only the model calls overlap.
+     */
     @Override
     public SourceDocument load(Path file) throws IOException {
-        List<Page> pages = new ArrayList<>();
         List<Integer> skipped = new ArrayList<>();
-        List<Integer> unreadable = new ArrayList<>();
-        RuntimeException lastOcrFailure = null;
         boolean truncated;
         String title;
+        String[] texts;
+        List<Integer> scans = new ArrayList<>();
+        List<OcrResult> read;
 
         try (PDDocument document = Loader.loadPDF(file.toFile())) {
             int available = document.getNumberOfPages();
             int limit = Math.min(available, config.ingest().maxPages());
             truncated = limit < available;
             title = metadataTitle(document).orElse(Documents.titleFromFileName(file));
+            texts = new String[limit + 1];
 
             PDFTextStripper stripper = new PDFTextStripper();
-            PDFRenderer renderer = new PDFRenderer(document);
-
             for (int number = 1; number <= limit; number++) {
+                progress.report("Seite " + number + "/" + limit + " wird gelesen", number * 10 / limit);
                 stripper.setStartPage(number);
                 stripper.setEndPage(number);
                 String text = normalise(stripper.getText(document));
 
                 boolean hasText = countVisible(text) >= TEXT_LAYER_THRESHOLD;
                 if (hasText || !containsImage(document.getPage(number - 1))) {
-                    if (text.isBlank()) {
-                        skipped.add(number);
-                    } else {
-                        pages.add(new Page(number, text, false));
-                    }
-                    continue;
-                }
-                if (!config.llm().visionEnabled()) {
-                    skipped.add(number);
-                    continue;
-                }
-                String transcribed;
-                try {
-                    transcribed = normalise(ocr.read(renderPng(renderer, number), number));
-                } catch (de.raindancer118.stoneai.extract.LlmCapacityException outOfCapacity) {
-                    // Every further page would fail alike - the run waits for capacity instead.
-                    throw outOfCapacity;
-                } catch (RuntimeException unavailable) {
-                    // One unreadable diagram must not cost the rest of the document; it is named instead.
-                    unreadable.add(number);
-                    lastOcrFailure = unavailable;
-                    continue;
-                }
-                if (transcribed.isBlank()) {
-                    skipped.add(number);
+                    texts[number] = text;
+                } else if (config.llm().visionEnabled()) {
+                    scans.add(number);
                 } else {
-                    pages.add(new Page(number, transcribed, true));
+                    texts[number] = "";
                 }
             }
+
+            PDFRenderer renderer = new PDFRenderer(document);
+            int[] done = {0};
+            read = BoundedParallel.run(scans.size(), config.llm().parallelCalls(),
+                    index -> transcribe(renderer, scans.get(index)),
+                    index -> true,
+                    (index, result) -> {
+                        done[0]++;
+                        progress.report("Bildseite " + done[0] + "/" + scans.size() + " gelesen (S. " + scans.get(index) + ")",
+                                10 + done[0] * 90 / scans.size());
+                    });
         }
+
+        List<Integer> unreadable = new ArrayList<>();
+        boolean[] fromOcr = new boolean[texts.length];
+        RuntimeException lastOcrFailure = null;
+        for (int index = 0; index < scans.size(); index++) {
+            OcrResult result = read.get(index);
+            if (result.failure() != null) {
+                // One unreadable diagram must not cost the rest of the document; it is named instead.
+                unreadable.add(scans.get(index));
+                lastOcrFailure = result.failure();
+            } else {
+                texts[scans.get(index)] = result.text();
+                fromOcr[scans.get(index)] = true;
+            }
+        }
+        List<Page> pages = new ArrayList<>();
+        for (int number = 1; number < texts.length; number++) {
+            if (texts[number] == null) {
+                continue;
+            }
+            if (texts[number].isBlank()) {
+                skipped.add(number);
+            } else {
+                pages.add(new Page(number, texts[number], fromOcr[number]));
+            }
+        }
+        progress.report("Dokument gelesen", 100);
 
         if (pages.isEmpty() && lastOcrFailure != null) {
             // Nothing readable at all - a later attempt may reach the provider.
@@ -126,6 +155,29 @@ public final class PdfLoader implements DocumentLoader {
         }
         return new SourceDocument(file, title, DocumentKind.PDF, pages, skipped, truncated,
                 Documents.sha256(file), unreadable);
+    }
+
+    private record OcrResult(String text, RuntimeException failure) {
+    }
+
+    /** One image page through the vision model; an exhausted quota ends the load, anything else names the page. */
+    private OcrResult transcribe(PDFRenderer renderer, int number) {
+        byte[] png;
+        try {
+            synchronized (renderer) {
+                png = renderPng(renderer, number);
+            }
+        } catch (IOException e) {
+            return new OcrResult(null, new java.io.UncheckedIOException(e));
+        }
+        try {
+            return new OcrResult(normalise(ocr.read(png, number)), null);
+        } catch (de.raindancer118.stoneai.extract.LlmCapacityException outOfCapacity) {
+            // Every further page would fail alike - the run waits for capacity instead.
+            throw outOfCapacity;
+        } catch (RuntimeException unavailable) {
+            return new OcrResult(null, unavailable);
+        }
     }
 
     /** Whether a page draws at least one image — the other half of the "is this a scan?" test. */

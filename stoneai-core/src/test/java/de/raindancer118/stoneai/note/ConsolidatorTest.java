@@ -23,7 +23,98 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ConsolidatorTest {
 
-    private final StoneAiConfig config = StoneAiConfig.defaults();
+    private final StoneAiConfig config = sequential();
+
+    /** The scripted fake answers in order - one merge at a time keeps that order meaningful. */
+    private static StoneAiConfig sequential() {
+        StoneAiConfig config = StoneAiConfig.defaults();
+        config.llm().parallelCalls(1);
+        return config;
+    }
+
+    /** Merges slowly - topic "A" slowest - and remembers how many merges ran at the same time. */
+    private static final class SlowMerger implements LlmClient {
+        final java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger peak = new java.util.concurrent.atomic.AtomicInteger();
+
+        @Override
+        public LlmAnswer complete(Tier tier, String system, String user) {
+            peak.accumulateAndGet(running.incrementAndGet(), Math::max);
+            String topic = user.replaceAll("(?s)Thema: (\\S+).*", "$1");
+            try {
+                Thread.sleep(topic.equals("A") ? 250 : 100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                running.decrementAndGet();
+            }
+            // Long enough not to count as cut off.
+            return new LlmAnswer("Zusammengeführt " + topic + ". " + "Inhalt. ".repeat(user.length() / 30), 10, "fake");
+        }
+
+        @Override
+        public LlmAnswer readImage(byte[] pngImage, String prompt) {
+            return new LlmAnswer("", 0, "fake");
+        }
+    }
+
+    private static StoneAiConfig parallel(int calls) {
+        StoneAiConfig config = StoneAiConfig.defaults();
+        config.llm().parallelCalls(calls);
+        return config;
+    }
+
+    // Ein langes Skript hat Dutzende Themen, jedes mit vielen Teilen - nacheinander gemergt dauert das.
+    @Test
+    @DisplayName("should merge several notes at once and keep their order")
+    void should_mergeNotesConcurrently_inOrder() {
+        SlowMerger slow = new SlowMerger();
+        List<ExtractedConcept> concepts = new ArrayList<>();
+        for (String topic : List.of("A", "B", "C", "D", "E", "F")) {
+            concepts.add(concept(topic, "Teil eins zu " + topic + ".", 1));
+            concepts.add(concept(topic, "Teil zwei zu " + topic + ".", 2));
+        }
+
+        List<DraftNote> notes = new Consolidator(parallel(3), slow).consolidate(concepts);
+
+        assertThat(slow.peak.get()).isEqualTo(3);
+        assertThat(notes).extracting(DraftNote::title).containsExactly("A", "B", "C", "D", "E", "F");
+        assertThat(notes.get(0).body()).startsWith("Zusammengeführt A.");
+    }
+
+    // Das Hauptthema eines 1.000-Seiten-Buchs sammelt Hunderte Teile - deren Portionen liefen nacheinander.
+    @Test
+    @DisplayName("should merge the batches of one large topic at once")
+    void should_mergeBatchesConcurrently_whenThereIsOnlyOneTopic() {
+        SlowMerger slow = new SlowMerger();
+        List<ExtractedConcept> concepts = new ArrayList<>();
+        for (int part = 0; part < 20; part++) {
+            concepts.add(concept("Hauptthema", ("Teil " + part + ". ").repeat(700), part + 1));
+        }
+
+        List<DraftNote> notes = new Consolidator(parallel(4), slow).consolidate(concepts);
+
+        assertThat(slow.peak.get()).isEqualTo(4);
+        assertThat(notes).singleElement().extracting(DraftNote::title).isEqualTo("Hauptthema");
+    }
+
+    @Test
+    @DisplayName("should never exceed llm.parallelCalls, however many topics and batches there are")
+    void should_stayWithinTheLimit_acrossTopicsAndBatches() {
+        SlowMerger slow = new SlowMerger();
+        List<ExtractedConcept> concepts = new ArrayList<>();
+        for (int part = 0; part < 12; part++) {
+            concepts.add(concept("Hauptthema", ("Teil " + part + ". ").repeat(700), part + 1));
+            concepts.add(concept("Nebenthema " + part, ("Neben " + part + ". ").repeat(700), part + 1));
+            concepts.add(concept("Nebenthema " + part, ("Mehr " + part + ". ").repeat(700), part + 2));
+        }
+
+        List<DraftNote> notes = new Consolidator(parallel(3), slow).consolidate(concepts);
+
+        assertThat(slow.peak.get()).isEqualTo(3);
+        assertThat(notes).hasSize(13);
+        assertThat(notes.get(0).title()).isEqualTo("Hauptthema");
+    }
 
     private static ExtractedConcept concept(String title, String body, int page) {
         return concept(title, body, page, List.of(), 0.8);

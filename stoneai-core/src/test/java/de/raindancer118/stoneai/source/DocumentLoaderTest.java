@@ -112,6 +112,39 @@ class DocumentLoaderTest {
     @DisplayName("Scanned PDFs")
     class ScannedPdfs {
 
+        // Ein gescanntes Buch mit 300 Seiten: eine Bildseite nach der anderen dauerte Stunden,
+        // und der Job stand die ganze Zeit bei "Dokument wird gelesen".
+        @Test
+        @DisplayName("should read several image pages at once, keep the page order and report each page")
+        void should_readImagePagesConcurrently_inOrder() throws Exception {
+            Path pdf = scannedPdf(6);
+            appendTextPage(pdf, "Seite mit Text");
+            config.llm().parallelCalls(3);
+            java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.concurrent.atomic.AtomicInteger peak = new java.util.concurrent.atomic.AtomicInteger();
+            OcrService slow = (png, page) -> {
+                peak.accumulateAndGet(running.incrementAndGet(), Math::max);
+                try {
+                    Thread.sleep(page == 1 ? 1_500 : 1_000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    running.decrementAndGet();
+                }
+                return "Bildtext " + page;
+            };
+            List<String> reported = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+            SourceDocument document = new PdfLoader(config, slow, (message, percent) -> reported.add(percent + " " + message)).load(pdf);
+
+            assertThat(peak.get()).isEqualTo(3);
+            assertThat(document.pages()).extracting(Page::number).containsExactly(1, 2, 3, 4, 5, 6, 7);
+            assertThat(document.pages().get(0).text()).isEqualTo("Bildtext 1");
+            assertThat(document.pages().get(6).fromOcr()).isFalse();
+            assertThat(reported).anyMatch(line -> line.contains("Bildseite 3/6"));
+            assertThat(reported.getLast()).startsWith("100 ");
+        }
+
         @Test
         @DisplayName("should send a page without a text layer through OCR")
         void should_useOcr_when_pageHasNoText() throws Exception {
@@ -303,20 +336,26 @@ class DocumentLoaderTest {
     }
 
     private Path scannedPdf() throws IOException {
+        return scannedPdf(1);
+    }
+
+    private Path scannedPdf(int pages) throws IOException {
         Path file = dir.resolve("scan.pdf");
         try (PDDocument document = new PDDocument()) {
-            PDPage page = new PDPage();
-            document.addPage(page);
-            BufferedImage image = new BufferedImage(120, 60, BufferedImage.TYPE_INT_RGB);
-            Graphics2D graphics = image.createGraphics();
-            graphics.setColor(Color.WHITE);
-            graphics.fillRect(0, 0, 120, 60);
-            graphics.setColor(Color.BLACK);
-            graphics.drawString("scan", 10, 30);
-            graphics.dispose();
-            PDImageXObject xObject = LosslessFactory.createFromImage(document, image);
-            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
-                content.drawImage(xObject, 60, 600, 120, 60);
+            for (int number = 0; number < pages; number++) {
+                PDPage page = new PDPage();
+                document.addPage(page);
+                BufferedImage image = new BufferedImage(120, 60, BufferedImage.TYPE_INT_RGB);
+                Graphics2D graphics = image.createGraphics();
+                graphics.setColor(Color.WHITE);
+                graphics.fillRect(0, 0, 120, 60);
+                graphics.setColor(Color.BLACK);
+                graphics.drawString("scan", 10, 30);
+                graphics.dispose();
+                PDImageXObject xObject = LosslessFactory.createFromImage(document, image);
+                try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                    content.drawImage(xObject, 60, 600, 120, 60);
+                }
             }
             document.save(file.toFile());
         }
@@ -342,7 +381,7 @@ class DocumentLoaderTest {
     private static final class RecordingOcr implements OcrService {
 
         private final String result;
-        private final List<Integer> pages = new ArrayList<>();
+        private final List<Integer> pages = java.util.Collections.synchronizedList(new ArrayList<>());
 
         RecordingOcr(String result) {
             this.result = result;

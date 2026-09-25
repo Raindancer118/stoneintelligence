@@ -58,6 +58,29 @@ class TopicPlannerTest {
         assertThat(result.plan().complete()).isFalse();
     }
 
+    // Bei 300 Abschnitten brach der Auszug nach etwa 70 ab - der Planer sah vom Buch nur den Anfang.
+    @Test
+    @DisplayName("should excerpt a very long document evenly from the first to the last section")
+    void should_excerptTheWholeOfAVeryLongDocument() {
+        List<Chunk> chunks = new ArrayList<>();
+        for (int i = 0; i < 300; i++) {
+            chunks.add(new Chunk(i, "Abschnitt " + (i + 1) + " " + "Inhalt ".repeat(1_400),
+                    new de.raindancer118.stoneai.chunk.Provenance("Buch", Path.of("/tmp/Buch.pdf"), i * 3 + 1, null, i * 3 + 3)));
+        }
+
+        String excerpt = TopicPlanner.excerpt(chunks, 24_000);
+
+        assertThat(excerpt).contains("[Buch, S. 1–3]").contains("[Buch, S. 898–900]");
+        List<Integer> firstPages = java.util.regex.Pattern.compile("\\[Buch, S\\. (\\d+)–").matcher(excerpt).results()
+                .map(match -> Integer.parseInt(match.group(1))).toList();
+        assertThat(firstPages).hasSizeGreaterThan(40);
+        // Evenly spread: no gap between two excerpts is much wider than the average.
+        for (int i = 1; i < firstPages.size(); i++) {
+            assertThat(firstPages.get(i) - firstPages.get(i - 1)).isLessThanOrEqualTo(2 * 900 / firstPages.size() + 3);
+        }
+        assertThat(excerpt.length()).isLessThanOrEqualTo(24_000 * 12 / 10);
+    }
+
     @Test
     @DisplayName("should read a short document whole, without an outline")
     void should_readShortDocumentsWhole() {

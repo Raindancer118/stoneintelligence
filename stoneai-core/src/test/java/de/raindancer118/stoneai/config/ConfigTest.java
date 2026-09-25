@@ -41,6 +41,34 @@ class ConfigTest {
                     "protection.excludeTag", "protection.filenameMarkers");
         }
 
+        // Ein festes Budget von 400.000 Token reichte fuer etwa 170 dichte Seiten - der Rest eines
+        // Lehrbuchs blieb ungelesen. Das Budget waechst mit dem Dokument, das Minimum bleibt.
+        @Test
+        @DisplayName("should grow the token budget with the pages of the document, never below the base")
+        void should_scaleTheTokenBudget_withThePages() {
+            StoneAiConfig config = StoneAiConfig.defaults();
+            config.llm().maxTokensPerRun(400_000);
+            config.llm().maxTokensPerPage(3_000);
+
+            assertThat(config.llm().tokenBudgetFor(10)).isEqualTo(400_000);
+            assertThat(config.llm().tokenBudgetFor(500)).isEqualTo(1_500_000);
+
+            config.llm().maxTokensPerPage(0);
+            assertThat(config.llm().tokenBudgetFor(500)).isEqualTo(400_000);
+        }
+
+        @Test
+        @DisplayName("should offer parallel calls, the page budget and room for long books")
+        void should_offerTheLongDocumentOptions() {
+            StoneAiConfig config = StoneAiConfig.defaults();
+
+            assertThat(ConfigSchema.paths()).contains("llm.parallelCalls", "llm.maxTokensPerPage");
+            assertThat(config.llm().parallelCalls()).isEqualTo(4);
+            assertThat(config.ingest().maxPages()).isEqualTo(1_000);
+            assertThatThrownBy(() -> ConfigSchema.byPath("llm.parallelCalls").set(config, "0"))
+                    .isInstanceOf(ConfigException.class);
+        }
+
         @Test
         @DisplayName("should read and write every option through the schema without special cases")
         void should_roundTripEveryOption_when_setThroughSchema() {

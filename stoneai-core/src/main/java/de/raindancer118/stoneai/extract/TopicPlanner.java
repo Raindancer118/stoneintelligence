@@ -109,24 +109,41 @@ public final class TopicPlanner {
         return String.join("\n", sampled);
     }
 
-    /** The document, or - when it is long - the beginning of every chunk, so no part is unseen. */
+    /** Shortest useful piece of a chunk: shorter than this, an excerpt says nothing about it. */
+    private static final int MIN_SHARE = 400;
+
+    /**
+     * The document, or - when it is long - the beginning of every chunk, so no part is unseen.
+     * A book with more chunks than the budget has room for gets an even sample from the first to
+     * the last chunk instead: cut off after the first few dozen, the planner would only know how
+     * the book begins.
+     */
     static String excerpt(List<Chunk> chunks, int budget) {
         int total = chunks.stream().mapToInt(chunk -> chunk.text().length()).sum();
         if (total <= budget) {
             return String.join("\n\n", chunks.stream().map(Chunk::text).toList());
         }
-        int share = Math.max(400, budget / chunks.size());
+        int labels = chunks.stream().mapToInt(chunk -> chunk.provenance().label().length() + 8).sum() / chunks.size();
+        int room = Math.max(2, budget / (MIN_SHARE + labels));
+        List<Chunk> shown = chunks.size() <= room ? chunks : evenly(chunks, room);
+        int share = Math.max(MIN_SHARE, budget / shown.size() - labels);
         StringBuilder excerpt = new StringBuilder();
-        for (Chunk chunk : chunks) {
+        for (Chunk chunk : shown) {
             String text = chunk.text();
             excerpt.append("[").append(chunk.provenance().label()).append("]\n")
                     .append(text, 0, Math.min(share, text.length())).append(text.length() > share ? " …" : "")
                     .append("\n\n");
-            if (excerpt.length() > budget * 1.2) {
-                break;
-            }
         }
         return excerpt.toString();
+    }
+
+    /** {@code count} chunks spread evenly over all of them, the first and the last included. */
+    private static List<Chunk> evenly(List<Chunk> chunks, int count) {
+        List<Chunk> sampled = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            sampled.add(chunks.get((int) ((long) i * (chunks.size() - 1) / (count - 1))));
+        }
+        return sampled;
     }
 
     /** In a large vault, the titles that share a word with the document - the rest cannot match. */

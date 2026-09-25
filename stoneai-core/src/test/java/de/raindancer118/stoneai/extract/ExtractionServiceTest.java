@@ -15,6 +15,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,10 +34,129 @@ class ExtractionServiceTest {
             ]}
             """;
 
-    private final StoneAiConfig config = StoneAiConfig.defaults();
+    private final StoneAiConfig config = sequential();
+
+    /** The scripted fake answers in order - one call at a time keeps that order meaningful. */
+    private static StoneAiConfig sequential() {
+        StoneAiConfig config = StoneAiConfig.defaults();
+        config.llm().parallelCalls(1);
+        return config;
+    }
 
     private static Chunk chunk(String text) {
         return new Chunk(0, text, new Provenance("Skript", Path.of("/tmp/Skript.pdf"), 42, null));
+    }
+
+    private static Chunk chunk(int index, String text) {
+        return new Chunk(index, text, new Provenance("Skript", Path.of("/tmp/Skript.pdf"), index + 1, null));
+    }
+
+    // Ein 500-Seiten-Buch sind 150 Abschnitte - nacheinander gelesen dauert das Stunden.
+    @Nested
+    @DisplayName("Reading many sections at once")
+    class Parallel {
+
+        /** Answers after a pause that is longest for the first section, so they finish in reverse. */
+        private final class SlowLlm implements LlmClient {
+            final AtomicInteger running = new AtomicInteger();
+            final AtomicInteger peak = new AtomicInteger();
+            final AtomicInteger calls = new AtomicInteger();
+            final int tokens;
+
+            SlowLlm(int tokens) {
+                this.tokens = tokens;
+            }
+
+            @Override
+            public LlmAnswer complete(Tier tier, String system, String user) {
+                calls.incrementAndGet();
+                peak.accumulateAndGet(running.incrementAndGet(), Math::max);
+                String section = user.replaceAll("(?s).*Abschnitt-(\\d+).*", "$1");
+                try {
+                    Thread.sleep(200 - Integer.parseInt(section) * 15L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    running.decrementAndGet();
+                }
+                return new LlmAnswer("{\"concepts\":[{\"title\":\"Thema " + section + "\",\"body\":\"Text " + section + ".\"}]}",
+                        tokens, "fake");
+            }
+
+            @Override
+            public LlmAnswer readImage(byte[] pngImage, String prompt) {
+                return new LlmAnswer("", 0, "fake");
+            }
+        }
+
+        private List<Chunk> sections(int count) {
+            List<Chunk> chunks = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                chunks.add(chunk(i, "Abschnitt-" + i));
+            }
+            return chunks;
+        }
+
+        @Test
+        @DisplayName("should ask for several sections at once, up to llm.parallelCalls")
+        void should_readSectionsConcurrently() {
+            StoneAiConfig parallel = StoneAiConfig.defaults();
+            parallel.llm().parallelCalls(4);
+            SlowLlm llm = new SlowLlm(1);
+
+            ExtractionResult result = new ExtractionService(parallel, llm).extract(sections(8));
+
+            assertThat(llm.peak.get()).isEqualTo(4);
+            assertThat(result.concepts()).hasSize(8);
+        }
+
+        @Test
+        @DisplayName("should keep the document's order although later sections finish first")
+        void should_keepTheDocumentOrder() {
+            StoneAiConfig parallel = StoneAiConfig.defaults();
+            parallel.llm().parallelCalls(4);
+
+            ExtractionResult result = new ExtractionService(parallel, new SlowLlm(1)).extract(sections(6));
+
+            assertThat(result.concepts()).extracting(ExtractedConcept::title)
+                    .containsExactly("Thema 0", "Thema 1", "Thema 2", "Thema 3", "Thema 4", "Thema 5");
+        }
+
+        @Test
+        @DisplayName("should start no further section once the budget is spent and name the ones left out")
+        void should_stopStarting_whenTheBudgetIsSpent() {
+            StoneAiConfig parallel = StoneAiConfig.defaults();
+            parallel.llm().parallelCalls(2);
+            SlowLlm llm = new SlowLlm(1_000);
+
+            ExtractionResult result = new ExtractionService(parallel, llm).extract(sections(6), TopicPlan.none(), 1_000);
+
+            // Two start together (nothing spent yet); the first answer spends the budget.
+            assertThat(llm.calls.get()).isEqualTo(2);
+            assertThat(result.budgetExhausted()).isTrue();
+            assertThat(result.unprocessed()).containsExactly("Skript, S. 3", "Skript, S. 4", "Skript, S. 5", "Skript, S. 6");
+        }
+
+        @Test
+        @DisplayName("should pass on an exhausted quota instead of reporting the sections as failed")
+        void should_propagate_whenOutOfCapacity() {
+            StoneAiConfig parallel = StoneAiConfig.defaults();
+            LlmClient llm = new LlmClient() {
+                @Override
+                public LlmAnswer complete(Tier tier, String system, String user) {
+                    throw new LlmCapacityException("kein Kontingent frei", null, null);
+                }
+
+                @Override
+                public LlmAnswer readImage(byte[] pngImage, String prompt) {
+                    return new LlmAnswer("", 0, "fake");
+                }
+            };
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                            () -> new ExtractionService(parallel, llm).extract(sections(5)))
+                    .isInstanceOf(LlmCapacityException.class);
+        }
     }
 
     @Nested

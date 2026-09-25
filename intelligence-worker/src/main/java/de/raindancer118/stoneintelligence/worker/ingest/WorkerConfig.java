@@ -38,7 +38,8 @@ public class WorkerConfig {
 
     @Bean
     public WorkerLoop workerLoop(PlatformApi platform, GatewayLlmFactory llms, CapacityReporter capacity) {
-        var processor = new JobProcessor(platform, llms, ServiceModels.from(System.getenv()), LocalDate::now);
+        var processor = new JobProcessor(platform, llms, ServiceModels.from(System.getenv()), LocalDate::now,
+            JobProcessor.resumeRootFrom(System.getenv()));
         return new WorkerLoop(platform, processor, capacity);
     }
 }

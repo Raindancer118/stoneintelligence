@@ -88,3 +88,38 @@ Token-Budget reichte für etwa 80, der Rest fiel still weg.
    unter „Siehe auch“. Beim nächsten Schreiben verlieren ältere KI-Notizen (`type: concept`) diese
    Felder; Notizen, die ein Mensch angelegt hat, behalten alle Eigenschaften. Quellnotiz und Index
    ebenso (Seitenzahl steht jetzt im Text der Quellnotiz).
+
+## Nachtrag: sehr lange Dokumente (2026-09-25)
+
+Anlass: Lehrbücher und gescannte Skripte mit mehreren hundert Seiten. Vier Engpässe:
+
+1. **Mehrere Aufrufe gleichzeitig** (`llm.parallelCalls`, Standard 4, 1–16): Abschnitte, Bildseiten
+   und Zusammenführungen laufen nebeneinander (`BoundedParallel`). Das Ergebnis bleibt in
+   Dokumentreihenfolge, gleiche Eingabe ergibt gleiche Notizen. Themen und die Portionen eines
+   großen Themas teilen sich dieselbe Obergrenze. Ein leeres Kontingent beendet den Lauf wie bisher
+   und startet nichts Neues mehr. PDFBox rendert weiterhin eine Seite nach der anderen, gleichzeitig
+   laufen nur die Modellaufrufe. Das Budget wird vor jedem Start geprüft; es kann höchstens um die
+   Aufrufe überschritten werden, die gerade laufen. Probelauf mit einer 1.000-seitigen Bibel
+   (465 Abschnitte, simuliertes Modell mit 150 ms): 76 s → 23 s.
+2. **Budget wächst mit dem Dokument** (`llm.maxTokensPerPage`, Standard 3.000): Budget =
+   max(`llm.maxTokensPerRun`, Seiten × Wert). Dokumente ohne Seiten zählen 3.000 Zeichen als Seite.
+   Das feste Budget von 400.000 Token reichte für etwa 170 dichte Seiten. `ingest.maxPages`
+   500 → 1.000.
+3. **Weitermachen statt von vorn** (`ResumableLlmClient`): Der Worker legt jede Antwort eines Jobs
+   auf der Platte ab, Schlüssel ist die vollständige Frage (Stufe, System-Prompt, Prompt, Bild).
+   Nach einer Kontingent-Pause oder einem Anbieterausfall fragt der nächste Versuch nur, was noch
+   fehlt. Bisher verbrauchte er das neue Tageskontingent wieder für die erste Hälfte und kam bei
+   großen Büchern nie ans Ende. Gelöscht werden die Antworten, sobald der Job fertig ist,
+   abgebrochen wurde, endgültig scheitert oder die Antworten „nicht auswertbar“ waren (dieselben
+   Antworten ergäben dasselbe). Liegen gebliebene Antworten verfallen nach 8 Tagen (länger als
+   platform-api auf Kontingent wartet). Ort: `STONEAI_RESUME_DIR`, sonst `$TMPDIR/stoneai-resume`
+   im Container; nach dem Neuerstellen des Containers fängt ein wartender Job wieder von vorn an.
+4. **Der Planer sieht das ganze Buch**: Bei mehr Abschnitten, als in 24.000 Zeichen Auszug passen,
+   brach der Auszug nach etwa 70 Abschnitten ab. Jetzt ist er eine gleichmäßige Stichprobe vom
+   ersten bis zum letzten Abschnitt (je ≥ 400 Zeichen).
+
+Dazu meldet der Job beim Laden, welche Seite bzw. Bildseite gerade gelesen wird, statt lange bei
+„Dokument wird gelesen“ zu stehen.
+
+Offen: KI-Uploads sind weiterhin auf 20 MB begrenzt (`AiJobService.MAX_FILE_BYTES`, multipart,
+Webapp). Gescannte Bücher sind oft größer.

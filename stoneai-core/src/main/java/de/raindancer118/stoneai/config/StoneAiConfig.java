@@ -134,7 +134,7 @@ public final class StoneAiConfig {
         private String inbox = "~/Dokumente/StoneAI-Vault/Inbox";
         private String processedFolder = "Inbox/_erledigt";
         private boolean moveProcessed = true;
-        private int maxPages = 500;
+        private int maxPages = 1_000;
         private int watchDebounceSeconds = 3;
 
         public String inbox() {
@@ -203,6 +203,8 @@ public final class StoneAiConfig {
                 "gemini:gemini-2.5-pro"));
         private double temperature = 0.2;
         private int maxTokensPerRun = 400_000;
+        private int maxTokensPerPage = 3_000;
+        private int parallelCalls = 4;
         private int maxOutputTokens = 16_384;
         private int retryAttempts = 4;
         private int retryBackoffSeconds = 20;
@@ -278,6 +280,32 @@ public final class StoneAiConfig {
 
         public void maxTokensPerRun(int value) {
             this.maxTokensPerRun = value;
+        }
+
+        public int maxTokensPerPage() {
+            return maxTokensPerPage;
+        }
+
+        public void maxTokensPerPage(int value) {
+            this.maxTokensPerPage = value;
+        }
+
+        /**
+         * The budget for a document of {@code pages} pages: {@link #maxTokensPerRun()} at least,
+         * {@link #maxTokensPerPage()} per page for a long one - a fixed budget read the first 170
+         * pages of a textbook and left the rest.
+         */
+        public int tokenBudgetFor(int pages) {
+            long scaled = (long) Math.max(0, pages) * Math.max(0, maxTokensPerPage);
+            return (int) Math.min(Integer.MAX_VALUE, Math.max(maxTokensPerRun, scaled));
+        }
+
+        public int parallelCalls() {
+            return parallelCalls;
+        }
+
+        public void parallelCalls(int value) {
+            this.parallelCalls = value;
         }
 
         public boolean visionEnabled() {
