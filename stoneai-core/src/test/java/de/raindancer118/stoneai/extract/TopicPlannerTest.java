@@ -82,6 +82,32 @@ class TopicPlannerTest {
     }
 
     @Test
+    @DisplayName("should keep more planned topics for a long deck than for a short one")
+    void should_allowMoreTopics_forALongDocument() {
+        SourceDocument deck = deck(800);
+        StringBuilder topics = new StringBuilder("{\"topics\":[");
+        for (int i = 1; i <= 90; i++) {
+            topics.append(i > 1 ? "," : "").append("{\"title\":\"Begriff ").append(i).append("\",\"kind\":\"begriff\"}");
+        }
+        String answer = topics.append("]}").toString();
+        LlmClient llm = new LlmClient() {
+            @Override
+            public LlmAnswer complete(Tier tier, String system, String user) {
+                return new LlmAnswer(answer, 1, "fake");
+            }
+
+            @Override
+            public LlmAnswer readImage(byte[] pngImage, String prompt) {
+                return new LlmAnswer("", 0, "fake");
+            }
+        };
+
+        TopicPlanner.Result result = new TopicPlanner(config, llm).plan(deck, new Chunker(10_000, 0).split(deck), List.of());
+
+        assertThat(result.plan().topics()).hasSize(80);
+    }
+
+    @Test
     @DisplayName("should read a short document whole, without an outline")
     void should_readShortDocumentsWhole() {
         SourceDocument deck = deck(4);

@@ -49,7 +49,7 @@ welche Levels er verarbeiten darf.
    Text als Yjs-Update anhängen, Live-Broadcast an offene Editoren, Vault-Ankündigungen, Audit.
    Der Akteur ist eine **KI-Identität** (`ki:<name>`), in Audit und Frontmatter sichtbar.
 5. **Uploads** über `platform-api` (Berechtigung CREATE; PDF, Markdown, Text – am Inhalt erkannt;
-   20 MB je Datei, 10 Dateien je Upload, 20 offene Jobs je Vault). Jede Datei wird ein Job in
+   100 MB je Datei (bis 25.09.2026: 20 MB), 10 Dateien je Upload, 20 offene Jobs je Vault). Jede Datei wird ein Job in
    `platform.ai_jobs` (Postgres, `FOR UPDATE SKIP LOCKED`, Lease 10 min für den Wiederanlauf nach
    Absturz, 3 Versuche mit wachsender Pause). **Abweichung vom ursprünglichen Plan:** nicht die
    `worker.jobs`-Tabelle – der Worker holt Jobs, Dokument und Fortschritt ausschließlich über

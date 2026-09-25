@@ -51,8 +51,6 @@ public final class IngestPipeline {
     /** Characters per chunk. Comfortably inside every current model's context, with room for the prompt. */
     private static final int CHUNK_CHARS = 10_000;
     private static final int CHUNK_OVERLAP = 400;
-    /** A dense book page, for sizing the budget of documents without pages (Markdown, text). */
-    private static final int CHARS_PER_PAGE = 3_000;
 
     private final StoneAiConfig config;
     private final LlmClient llm;
@@ -144,10 +142,11 @@ public final class IngestPipeline {
 
         progress.report("Text wird gelesen", 15);
         ExtractionResult extraction = new ExtractionService(config, recorder, progress.scaled(15, 75))
-                .extract(chunks, planned.plan(), config.llm().tokenBudgetFor(pagesOf(source)));
+                .extract(chunks, planned.plan(), config.llm().tokenBudgetFor(source.lengthInPages()));
 
         progress.report("Notizen werden zusammengeführt", 78);
-        List<DraftNote> notes = new Consolidator(config, recorder, progress.scaled(78, 95)).consolidate(extraction.concepts());
+        List<DraftNote> notes = new Consolidator(config, recorder, progress.scaled(78, 95)).consolidate(extraction.concepts(),
+                config.notes().maxNotesFor(source.lengthInPages()));
         progress.report("Notizen werden geschrieben", 96);
 
         VaultWriter writer = new VaultWriter(config, ProtectionPolicy.of(config, vaultRoot), clock, index, store);
@@ -204,15 +203,6 @@ public final class IngestPipeline {
         return new IngestReport(document, source.sha256(), source.title(), "", writes,
                 extraction.failures(), source.skippedPages(), extraction.tokensUsed() + planned.tokensUsed(),
                 extraction.budgetExhausted(), unread);
-    }
-
-    /**
-     * How long the document is, in pages, for its token budget: a text file is one page however
-     * long it is, so it counts by its length.
-     */
-    static int pagesOf(SourceDocument source) {
-        long chars = source.pages().stream().mapToLong(page -> page.text().length()).sum();
-        return (int) Math.max(source.pages().size(), chars / CHARS_PER_PAGE);
     }
 
     /** Reads a scanned page through the vision model. */

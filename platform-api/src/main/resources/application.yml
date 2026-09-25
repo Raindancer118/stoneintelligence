@@ -12,11 +12,12 @@ spring:
     hibernate:
       ddl-auto: validate
 
-  # KI-Uploads (AiJobService): 20 MB je Datei; groessere Stapel schickt das Dashboard einzeln.
+  # KI-Uploads (AiJobService): 100 MB je Datei (gescannte Buecher). Das Dashboard schickt jede Datei
+  # einzeln - mehrere grosse Dateien in einer Anfrage wuerden den Heap sprengen.
   servlet:
     multipart:
-      max-file-size: 20MB
-      max-request-size: 50MB
+      max-file-size: 100MB
+      max-request-size: 110MB
 
   flyway:
     schemas: platform

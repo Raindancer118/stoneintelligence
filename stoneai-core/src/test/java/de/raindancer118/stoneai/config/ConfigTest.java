@@ -57,6 +57,19 @@ class ConfigTest {
             assertThat(config.llm().tokenBudgetFor(500)).isEqualTo(400_000);
         }
 
+        // Ein 1.000-Seiten-Buch hat mehr als 40 zentrale Themen - die feste Grenze schnitt sie ab.
+        @Test
+        @DisplayName("should allow more notes for a long book, one per ten pages, up to 150")
+        void should_scaleTheNoteLimit_withThePages() {
+            StoneAiConfig config = StoneAiConfig.defaults();
+
+            assertThat(config.notes().maxNotesFor(12)).isEqualTo(40);
+            assertThat(config.notes().maxNotesFor(800)).isEqualTo(80);
+            assertThat(config.notes().maxNotesFor(5_000)).isEqualTo(150);
+            config.notes().maxNotesPerDocument(200);
+            assertThat(config.notes().maxNotesFor(5_000)).isEqualTo(200);
+        }
+
         @Test
         @DisplayName("should offer parallel calls, the page budget and room for long books")
         void should_offerTheLongDocumentOptions() {

@@ -51,6 +51,11 @@ public final class Consolidator {
 
     /** Up to {@code llm.parallelCalls} notes are merged at once; the notes keep the document's order. */
     public List<DraftNote> consolidate(List<ExtractedConcept> concepts) {
+        return consolidate(concepts, config.notes().maxNotesPerDocument());
+    }
+
+    /** As {@link #consolidate(List)}, keeping at most {@code limit} notes - a long book may have more. */
+    public List<DraftNote> consolidate(List<ExtractedConcept> concepts, int limit) {
         List<List<ExtractedConcept>> groups = group(concepts);
         int[] done = {0};
         List<DraftNote> notes = BoundedParallel.run(groups.size(), config.llm().parallelCalls(), index -> {
@@ -60,7 +65,7 @@ public final class Consolidator {
             done[0]++;
             progress.report("Notiz " + done[0] + "/" + groups.size() + " zusammengeführt", done[0] * 100 / groups.size());
         });
-        return capped(new ArrayList<>(notes));
+        return capped(new ArrayList<>(notes), limit);
     }
 
     /** Buckets concepts that describe the same thing, by title, alias or close similarity. */
@@ -253,8 +258,7 @@ public final class Consolidator {
      * limit, the most confident ones survive — an arbitrary truncation would drop whatever
      * happened to come last.
      */
-    private List<DraftNote> capped(List<DraftNote> notes) {
-        int limit = config.notes().maxNotesPerDocument();
+    private static List<DraftNote> capped(List<DraftNote> notes, int limit) {
         if (notes.size() <= limit) {
             return notes;
         }

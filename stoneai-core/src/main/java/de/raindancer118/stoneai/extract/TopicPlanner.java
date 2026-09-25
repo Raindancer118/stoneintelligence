@@ -51,12 +51,12 @@ public final class TopicPlanner {
                 excerpt(chunks, Math.max(MIN_EXCERPT_BUDGET, TEXT_BUDGET - outline.length())));
         LlmAnswer answer = llm.complete(Tier.SMART, system, user);
         try {
-            return new Result(parse(answer.text(), complete), answer.tokensUsed());
+            return new Result(parse(answer.text(), complete, document), answer.tokensUsed());
         } catch (ExtractionException first) {
             LlmAnswer repaired = llm.complete(Tier.SMART, system, Prompts.repairUser(answer.text(), first.getMessage()));
             int used = answer.tokensUsed() + repaired.tokensUsed();
             try {
-                return new Result(parse(repaired.text(), complete), used);
+                return new Result(parse(repaired.text(), complete, document), used);
             } catch (ExtractionException second) {
                 return new Result(TopicPlan.single(document.title()), used);
             }
@@ -66,7 +66,7 @@ public final class TopicPlanner {
     public record Result(TopicPlan plan, int tokensUsed) {
     }
 
-    private TopicPlan parse(String answer, boolean complete) {
+    private TopicPlan parse(String answer, boolean complete, SourceDocument document) {
         JsonNode topics = ConceptJson.tree(answer == null ? "" : answer).get("topics");
         if (topics == null || !topics.isArray()) {
             throw new ExtractionException("the answer has no \"topics\" array");
@@ -91,7 +91,7 @@ public final class TopicPlanner {
         if (planned.isEmpty()) {
             throw new ExtractionException("the plan names no topic");
         }
-        int limit = Math.max(1, config.notes().maxNotesPerDocument());
+        int limit = Math.max(1, config.notes().maxNotesFor(document.lengthInPages()));
         return new TopicPlan(planned.size() > limit ? planned.subList(0, limit) : planned, complete);
     }
 

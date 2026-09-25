@@ -128,7 +128,7 @@ public final class ConfigSchema {
                     config -> config.notes().similarityThreshold(),
                     (config, value) -> config.notes().similarityThreshold(value)),
             ConfigOption.integer("notes.maxNotesPerDocument",
-                    "Obergrenze an Notizen, die ein einzelnes Dokument erzeugen darf", 1, 1_000,
+                    "Obergrenze an Notizen je Dokument; lange Dokumente dürfen eine je 10 Seiten (bis 150)", 1, 1_000,
                     config -> config.notes().maxNotesPerDocument(),
                     (config, value) -> config.notes().maxNotesPerDocument(value)),
             ConfigOption.flag("notes.writeSourceNote",

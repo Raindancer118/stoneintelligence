@@ -82,6 +82,17 @@ class AiJobServiceTest {
             assertThatThrownBy(() -> service.upload(vaultId, "tom", "gemini", 1, List.of())).isInstanceOf(AiWriteRefusedException.class);
         }
 
+        // Gescannte Lehrbuecher sind oft 30-80 MB - die alte Grenze von 20 MB wies sie ab.
+        @Test
+        void should_acceptABookOfSeveralHundredPages() {
+            var book = new byte[80 * 1024 * 1024];
+            System.arraycopy(PDF, 0, book, 0, PDF.length);
+
+            assertThat(service.upload(vaultId, "tom", "gemini", 1, List.of(new AiJobService.Upload("Lehrbuch.pdf", "application/pdf", book))))
+                .hasSize(1);
+            assertThat(AiJobService.MAX_FILE_BYTES).isEqualTo(100 * 1024 * 1024);
+        }
+
         // Backpressure: ein Vault kann die Warteschlange nicht beliebig fuellen.
         @Test
         void should_limitOpenJobsPerVault() {
