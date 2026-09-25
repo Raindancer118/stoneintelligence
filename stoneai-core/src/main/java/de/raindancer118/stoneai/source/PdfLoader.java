@@ -117,6 +117,13 @@ public final class PdfLoader implements DocumentLoader {
         if (pages.isEmpty() && skipped.isEmpty()) {
             throw new EmptyDocumentException(file);
         }
+        if (pages.isEmpty()) {
+            // Every page empty, or an image the text recognition returned nothing for: without a
+            // word of text the run could only write an empty source note and call that "done".
+            throw new EmptyDocumentException(file, "weder Text noch Bildtext gefunden ("
+                    + (skipped.size() == 1 ? "Seite " : "Seiten ")
+                    + String.join(", ", skipped.stream().map(String::valueOf).toList()) + ")");
+        }
         return new SourceDocument(file, title, DocumentKind.PDF, pages, skipped, truncated,
                 Documents.sha256(file), unreadable);
     }

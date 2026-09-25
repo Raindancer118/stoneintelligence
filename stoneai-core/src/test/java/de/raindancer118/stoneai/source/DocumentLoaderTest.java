@@ -177,14 +177,30 @@ class DocumentLoaderTest {
         @DisplayName("should skip an image page rather than fail when vision is switched off")
         void should_skipPage_when_visionIsDisabled() throws Exception {
             Path pdf = scannedPdf();
+            appendTextPage(pdf, "Seite mit Text");
             config.llm().visionEnabled(false);
             RecordingOcr ocr = new RecordingOcr("unused");
 
             SourceDocument document = new PdfLoader(config, ocr).load(pdf);
 
             assertThat(ocr.calls()).isZero();
-            assertThat(document.pages()).isEmpty();
+            assertThat(document.pages()).extracting(Page::number).containsExactly(2);
             assertThat(document.skippedPages()).containsExactly(1);
+        }
+
+        // Live 25.09.2026: a screenshot PDF whose only page came back from OCR without text was
+        // "done - 0 notes", with nothing but an empty source note to show for it. A document with
+        // nothing readable is refused, saying why.
+        @Test
+        @DisplayName("should refuse a PDF of which not a single page yielded text")
+        void should_refuse_when_everyPageWasSkipped() throws Exception {
+            Path pdf = scannedPdf();
+            OcrService blank = (png, page) -> "   ";
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> new PdfLoader(config, blank).load(pdf))
+                    .isInstanceOf(EmptyDocumentException.class)
+                    .hasMessageContaining("keinen lesbaren Text")
+                    .hasMessageContaining("Seite 1");
         }
     }
 
