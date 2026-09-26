@@ -5,7 +5,7 @@ import { api } from "../src/lib/api";
 vi.mock("../src/lib/api", async (original) => ({ ...(await original<typeof import("../src/lib/api")>()), api: {
   listRoles: vi.fn(), listGroups: vi.fn(), listMembers: vi.fn(), createGroup: vi.fn(), createRole: vi.fn(),
   listInvitations: vi.fn(), searchPeople: vi.fn(), removeFromVault: vi.fn(), deleteRole: vi.fn(), updateRole: vi.fn(),
-  renameGroup: vi.fn(), deleteGroup: vi.fn(),
+  renameGroup: vi.fn(), deleteGroup: vi.fn(), vaultLog: vi.fn(),
 } }));
 const group = { id: "group", name: "Team", memberSubjects: [], roleIds: [] };
 beforeEach(() => {
@@ -60,5 +60,14 @@ describe("vault members and management", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Gruppe löschen" }));
 
     expect(await screen.findByText(/niemand mehr den Vault verwalten/)).toBeTruthy();
+  });
+  it("shows the vault log on request, in plain words", async () => {
+    vi.mocked(api.vaultLog).mockResolvedValue([{ actor: "tom", action: "MEMBER_REMOVED", payload: { subject: "ben" },
+      occurredAt: "2026-09-26T10:00:00Z", noteId: null, path: null, paths: [] }]);
+    render(VaultDetail, { vault, me: "tom" });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Letzte Ereignisse anzeigen" }));
+
+    expect(await screen.findByText("tom hat ben aus dem Vault genommen")).toBeTruthy();
   });
 });

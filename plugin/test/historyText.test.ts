@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { activityLines, describeActor, describeEvent } from "../src/sync/historyText";
-import type { HistoryEvent } from "../src/sync/NoteApiClient";
+import type { HistoryEvent } from "../src/sync/historyText";
 
 const event = (action: string, payload: Record<string, unknown> = {}, actor = "tom", path: string | null = "Team/plan.md"): HistoryEvent => ({
   actor, action, payload, occurredAt: "2026-09-26T10:00:00Z", noteId: "n1", path, paths: path ? [path] : [],

@@ -131,6 +131,22 @@ class VaultSyncSimulationIT {
         return json.readValue(response.body(), responseType);
     }
 
+    /** Freigabe setzen (ADR 0011) - Ordner muss existieren; {@code permissions == null} = wie im Vault. */
+    private void putFolderGrant(String vaultPath, Map<String, String> headers, String folder, String subject,
+                                List<String> permissions) throws Exception {
+        var body = new java.util.HashMap<String, Object>();
+        body.put("scopeType", "USER");
+        body.put("subject", subject);
+        body.put("permissions", permissions);
+        var builder = HttpRequest.newBuilder(URI.create(baseUrl() + vaultPath + "/folders/access/grants?path="
+                + java.net.URLEncoder.encode(folder, java.nio.charset.StandardCharsets.UTF_8)))
+            .header("Content-Type", "application/json")
+            .PUT(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)));
+        headers.forEach(builder::header);
+        var response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).as("grant on '%s'", folder).isEqualTo(200);
+    }
+
     private HttpResponse<String> patch(String path, Map<String, String> headers, Object body) throws Exception {
         var builder = HttpRequest.newBuilder(URI.create(baseUrl() + path))
             .header("Content-Type", "application/json")
@@ -141,8 +157,8 @@ class VaultSyncSimulationIT {
 
     /**
      * Gibt {@code subject} Lesezugriff AUSSCHLIESSLICH unterhalb von {@code pathPrefix}: eine
-     * Gruppe mit reiner READ-Rolle, plus zwei Pfadregeln (alles verwehren, den erlaubten Praefix
-     * wieder zulassen - der laengste Praefix gewinnt, s. {@code PathRules}).
+     * Gruppe mit reiner READ-Rolle, plus zwei Freigaben (den ganzen Vault verwehren, den erlaubten
+     * Ordner wieder "wie im Vault" - der tiefste Ordner gewinnt, s. {@code AccessResolver}).
      */
     private void grantReadOnlyOnPath(String vaultId, String subject, String pathPrefix) throws Exception {
         var owner = bearerAuth(vaultOwners.get(vaultId));
@@ -156,10 +172,10 @@ class VaultSyncSimulationIT {
             owner, Map.of("subject", subject)).statusCode()).isEqualTo(200);
         assertThat(postRaw("/api/v1/vaults/" + vaultId + "/groups/" + group.get("id") + "/roles/" + role.get("id"),
             owner, null).statusCode()).isEqualTo(200);
-        post("/api/v1/vaults/" + vaultId + "/path-rules", owner,
-            Map.of("pathPrefix", "", "scopeSubject", subject, "effect", "DENY"), Map.class);
-        post("/api/v1/vaults/" + vaultId + "/path-rules", owner,
-            Map.of("pathPrefix", pathPrefix, "scopeSubject", subject, "effect", "ALLOW"), Map.class);
+        var folder = pathPrefix.replaceAll("/+$", "");
+        postRaw("/api/v1/vaults/" + vaultId + "/folders", owner, Map.of("path", folder));
+        putFolderGrant("/api/v1/vaults/" + vaultId, owner, "", subject, List.of());
+        putFolderGrant("/api/v1/vaults/" + vaultId, owner, folder, subject, null);
     }
 
     private HttpResponse<String> delete(String path, Map<String, String> headers) throws Exception {

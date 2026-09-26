@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, ApiError, type Note, type NoteContent, type AuditEvent } from "../api";
+  import { api, ApiError, type Note, type NoteContent, type NoteHistory } from "../api";
+  import { activityLines, describeEvent } from "../historyText";
   import { decodeContent, prepareUpdate, renderMarkdown, normalizeNotePath, downloadNote } from "../noteContent";
 
   let { note, permissions, onChanged, onDeleted, onDirtyChange }: {
@@ -19,7 +20,7 @@
   let savedAt = $state("");
   let renaming = $state(false);
   let newPath = $state("");
-  let history = $state<AuditEvent[] | null>(null);
+  let history = $state<NoteHistory | null>(null);
   let showHistory = $state(false);
   let historyLoading = $state(false);
   let alive = true;
@@ -89,11 +90,10 @@
     showHistory = !showHistory;
     if (!showHistory || history || historyLoading) return;
     historyLoading = true;
-    try { const events = await api.noteAudit(note.vaultId, note.id); if (alive) history = events; }
+    try { const loaded = await api.noteHistory(note.vaultId, note.id); if (alive) history = loaded; }
     catch (e) { if (alive) { error = message(e); showHistory = false; } }
     finally { if (alive) historyLoading = false; }
   }
-  const actionLabels: Record<string, string> = { "note.created": "Notiz angelegt", "note.renamed": "Pfad geändert", "note.deleted": "Notiz gelöscht", "note.content-updated": "Im Browser gespeichert" };
   function beforeUnload(event: BeforeUnloadEvent) { if (dirty || saving || busy) { event.preventDefault(); event.returnValue = ""; } }
   function shortcut(event: KeyboardEvent) {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void save(); }
@@ -139,7 +139,7 @@
       {#if permissions.includes("DELETE")}<button class="danger" disabled={saving || busy} onclick={remove}>Notiz löschen</button>{/if}
     </div>
     {#if renaming}<form class="rename-form" onsubmit={(e) => { e.preventDefault(); void rename(); }}><label for="new-path">Neuer Pfad</label><input id="new-path" bind:value={newPath} required disabled={busy} /><button class="primary" disabled={busy}>Pfad speichern</button><button type="button" class="quiet" onclick={() => renaming = false}>Abbrechen</button></form>{/if}
-    {#if showHistory}<section class="history" aria-label="Änderungsverlauf"><p class="hint">Anlage, Pfadänderungen und Speichervorgänge im Browser. Einzelne Live-Sync-Schritte werden hier nicht protokolliert.</p>{#if historyLoading}<p role="status">Verlauf wird geladen…</p>{:else if history?.length}<ol>{#each [...history].reverse() as event}<li><strong>{actionLabels[event.action] ?? event.action}</strong><span>{event.actor} · {date(event.occurredAt)}</span></li>{/each}</ol>{:else}<p>Noch keine Einträge.</p>{/if}</section>{/if}
+    {#if showHistory}<section class="history" aria-label="Änderungsverlauf">{#if historyLoading}<p role="status">Verlauf wird geladen…</p>{:else if history}<ul class="activity">{#each history.activity ? activityLines(history.activity) : [] as line}<li>{line}</li>{/each}</ul>{#if history.events.length}<ol>{#each [...history.events].reverse() as event}<li><strong>{describeEvent(event)}</strong><span>{date(event.occurredAt)}</span></li>{/each}</ol>{:else}<p>Noch keine Einträge.</p>{/if}{/if}</section>{/if}
   </details>
 </article>
 
@@ -167,7 +167,7 @@
   summary { min-height: 48px; display: list-item; align-content: center; cursor: pointer; font-size: .85rem; font-weight: 500; }
   dl { display: flex; flex-wrap: wrap; gap: 1rem 3rem; margin: .5rem 0 1rem; font-size: .85rem; } dt { color: var(--ink-dim); } dd { margin: .2rem 0; }
   .rename-form { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: 1rem; } .rename-form input { flex: 1; min-width: 10rem; }
-  .history { margin-top: 1.25rem; } .history ol { list-style: none; padding: 0; font-size: .85rem; } .history li { display: flex; flex-direction: column; padding: .75rem 0; border-top: 1px solid var(--line); } .history li span { color: var(--ink-dim); }
+  .history { margin-top: 1.25rem; } .history ol { list-style: none; padding: 0; font-size: .85rem; } .history li { display: flex; flex-direction: column; padding: .75rem 0; border-top: 1px solid var(--line); } .history li span { color: var(--ink-dim); } .activity { margin: 0 0 .75rem; padding-left: 1.1rem; color: var(--ink-dim); font-size: .85rem; }
   .loading, .empty { padding: 2rem; color: var(--ink-dim); } .empty h3 { color: var(--ink); } .feedback { margin: 1rem 1.75rem; }
   @media (max-width: 700px) { .document-heading, .document-toolbar, .reading, .writing, .details, .document-footer { padding-left: 1rem; padding-right: 1rem; } .document-heading { flex-direction: column; gap: .3rem; } .save-state { text-align: left; } }
 </style>

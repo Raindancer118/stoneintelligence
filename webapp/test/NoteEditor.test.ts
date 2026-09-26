@@ -4,7 +4,7 @@ import NoteEditor from "../src/lib/components/NoteEditor.svelte";
 import { api, ApiError } from "../src/lib/api";
 import { prepareUpdate, decodeContent } from "../src/lib/noteContent";
 vi.mock("../src/lib/api", async (original) => ({ ...(await original<object>()), api: {
-  noteContent: vi.fn(), saveContent: vi.fn(), noteAudit: vi.fn(), renameNote: vi.fn(), deleteNote: vi.fn(),
+  noteContent: vi.fn(), saveContent: vi.fn(), noteHistory: vi.fn(), renameNote: vi.fn(), deleteNote: vi.fn(),
 } }));
 const note = { id: "note", vaultId: "vault", path: "Notes/Welcome.md", noteLevel: 1, createdBy: "Tom", createdAt: "2026-09-19T10:00:00Z" };
 const updates = [prepareUpdate([], "# Welcome\nOriginal text")];
@@ -45,5 +45,21 @@ describe("note editor", () => {
     await screen.findByText("Original text");
     expect(screen.queryByRole("button", { name: "Bearbeiten", exact: true })).toBeNull();
     expect(screen.queryByRole("button", { name: "Notiz löschen" })).toBeNull();
+  });
+  it("shows who created, last edited and last opened the note, and what happened", async () => {
+    vi.mocked(api.noteHistory).mockResolvedValue({
+      activity: { createdBy: "tom", createdAt: "2026-09-19T10:00:00Z", lastEditedBy: "anna", lastEditedAt: "2026-09-26T09:00:00Z",
+        lastOpenedBy: "ben", lastOpenedAt: "2026-09-26T09:30:00Z" },
+      events: [{ actor: "tom", action: "note.created", payload: { path: "Notes/Welcome.md" }, occurredAt: "2026-09-19T10:00:00Z",
+        noteId: "note", path: "Notes/Welcome.md", paths: ["Notes/Welcome.md"] }],
+    });
+    render(NoteEditor, props());
+    await screen.findByText("Original text");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Änderungsverlauf" }));
+
+    expect(await screen.findByText(/Zuletzt bearbeitet von anna/)).toBeTruthy();
+    expect(screen.getByText(/Zuletzt geöffnet von ben/)).toBeTruthy();
+    expect(screen.getByText("tom hat „Welcome“ angelegt")).toBeTruthy();
   });
 });

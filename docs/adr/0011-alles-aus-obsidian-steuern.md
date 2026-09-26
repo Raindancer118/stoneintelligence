@@ -1,6 +1,6 @@
 # ADR 0011: Alles aus Obsidian steuern, Rechte je Notiz und Ordner
 
-Status: Angenommen (2026-09-26)
+Status: Angenommen und umgesetzt (2026-09-26, Releases 0.24.0 bis 0.27.0)
 
 ## Kontext
 
@@ -152,3 +152,15 @@ KI schreibt nicht in einen Ordner, den `requestedBy` nicht beschreiben darf.
 Vault löschen, Themen-ACLs und Note-Levels 2–99/E2EE, Versionsverlauf mit Wiederherstellen. Der
 Versionsverlauf bekommt später einen Platz im Menü „Verlauf und Protokoll". Die nächtliche
 Verlinkung steht in ADR 0012. Ihre Schalter kommen in den Reiter *KI* der Vault-Verwaltung.
+
+## Nachtrag: Umsetzung (26.09.2026)
+
+- Umgesetzt wie oben, mit drei Abweichungen:
+  1. Den Verlauf eines Eintrags liefert `GET …/notes/{id}/history` (angelegt, zuletzt bearbeitet,
+     zuletzt geöffnet, Ereignisse), auch nach dem Löschen. `…/notes/{id}/audit` ist entfallen.
+  2. Freigabe-Ereignisse sieht nur, wer an der Stelle verwaltet. Ereignisse ohne Ort (Mitglieder,
+     Rollen, Gruppen) sehen nur Vault-Verwaltende.
+  3. „Mit KI einlesen" nimmt das Level der Datei selbst, nicht ein vom Client gewähltes.
+- Paritätstest: `ApiParityTest` (platform-api). Begründete Ausnahmen stehen im Test selbst.
+- Rechte- und Verlaufslogik steht in `plugin/src/sync/accessPlan.ts` und `historyText.ts`. Die Webapp
+  nutzt exakte Kopien, `webapp/test/accessPlanCopy.test.ts` erzwingt die Gleichheit.

@@ -126,27 +126,6 @@ class AuthorizationControllerTest {
             .containsExactlyInAnyOrderElementsOf(java.util.EnumSet.allOf(Permission.class));
     }
 
-    @Test
-    void should_keepThePathRuleApi_workingOnGrants() {
-        var vaultId = ownerBootstrappedVault("tom");
-        var auth = new TestingAuthenticationToken("tom", null);
-        var reader = authorization.createGroup(vaultId, "guests");
-        authorization.addMember(reader.id(), "ben");
-        var note = notes.create(vaultId, "Team/plan.md", de.tstieh.stoneintelligence.domain.notelevel.NoteLevel.of(1), "tom");
-
-        controller.createPathRule(vaultId.value().toString(),
-            new AuthorizationController.CreatePathRuleRequest("private/", null, "DENY"), auth);
-        controller.createPathRule(vaultId.value().toString(),
-            new AuthorizationController.CreatePathRuleRequest("Team/plan.md", "ben", "ALLOW"), auth);
-
-        var rules = controller.listPathRules(vaultId.value().toString(), auth);
-        assertThat(rules).extracting(AuthorizationController.PathRuleResponse::pathPrefix).containsExactlyInAnyOrder("private", "Team/plan.md");
-        assertThat(rules).extracting(AuthorizationController.PathRuleResponse::effect).containsExactlyInAnyOrder("DENY", "ALLOW");
-        assertThat(grants.list(vaultId)).extracting(AccessGrant::target)
-            .containsExactlyInAnyOrder(GrantTarget.folder("private"), GrantTarget.entry(note.id(), "Team/plan.md"));
-        assertThat(guard.accessAt(vaultId, "tom", "private/x.md").allows(Permission.READ)).isFalse();
-    }
-
     @org.junit.jupiter.api.Nested
     class Management {
 

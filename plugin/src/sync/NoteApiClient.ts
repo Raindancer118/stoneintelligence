@@ -27,16 +27,17 @@ export interface GroupRef { id: string; name: string; }
 export interface VaultMember { subject: string; groups: GroupRef[]; permissions: Permission[]; }
 export interface VaultGroup { id: string; name: string; memberSubjects: string[]; roleIds: string[]; }
 export interface VaultRole { id: string; name: string; permissions: Permission[]; }
-export interface NoteActivity {
-  createdBy: string; createdAt: string;
-  lastEditedBy: string | null; lastEditedAt: string | null;
-  lastOpenedBy: string | null; lastOpenedAt: string | null;
+export type { HistoryEvent, NoteActivity, NoteHistory } from "./historyText";
+import type { HistoryEvent, NoteHistory } from "./historyText";
+export interface AiService { id: string; name: string; levels: number[]; }
+export type AiJobStatus = "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+export interface AiJob {
+  id: string; service: string; requestedBy: string; fileName: string; size: number; level: number; status: AiJobStatus;
+  progress: string | null; percent: number | null; error: string | null; changeSetId: string | null; createdAt: string;
+  finishedAt: string | null; availableAt: string | null; waitingForCapacity: boolean;
 }
-export interface HistoryEvent {
-  actor: string; action: string; payload: Record<string, unknown>; occurredAt: string;
-  noteId: string | null; path: string | null; paths: string[];
-}
-export interface NoteHistory { activity: NoteActivity; events: HistoryEvent[]; }
+/** Wie viel Kontingent ein KI-Dienst laut letzter Worker-Meldung hat; `exhausted === null` = unbekannt. */
+export interface AiCapacity { service: string; reportedAt: string | null; stale: boolean; exhausted: boolean | null; availableAgainAt: string | null; }
 /** `permissions === null` heisst "wie im Vault", eine leere Liste "nichts". */
 export interface GrantChange { scopeType: ScopeType; subject: string | null; permissions: Permission[] | null; }
 
@@ -455,6 +456,27 @@ export class NoteApiClient {
   /** Neueste zuerst; `path` = Ordner, `""` = der ganze Vault. */
   async vaultLog(vaultId: string, path: string, limit = 100): Promise<HistoryEvent[]> {
     return this.json<HistoryEvent[]>(`/api/v1/vaults/${vaultId}/audit?${new URLSearchParams({ path, limit: String(limit) })}`, "failed to load log");
+  }
+
+  async aiServices(): Promise<AiService[]> {
+    return this.json<AiService[]>("/api/v1/ai/services", "failed to list AI services");
+  }
+
+  async aiCapacity(serviceId: string): Promise<AiCapacity> {
+    return this.json<AiCapacity>(`/api/v1/ai/services/${encodeURIComponent(serviceId)}/capacity`, "failed to read AI capacity");
+  }
+
+  async listAiJobs(vaultId: string): Promise<AiJob[]> {
+    return this.json<AiJob[]>(`/api/v1/vaults/${vaultId}/ai/jobs`, "failed to list AI jobs");
+  }
+
+  async cancelAiJob(vaultId: string, jobId: string): Promise<AiJob> {
+    return this.json<AiJob>(`/api/v1/vaults/${vaultId}/ai/jobs/${jobId}/cancel`, "failed to cancel AI job", {});
+  }
+
+  /** Dateien, die schon im Vault liegen, einlesen lassen - jede mit ihrem eigenen Level. */
+  async readFilesWithAi(vaultId: string, service: string, fileIds: string[]): Promise<AiJob[]> {
+    return this.json<AiJob[]>(`/api/v1/vaults/${vaultId}/ai/jobs/from-files`, "failed to start AI", { service, fileIds });
   }
 
   /** Wie {@link json}, aber mit beliebiger Methode; leere Antworten (204/200 ohne Inhalt) ergeben `undefined`. */
