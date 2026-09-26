@@ -36,6 +36,11 @@ export interface AiJob {
   progress: string | null; percent: number | null; error: string | null; changeSetId: string | null; createdAt: string;
   finishedAt: string | null; availableAt: string | null; waitingForCapacity: boolean;
 }
+/** Naechtliche Verlinkung eines Vaults (ADR 0012); `maxLinksPerNote === null` = unbegrenzt. */
+export interface LinkingSettings {
+  enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null;
+  requestedBy: string | null; lastRunAt: string | null;
+}
 /** Wie viel Kontingent ein KI-Dienst laut letzter Worker-Meldung hat; `exhausted === null` = unbekannt. */
 export interface AiCapacity { service: string; reportedAt: string | null; stale: boolean; exhausted: boolean | null; availableAgainAt: string | null; }
 /** `permissions === null` heisst "wie im Vault", eine leere Liste "nichts". */
@@ -477,6 +482,19 @@ export class NoteApiClient {
   /** Dateien, die schon im Vault liegen, einlesen lassen - jede mit ihrem eigenen Level. */
   async readFilesWithAi(vaultId: string, service: string, fileIds: string[]): Promise<AiJob[]> {
     return this.json<AiJob[]>(`/api/v1/vaults/${vaultId}/ai/jobs/from-files`, "failed to start AI", { service, fileIds });
+  }
+
+  async linkingSettings(vaultId: string): Promise<LinkingSettings> {
+    return this.json<LinkingSettings>(`/api/v1/vaults/${vaultId}/linking`, "failed to read linking");
+  }
+
+  async updateLinking(vaultId: string, change: { enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null }): Promise<LinkingSettings> {
+    return this.send<LinkingSettings>("PUT", `/api/v1/vaults/${vaultId}/linking`, "failed to change linking", change);
+  }
+
+  /** "Jetzt verlinken" - im eigenen Namen, braucht Schreibrecht im Vault. */
+  async runLinking(vaultId: string): Promise<AiJob> {
+    return this.json<AiJob>(`/api/v1/vaults/${vaultId}/linking/run`, "failed to start linking", {});
   }
 
   /** Wie {@link json}, aber mit beliebiger Methode; leere Antworten (204/200 ohne Inhalt) ergeben `undefined`. */

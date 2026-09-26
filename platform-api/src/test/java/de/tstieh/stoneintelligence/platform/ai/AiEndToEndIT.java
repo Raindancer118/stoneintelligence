@@ -286,4 +286,45 @@ class AiEndToEndIT {
         assertThat(capacity.get("providers").toString()).contains("remaining=0").doesNotContain("key=");
         assertThat(send("GET", "/api/v1/ai/services/gibtsnicht/capacity", anna, null).statusCode()).isEqualTo(422);
     }
+
+    // ADR 0012: Einstellungen, "Jetzt verlinken", der Worker setzt Links, die Person nimmt sie zurueck.
+    @Test
+    void should_linkAVault_andUndoOnlyTheLinks() throws Exception {
+        var anna = user("ai-dora");
+        var vault = ok(send("POST", "/api/v1/vaults", anna, Map.of("name", "Verlinkung")));
+        var base = "/api/v1/vaults/" + vault.get("id");
+        assertThat(ok(send("GET", base + "/linking", anna, null))).containsEntry("enabled", false).containsEntry("linkHumanNotes", true);
+        assertThat(ok(send("PUT", base + "/linking", anna, Map.of("enabled", true, "linkHumanNotes", true, "service", "lokal"))))
+            .containsEntry("enabled", true).containsEntry("requestedBy", "ai-dora");
+        assertThat(send("PUT", base + "/linking", user("zaungast"), Map.of("enabled", false, "linkHumanNotes", true)).statusCode())
+            .isEqualTo(403);
+
+        // Erster Lauf: die KI legt zwei Notizen an (stellvertretend fuer vorhandenes Wissen).
+        var first = ok(send("POST", base + "/linking/run", anna, null));
+        assertThat(first).containsEntry("kind", "LINKING").containsEntry("fileName", "Verlinkung");
+        var claimed = ok(send("POST", "/internal/ai/jobs/claim", WORKER, null));
+        assertThat(claimed).containsEntry("kind", "LINKING");
+        var internal = "/internal/ai/vaults/" + vault.get("id") + "/change-sets/" + claimed.get("changeSetId");
+        var licht = ok(send("POST", internal + "/notes", WORKER, Map.of("path", "Physik/Licht.md", "text", "# Licht\n", "level", 1)));
+        var pflanzen = ok(send("POST", internal + "/notes", WORKER,
+            Map.of("path", "Pflanzen.md", "text", "Pflanzen brauchen Licht.\n", "level", 1)));
+        ok(send("POST", "/internal/ai/jobs/" + claimed.get("jobId") + "/complete", WORKER, null));
+        assertThat(ok(send("GET", base + "/linking", anna, null)).get("lastRunAt")).isNotNull();
+
+        // Zweiter Lauf: nur verlinken.
+        ok(send("POST", base + "/linking/run", anna, null));
+        var run = ok(send("POST", "/internal/ai/jobs/claim", WORKER, null));
+        var linking = "/internal/ai/vaults/" + vault.get("id") + "/change-sets/" + run.get("changeSetId");
+        var applied = ok(send("POST", linking + "/notes/" + pflanzen.get("noteId") + "/links", WORKER,
+            Map.of("links", List.of(Map.of("target", licht.get("noteId"), "anchor", "Licht", "allowRelated", false)))));
+        assertThat(applied.get("applied").toString()).contains("INLINE").contains("[[Licht]]");
+        assertThat(ok(send("GET", linking + "/notes/" + pflanzen.get("noteId"), WORKER, null)))
+            .containsEntry("text", "Pflanzen brauchen [[Licht]].\n");
+        ok(send("POST", "/internal/ai/jobs/" + run.get("jobId") + "/complete", WORKER, null));
+
+        var report = ok(send("POST", base + "/ai/change-sets/" + run.get("changeSetId") + "/revert", anna, null));
+        assertThat(report).containsEntry("reverted", 1);
+        assertThat(ok(send("GET", internal + "/notes/" + pflanzen.get("noteId"), WORKER, null)))
+            .containsEntry("text", "Pflanzen brauchen Licht.\n");
+    }
 }

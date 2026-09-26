@@ -135,3 +135,25 @@ Prüfungen: Einfügungen verlieren bei gleichzeitigem Tippen nichts (Yjs-Test mi
 Rückgängig nach Weiterbearbeiten lässt die Bearbeitung stehen. Kein Link in Code, Frontmatter
 oder vorhandene Links. Level-100/101-Notizen tauchen in keinem Embedding auf. Ein abgelehntes
 Paar wird ohne Änderung nicht erneut gefragt.
+
+## Nachtrag: Reihenfolge der Umsetzung (27.09.2026)
+
+Als erster, vollständig nutzbarer Schritt kam **0.28.0**. Es nutzt nur Stufe 1 (wörtliche Titel und
+Aliase), das braucht weder Embeddings noch eine externe KI. Enthalten sind der sichere Schreib- und
+Rückgängig-Weg, die Einstellungen je Vault, „Jetzt verlinken", der 02:00-Lauf und die Oberflächen in
+Obsidian und im Web.
+
+- Links setzt der Server auf dem Text, der beim Schreiben gilt (`AiWriteService.linkNote`). Bei einem
+  Schreibkonflikt wird neu gerechnet, sodass nichts überschrieben wird. Gespeichert wird nur das
+  eingefügte Markup (`ai_changes.details`, Art `LINKED`), nicht der Notiztext.
+- Rückgängig nimmt genau dieses Markup heraus, auch wenn inzwischen weitergeschrieben wurde.
+- Die Regeln, wo ein Link stehen darf, stehen in `domain-core` (`LinkText`), damit Worker und Server
+  dieselben Regeln nutzen. Nie verlinkt wird in Frontmatter, Code, Überschriften, vorhandenen Links,
+  Formeln, Kommentaren, URLs und Tags.
+- Der Worker findet Nennungen mit `MentionFinder`, einmal Wort für Wort durch jeden Text statt
+  quadratisch. Namen unter 3 Zeichen oder ohne Buchstaben zählen nicht.
+- Modus (KI-geprüft oder nur semantisch) und Embedding-Quelle stehen schon in `vault_linking`. Sie
+  wirken erst mit den Stufen 2 und 3 und sind bis dahin in keiner Oberfläche zu sehen.
+
+Es folgen: Embeddings (lokal, pgvector) mit Stufe 2 und „Ähnliche Notizen", danach Stufe 3 (KI-Prüfung,
+Beziehungstypen, `link_decisions`) samt Datenschutzhinweis.

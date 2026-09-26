@@ -84,6 +84,23 @@ public class AiJobService {
         return accepted.stream().map(job -> jobs.create(job, clock.get())).toList();
     }
 
+    /**
+     * Reiht einen Verlinkungslauf ein (ADR 0012) - im Namen von {@code requestedBy}, hoechstens einer je
+     * Vault zugleich. Das Level des Jobs ist nur die Schranke fuer den Dienst; welche Notizen er sieht,
+     * entscheidet die Notizliste (lesbar fuer requestedBy, Level erlaubt).
+     */
+    public AiJob startLinking(VaultId vaultId, String requestedBy, String serviceId) {
+        var service = services.get().find(String.valueOf(serviceId))
+            .orElseThrow(() -> new AiWriteRefusedException("KI-Dienst " + serviceId + " ist nicht eingerichtet"));
+        var level = service.allowedLevels().stream().min(Integer::compare)
+            .orElseThrow(() -> new AiWriteRefusedException(service.name() + " darf keine Notizen verarbeiten"));
+        if (jobs.hasOpen(vaultId, AiJob.Kind.LINKING)) {
+            throw new AiWriteRefusedException("In diesem Vault läuft schon eine Verlinkung");
+        }
+        return jobs.create(new NewAiJob(vaultId, service.id(), requestedBy, "Verlinkung", "text/plain", level, null, MAX_ATTEMPTS,
+            AiJob.Kind.LINKING), clock.get());
+    }
+
     public List<AiJob> list(VaultId vaultId, int limit) {
         return jobs.list(vaultId, limit);
     }

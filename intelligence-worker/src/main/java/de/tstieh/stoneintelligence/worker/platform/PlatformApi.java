@@ -40,6 +40,9 @@ public interface PlatformApi {
 
     void update(String vaultId, UUID changeSetId, String noteId, String text);
 
+    /** Links in einer Notiz setzen (ADR 0012) - der Server fuegt nur Markup ein; liefert, wie viele gesetzt wurden. */
+    int link(String vaultId, UUID changeSetId, String noteId, List<ProposedLink> links);
+
     /** Legt das gelesene Original als Datei ab; liefert den Pfad, den der Server gewaehlt hat. */
     String storeFile(String vaultId, UUID changeSetId, String path, byte[] content, String contentType, int level);
 }

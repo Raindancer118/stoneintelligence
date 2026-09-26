@@ -8,6 +8,7 @@ import de.tstieh.stoneintelligence.platform.sync.relay.SyncRelayService;
 import de.tstieh.stoneintelligence.platform.sync.relay.VaultAnnouncementService;
 import de.tstieh.stoneintelligence.platform.sync.yjs.YjsBridge;
 import de.tstieh.stoneintelligence.platform.vault.FolderRegistry;
+import de.tstieh.stoneintelligence.platform.vault.VaultAccessGuard;
 import de.tstieh.stoneintelligence.platform.vault.NoteRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,6 +79,34 @@ public class AiConfig {
         return new AiJobService(jobs, () -> services,
             (vaultId, service, requestedBy, label) -> ai.startChangeSet(vaultId, service, requestedBy, label).id(),
             (vaultId, changeSetId, actor) -> ai.revert(vaultId, changeSetId, actor), Instant::now);
+    }
+
+    @Bean
+    public LinkingService linkingService(LinkingSettingsRepository settings, AiJobService jobs, @Lazy AiWriteService ai,
+                                         VaultAccessGuard access, NoteRepository notes, AiServiceDirectory services) {
+        return new LinkingService(settings, jobs, ai, access, notes, services, Instant::now);
+    }
+
+    @Bean
+    public NightlyLinking nightlyLinking(LinkingService linking) {
+        return new NightlyLinking(linking);
+    }
+
+    /** ADR 0012: jede Nacht um 02:00 (deutsche Zeit) je eingeschaltetem Vault ein Verlinkungslauf. */
+    public static class NightlyLinking {
+        private final LinkingService linking;
+
+        NightlyLinking(LinkingService linking) {
+            this.linking = linking;
+        }
+
+        @Scheduled(cron = "0 0 2 * * *", zone = "Europe/Berlin")
+        public void run() {
+            var started = linking.startNightlyRuns();
+            if (started > 0) {
+                LOG.info("{} naechtliche Verlinkungslaeufe gestartet", started);
+            }
+        }
     }
 
     @Bean

@@ -53,6 +53,25 @@ public abstract class AiChangeSetRepositoryContractTest {
         assertThat(changeSets.changes(set.id())).containsExactly(first, second);
     }
 
+    // ADR 0012: gespeichert wird nur, was Rueckgaengig braucht - nicht der Notiztext.
+    @Test
+    void should_keepTheInsertedLinks_ofALinkingChange() {
+        var set = changeSets.create(vaultId, "gemini", "ki:Gemini", "tom", "Verlinkung", now);
+        var inline = new de.tstieh.stoneintelligence.domain.link.LinkText.Insertion(null,
+            de.tstieh.stoneintelligence.domain.link.LinkText.Placement.INLINE, "[[Licht|licht]]", "licht", false, "");
+        var related = new de.tstieh.stoneintelligence.domain.link.LinkText.Insertion(null,
+            de.tstieh.stoneintelligence.domain.link.LinkText.Placement.RELATED, "- [[Photon]]", null, true, "\n## Verwandt\n\n");
+        var linked = new AiChange(java.util.UUID.randomUUID(), set.id(), de.tstieh.stoneintelligence.domain.id.NoteId.newId(),
+            "a.md", AiChange.Kind.LINKED, "", "", now, java.util.List.of(inline, related));
+
+        changeSets.addChange(linked);
+
+        assertThat(changeSets.changes(set.id())).singleElement().satisfies(stored -> {
+            assertThat(stored.kind()).isEqualTo(AiChange.Kind.LINKED);
+            assertThat(stored.links()).containsExactly(inline, related);
+        });
+    }
+
     @Test
     void should_markRevertedOnlyOnce() {
         var set = changeSets.create(vaultId, "gemini", "ki:Gemini", "tom", "x", now);

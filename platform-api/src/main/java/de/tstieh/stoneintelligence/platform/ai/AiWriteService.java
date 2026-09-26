@@ -10,6 +10,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import de.tstieh.stoneintelligence.domain.id.NoteId;
 import de.tstieh.stoneintelligence.domain.id.VaultId;
+import de.tstieh.stoneintelligence.domain.link.LinkText;
 import de.tstieh.stoneintelligence.domain.notelevel.AgentProcessing;
 import de.tstieh.stoneintelligence.domain.notelevel.NoteLevel;
 import de.tstieh.stoneintelligence.domain.notelevel.NoteLevelPolicyResolver;
@@ -200,6 +201,81 @@ public class AiWriteService {
         }
     }
 
+    /** Ein vorgeschlagener Link: das Ziel und das Wort, an dem er haengen soll ({@code allowRelated}: sonst unter "Verwandt"). */
+    public record LinkRequest(NoteId target, String anchor, boolean allowRelated) {
+    }
+
+    /**
+     * Setzt Links in einer Notiz (ADR 0012) - nur als eingefuegtes Markup, berechnet auf dem Text, der
+     * im Moment des Schreibens gilt; wer gleichzeitig tippt, verliert nichts. In Notizen von Menschen
+     * nur, wenn der Vault das erlaubt (Standard). Liefert die tatsaechlich gesetzten Links.
+     */
+    public List<LinkText.Insertion> linkNote(VaultId vaultId, UUID changeSetId, NoteId noteId, List<LinkRequest> requests,
+                                             LinkingSettings settings) {
+        var changeSet = openChangeSet(vaultId, changeSetId);
+        var service = configured(changeSet.service());
+        var note = note(vaultId, noteId);
+        requireLevel(service, note.level());
+        if (!isAgent(note.createdBy()) && !settings.linkHumanNotes()) {
+            return List.of();
+        }
+        var names = linkNames(vaultId);
+        var wanted = new ArrayList<java.util.Map.Entry<String, LinkRequest>>();
+        for (var request : requests) {
+            var target = note(vaultId, request.target());
+            requireLevel(service, target.level());
+            if (!target.id().equals(noteId) && !target.isFile()) {
+                wanted.add(java.util.Map.entry(linkTargetOf(target.path(), names), request));
+            }
+        }
+        var max = settings.maxLinksPerNote() == null ? Integer.MAX_VALUE : settings.maxLinksPerNote();
+        var applied = new ArrayList<LinkText.Insertion>();
+        writeWith(note, current -> {
+            applied.clear();
+            var text = current;
+            for (var entry : wanted) {
+                if (applied.size() >= max) {
+                    break;
+                }
+                var insertion = LinkText.insert(text, entry.getKey(), entry.getValue().anchor(), entry.getValue().allowRelated());
+                if (insertion.isPresent()) {
+                    applied.add(insertion.get());
+                    text = insertion.get().text();
+                }
+            }
+            return text;
+        }, service.agent());
+        if (!applied.isEmpty()) {
+            changeSets.addChange(new AiChange(UUID.randomUUID(), changeSetId, noteId, note.path(), AiChange.Kind.LINKED,
+                "", "", clock.get(), applied));
+        }
+        return List.copyOf(applied);
+    }
+
+    /** Dateiname ohne .md je Eintrag, klein - um mehrdeutige Namen zu erkennen. */
+    private java.util.Map<String, Long> linkNames(VaultId vaultId) {
+        var counts = new java.util.HashMap<String, Long>();
+        String cursor = null;
+        do {
+            var page = notes.list(vaultId, cursor, 500, java.util.EnumSet.allOf(de.tstieh.stoneintelligence.platform.vault.NoteKind.class));
+            page.notes().forEach(entry -> counts.merge(baseName(entry.path()).toLowerCase(java.util.Locale.ROOT), 1L, Long::sum));
+            cursor = page.complete() ? null : page.nextCursor().orElse(null);
+        } while (cursor != null);
+        return counts;
+    }
+
+    /** Wie Obsidian verlinkt: der Dateiname, bei Namensgleichheit der Pfad (jeweils ohne .md). */
+    private static String linkTargetOf(String path, java.util.Map<String, Long> names) {
+        var name = baseName(path);
+        var withoutMd = path.endsWith(".md") ? path.substring(0, path.length() - 3) : path;
+        return names.getOrDefault(name.toLowerCase(java.util.Locale.ROOT), 0L) > 1 ? withoutMd : name;
+    }
+
+    private static String baseName(String path) {
+        var name = path.substring(path.lastIndexOf('/') + 1);
+        return name.endsWith(".md") ? name.substring(0, name.length() - 3) : name;
+    }
+
     /**
      * Macht ein Change-Set rückgängig, neueste Änderung zuerst. Eine Notiz wird nur angefasst, wenn
      * ihr Text noch genau dem KI-Stand entspricht - was seitdem jemand geändert hat, bleibt stehen und
@@ -235,6 +311,16 @@ public class AiWriteService {
             var history = snapshots.listSince(change.noteId(), 0);
             if (history.stream().anyMatch(UpdateRecord::ciphertext)) {
                 conflicts.add(new AiRevertConflict(note.get().path(), "Die Notiz ist inzwischen verschlüsselt"));
+                continue;
+            }
+            if (change.kind() == AiChange.Kind.LINKED) {
+                // Nur das eingefuegte Markup heraus - was seither geschrieben wurde, bleibt.
+                var before = writeWith(note.get(), current -> LinkText.remove(current, change.links()), actor);
+                if (before.equals(LinkText.remove(before, change.links()))) {
+                    conflicts.add(new AiRevertConflict(note.get().path(), "Die Links wurden inzwischen geändert oder entfernt"));
+                } else {
+                    reverted++;
+                }
                 continue;
             }
             if (!yjs.textOf(payloads(history)).equals(change.textAfter())) {
@@ -284,10 +370,19 @@ public class AiWriteService {
 
     /** Hängt die Änderung als Yjs-Update an; liefert den Text davor. Parallele Schreiber: neu versuchen. */
     private String writeText(Note note, String text, String actor) {
+        return writeWith(note, current -> text, actor);
+    }
+
+    /**
+     * Wie {@link #writeText}, aber der neue Text wird bei jedem Versuch aus dem dann aktuellen Text
+     * berechnet - so ueberschreibt ein Wiederholungsversuch nie, was jemand dazwischen geschrieben hat.
+     */
+    private String writeWith(Note note, java.util.function.UnaryOperator<String> change, String actor) {
         for (var attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
             var history = plainHistory(note);
             var updates = payloads(history);
             var before = yjs.textOf(updates);
+            var text = change.apply(before);
             var update = yjs.change(updates, text);
             if (update.isEmpty()) {
                 return before;

@@ -113,6 +113,37 @@ class AiJobServiceTest {
         }
     }
 
+    // ADR 0012: ein Verlinkungslauf ist ein Job ohne Dokument, hoechstens einer je Vault zugleich.
+    @Nested
+    class Verlinkung {
+
+        @Test
+        void should_queueALinkingRun_thatTheWorkerClaimsLikeAnyJob() {
+            var run = service.startLinking(vaultId, "tom", "lokal");
+
+            assertThat(run.kind()).isEqualTo(AiJob.Kind.LINKING);
+            assertThat(run.fileName()).isEqualTo("Verlinkung");
+            var claimed = service.claim().orElseThrow();
+            assertThat(claimed.kind()).isEqualTo(AiJob.Kind.LINKING);
+            assertThat(startedChangeSets).containsExactly("lokal:tom:Verlinkung");
+            assertThatThrownBy(() -> service.document(run.id())).isInstanceOf(AiWriteRefusedException.class);
+        }
+
+        @Test
+        void should_runAtMostOneLinkingRunPerVault() {
+            service.startLinking(vaultId, "tom", "lokal");
+
+            assertThatThrownBy(() -> service.startLinking(vaultId, "anna", "lokal")).isInstanceOf(AiWriteRefusedException.class);
+            service.upload(vaultId, "tom", "gemini", 1, List.of(pdf("a.pdf")));
+            assertThat(service.startLinking(VaultId.newId(), "tom", "lokal").kind()).isEqualTo(AiJob.Kind.LINKING);
+        }
+
+        @Test
+        void should_refuseUnknownServices() {
+            assertThatThrownBy(() -> service.startLinking(vaultId, "tom", "gibtsnicht")).isInstanceOf(AiWriteRefusedException.class);
+        }
+    }
+
     @Nested
     class Verarbeiten {
 

@@ -120,6 +120,12 @@ public final class PlatformHttpClient implements PlatformApi {
     }
 
     @Override
+    public int link(String vaultId, UUID changeSetId, String noteId, List<ProposedLink> links) {
+        return parse(post(notesPath(vaultId, changeSetId) + "/" + noteId + "/links", Map.of("links", links)),
+            new TypeReference<LinksApplied>() { }).applied().size();
+    }
+
+    @Override
     public String storeFile(String vaultId, UUID changeSetId, String path, byte[] content, String contentType, int level) {
         var url = "/internal/ai/vaults/" + vaultId + "/change-sets/" + changeSetId + "/files?path="
             + java.net.URLEncoder.encode(path, java.nio.charset.StandardCharsets.UTF_8) + "&level=" + level;
@@ -192,4 +198,6 @@ public final class PlatformHttpClient implements PlatformApi {
     record NoteText(String noteId, String path, String text) { }
     record NoteRef(String noteId, String path) { }
     record ServiceRef(String id) { }
+    record AppliedLink(String placement, String markup) { }
+    record LinksApplied(List<AppliedLink> applied) { }
 }

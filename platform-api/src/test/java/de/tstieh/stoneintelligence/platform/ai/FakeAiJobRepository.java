@@ -25,7 +25,7 @@ public final class FakeAiJobRepository implements AiJobRepository {
                        Integer percent, String error, UUID changeSetId, Instant finishedAt, boolean waitingForCapacity) {
         var updated = new AiJob(j.id(), j.vaultId(), j.service(), j.requestedBy(), j.fileName(), j.contentType(), j.size(), j.level(),
             status, attempts, j.maxAttempts(), availableAt, leaseUntil, progress, percent, error, changeSetId, j.createdAt(), finishedAt,
-            waitingForCapacity);
+            waitingForCapacity, j.kind());
         jobs.put(j.id(), updated);
         return updated;
     }
@@ -33,9 +33,12 @@ public final class FakeAiJobRepository implements AiJobRepository {
     @Override
     public synchronized AiJob create(NewAiJob job, Instant at) {
         var created = new AiJob(UUID.randomUUID(), job.vaultId(), job.service(), job.requestedBy(), job.fileName(), job.contentType(),
-            job.content().length, job.level(), AiJob.Status.PENDING, 0, job.maxAttempts(), at, null, null, null, null, null, at, null, false);
+            job.size(), job.level(), AiJob.Status.PENDING, 0, job.maxAttempts(), at, null, null, null, null, null, at, null, false,
+            job.kind());
         jobs.put(created.id(), created);
-        contents.put(created.id(), job.content().clone());
+        if (job.content() != null) {
+            contents.put(created.id(), job.content().clone());
+        }
         return created;
     }
 
@@ -58,6 +61,11 @@ public final class FakeAiJobRepository implements AiJobRepository {
     @Override
     public synchronized int countOpen(VaultId vaultId) {
         return (int) jobs.values().stream().filter(job -> job.vaultId().equals(vaultId) && job.open()).count();
+    }
+
+    @Override
+    public synchronized boolean hasOpen(VaultId vaultId, AiJob.Kind kind) {
+        return jobs.values().stream().anyMatch(job -> job.vaultId().equals(vaultId) && job.kind() == kind && job.open());
     }
 
     @Override

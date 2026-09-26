@@ -23,6 +23,9 @@ public interface AiJobRepository {
     /** Wartende und laufende Jobs dieses Vaults. */
     int countOpen(VaultId vaultId);
 
+    /** Ob im Vault gerade ein Job dieser Art wartet oder laeuft. */
+    boolean hasOpen(VaultId vaultId, AiJob.Kind kind);
+
     /**
      * Vergibt den aeltesten verfuegbaren Job genau einmal: wartend und faellig, oder laufend mit
      * abgelaufener Lease (abgestuerzter Worker). Jobs, deren letzter Versuch abgelaufen ist, gelten

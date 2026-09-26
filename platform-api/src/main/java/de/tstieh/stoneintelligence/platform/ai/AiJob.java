@@ -13,7 +13,18 @@ import de.tstieh.stoneintelligence.domain.id.VaultId;
 public record AiJob(UUID id, VaultId vaultId, String service, String requestedBy, String fileName, String contentType,
                     long size, int level, Status status, int attempts, int maxAttempts, Instant availableAt,
                     Instant leaseUntil, String progress, Integer percent, String error, UUID changeSetId,
-                    Instant createdAt, Instant finishedAt, boolean waitingForCapacity) {
+                    Instant createdAt, Instant finishedAt, boolean waitingForCapacity, Kind kind) {
+
+    /** {@code INGEST}: ein Dokument einlesen; {@code LINKING}: den Vault verlinken (ADR 0012), ohne Dokument. */
+    public enum Kind { INGEST, LINKING }
+
+    public AiJob(UUID id, VaultId vaultId, String service, String requestedBy, String fileName, String contentType,
+                 long size, int level, Status status, int attempts, int maxAttempts, Instant availableAt,
+                 Instant leaseUntil, String progress, Integer percent, String error, UUID changeSetId,
+                 Instant createdAt, Instant finishedAt, boolean waitingForCapacity) {
+        this(id, vaultId, service, requestedBy, fileName, contentType, size, level, status, attempts, maxAttempts, availableAt,
+            leaseUntil, progress, percent, error, changeSetId, createdAt, finishedAt, waitingForCapacity, Kind.INGEST);
+    }
 
     public enum Status { PENDING, RUNNING, SUCCEEDED, FAILED, CANCELLED }
 

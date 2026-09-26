@@ -3,7 +3,7 @@ import { explainAccessError, type Permission, permissionsLabel } from "../sync/a
 import { canCancel, jobStatusText } from "../sync/aiJobText";
 import { describeEvent, formatDate } from "../sync/historyText";
 import {
-  type AiJob, type HistoryEvent, HttpError, type NoteApiClient, type PendingInvitation, type VaultGroup, type VaultMember, type VaultRole,
+  type AiJob, type HistoryEvent, HttpError, type LinkingSettings, type NoteApiClient, type PendingInvitation, type VaultGroup, type VaultMember, type VaultRole,
 } from "../sync/NoteApiClient";
 import { confirmAction } from "./ConfirmModal";
 
@@ -43,6 +43,8 @@ export class VaultAdminView extends ItemView {
   private invitations: PendingInvitation[] = [];
   private log: HistoryEvent[] = [];
   private jobs: AiJob[] = [];
+  private linking: LinkingSettings | null = null;
+  private canWrite = false;
   private jobTimer: number | null = null;
   private manage = false;
   private busy = false;
@@ -98,9 +100,12 @@ export class VaultAdminView extends ItemView {
       this.groups = groups;
       this.roles = roles;
       this.manage = permissions.includes("MANAGE");
+      this.canWrite = permissions.includes("WRITE");
       this.invitations = this.manage ? await api.listInvitations(vaultId) : [];
       this.log = await api.vaultLog(vaultId, "", 100);
       this.jobs = await api.listAiJobs(vaultId).catch(() => []);
+      // Aeltere Server kennen die Verlinkung noch nicht - dann entfaellt der Abschnitt.
+      this.linking = await api.linkingSettings(vaultId).catch(() => null);
       this.error = "";
     } catch (error) {
       this.error = describe(error);
@@ -320,7 +325,55 @@ export class VaultAdminView extends ItemView {
     }
   }
 
+  /** ADR 0012: naechtliche Verlinkung - woertliche Nennungen von Titeln und Aliasen werden zu Links. */
+  private renderLinking(root: HTMLElement): void {
+    const linking = this.linking;
+    if (!linking) {
+      return;
+    }
+    root.createEl("h4", { text: "Verlinkung" });
+    root.createEl("p", {
+      cls: "setting-item-description",
+      text: "Nennt eine Notiz den Titel oder einen Alias einer anderen, wird die Stelle zum Link – "
+        + "nur eingefügtes Markup, der Text bleibt wie er ist. Das geschieht auf dem Server, ohne externe KI. "
+        + "Jeder Lauf lässt sich unter „KI-Änderungen“ rückgängig machen.",
+    });
+    const save = (change: Partial<LinkingSettings>): void => {
+      const next = { ...linking, ...change };
+      void this.run((api, vaultId) => api.updateLinking(vaultId, {
+        enabled: next.enabled, linkHumanNotes: next.linkHumanNotes, maxLinksPerNote: next.maxLinksPerNote, service: next.service,
+      }), next.enabled ? "Die Verlinkung läuft jetzt jede Nacht um 2 Uhr." : "Die nächtliche Verlinkung ist aus.");
+    };
+    new Setting(root).setName("Jede Nacht um 2 Uhr verlinken")
+      .setDesc(linking.enabled && linking.requestedBy ? `Läuft mit den Rechten von ${linking.requestedBy}.` : "Aus.")
+      .addToggle((toggle) => toggle.setValue(linking.enabled).setDisabled(!this.manage || this.busy)
+        .onChange((on) => save({ enabled: on })));
+    new Setting(root).setName("Auch in Notizen von Menschen")
+      .setDesc("Aus: Links nur in Notizen, die die KI geschrieben hat.")
+      .addToggle((toggle) => toggle.setValue(linking.linkHumanNotes).setDisabled(!this.manage || this.busy)
+        .onChange((on) => save({ linkHumanNotes: on })));
+    let max = linking.maxLinksPerNote === null ? "" : String(linking.maxLinksPerNote);
+    new Setting(root).setName("Höchstens neue Links je Notiz und Lauf").setDesc("Leer lassen für unbegrenzt.")
+      .addText((text) => text.setPlaceholder("unbegrenzt").setValue(max).setDisabled(!this.manage || this.busy)
+        .onChange((value) => (max = value.trim())))
+      .addButton((button) => button.setButtonText("Speichern").setDisabled(!this.manage || this.busy).onClick(() => {
+        const parsed = max === "" ? null : Number.parseInt(max, 10);
+        if (parsed !== null && (!Number.isFinite(parsed) || parsed < 1)) {
+          this.error = "Bitte eine Zahl ab 1 eintragen oder das Feld leer lassen.";
+          this.render();
+          return;
+        }
+        save({ maxLinksPerNote: parsed });
+      }));
+    new Setting(root).setName("Jetzt verlinken")
+      .setDesc(linking.lastRunAt ? `Zuletzt: ${formatDate(linking.lastRunAt)}` : "Noch nie gelaufen.")
+      .addButton((button) => button.setButtonText("Jetzt verlinken").setDisabled(!this.canWrite || this.busy)
+        .onClick(() => void this.run((api, vaultId) => api.runLinking(vaultId), "Die Verlinkung läuft – den Fortschritt siehst du unten.")));
+  }
+
   private renderJobs(root: HTMLElement): void {
+    this.renderLinking(root);
+    root.createEl("h4", { text: "Aufträge" });
     root.createEl("p", {
       cls: "setting-item-description",
       text: "PDFs und Textdateien liest du per Rechtsklick → „Mit KI einlesen…“ ein. Was die KI geschrieben hat, lässt sich unter „KI-Änderungen“ rückgängig machen.",
