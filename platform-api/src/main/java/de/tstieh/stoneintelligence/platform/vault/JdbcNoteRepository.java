@@ -194,4 +194,37 @@ public class JdbcNoteRepository implements NoteRepository {
             .query(TOMBSTONE_MAPPER)
             .optional();
     }
+
+    @Override
+    public Optional<NoteActivity> activity(VaultId vaultId, NoteId noteId) {
+        return jdbcClient.sql("""
+                SELECT created_by, created_at, last_edited_by, last_edited_at, last_opened_by, last_opened_at
+                FROM platform.notes WHERE id = :id AND vault_id = :vaultId
+                """)
+            .param("id", noteId.value())
+            .param("vaultId", vaultId.value())
+            .query((rs, rowNum) -> new NoteActivity(
+                rs.getString("created_by"), instantOf(rs.getTimestamp("created_at")),
+                rs.getString("last_edited_by"), instantOf(rs.getTimestamp("last_edited_at")),
+                rs.getString("last_opened_by"), instantOf(rs.getTimestamp("last_opened_at"))))
+            .optional();
+    }
+
+    @Override
+    public void markEdited(VaultId vaultId, NoteId noteId, String actor, java.time.Instant at) {
+        jdbcClient.sql("UPDATE platform.notes SET last_edited_by = :actor, last_edited_at = :at WHERE id = :id AND vault_id = :vaultId")
+            .param("actor", actor).param("at", java.sql.Timestamp.from(at)).param("id", noteId.value()).param("vaultId", vaultId.value())
+            .update();
+    }
+
+    @Override
+    public void markOpened(VaultId vaultId, NoteId noteId, String actor, java.time.Instant at) {
+        jdbcClient.sql("UPDATE platform.notes SET last_opened_by = :actor, last_opened_at = :at WHERE id = :id AND vault_id = :vaultId")
+            .param("actor", actor).param("at", java.sql.Timestamp.from(at)).param("id", noteId.value()).param("vaultId", vaultId.value())
+            .update();
+    }
+
+    private static java.time.Instant instantOf(java.sql.Timestamp timestamp) {
+        return timestamp == null ? null : timestamp.toInstant();
+    }
 }

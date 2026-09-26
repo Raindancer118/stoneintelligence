@@ -26,6 +26,17 @@ export interface NoteListItem {
 export interface GroupRef { id: string; name: string; }
 export interface VaultMember { subject: string; groups: GroupRef[]; permissions: Permission[]; }
 export interface VaultGroup { id: string; name: string; memberSubjects: string[]; roleIds: string[]; }
+export interface VaultRole { id: string; name: string; permissions: Permission[]; }
+export interface NoteActivity {
+  createdBy: string; createdAt: string;
+  lastEditedBy: string | null; lastEditedAt: string | null;
+  lastOpenedBy: string | null; lastOpenedAt: string | null;
+}
+export interface HistoryEvent {
+  actor: string; action: string; payload: Record<string, unknown>; occurredAt: string;
+  noteId: string | null; path: string | null; paths: string[];
+}
+export interface NoteHistory { activity: NoteActivity; events: HistoryEvent[]; }
 /** `permissions === null` heisst "wie im Vault", eine leere Liste "nichts". */
 export interface GrantChange { scopeType: ScopeType; subject: string | null; permissions: Permission[] | null; }
 
@@ -381,6 +392,69 @@ export class NoteApiClient {
 
   async listGroups(vaultId: string): Promise<VaultGroup[]> {
     return this.json<VaultGroup[]>(`/api/v1/vaults/${vaultId}/groups`, "failed to list groups");
+  }
+
+  async listRoles(vaultId: string): Promise<VaultRole[]> {
+    return this.json<VaultRole[]>(`/api/v1/vaults/${vaultId}/roles`, "failed to list roles");
+  }
+
+  async createRole(vaultId: string, name: string, permissions: Permission[]): Promise<VaultRole> {
+    return this.json<VaultRole>(`/api/v1/vaults/${vaultId}/roles`, "failed to create role", { name, permissions });
+  }
+
+  /** `null` laesst den Teil, wie er ist. */
+  async updateRole(vaultId: string, roleId: string, name: string | null, permissions: Permission[] | null): Promise<void> {
+    await this.send<void>("PATCH", `/api/v1/vaults/${vaultId}/roles/${roleId}`, "failed to change role", { name, permissions });
+  }
+
+  async deleteRole(vaultId: string, roleId: string): Promise<void> {
+    await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/roles/${roleId}`, "failed to delete role");
+  }
+
+  async createGroup(vaultId: string, name: string): Promise<VaultGroup> {
+    return this.json<VaultGroup>(`/api/v1/vaults/${vaultId}/groups`, "failed to create group", { name });
+  }
+
+  async renameGroup(vaultId: string, groupId: string, name: string): Promise<void> {
+    await this.send<void>("PATCH", `/api/v1/vaults/${vaultId}/groups/${groupId}`, "failed to rename group", { name });
+  }
+
+  async deleteGroup(vaultId: string, groupId: string): Promise<void> {
+    await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/groups/${groupId}`, "failed to delete group");
+  }
+
+  async addGroupMember(vaultId: string, groupId: string, subject: string): Promise<void> {
+    await this.send<void>("POST", `/api/v1/vaults/${vaultId}/groups/${groupId}/members`, "failed to add to group", { subject });
+  }
+
+  async removeGroupMember(vaultId: string, groupId: string, subject: string): Promise<void> {
+    await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/groups/${groupId}/members/${encodeURIComponent(subject)}`, "failed to remove from group");
+  }
+
+  async assignRole(vaultId: string, groupId: string, roleId: string): Promise<void> {
+    await this.send<void>("POST", `/api/v1/vaults/${vaultId}/groups/${groupId}/roles/${roleId}`, "failed to assign role");
+  }
+
+  async unassignRole(vaultId: string, groupId: string, roleId: string): Promise<void> {
+    await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/groups/${groupId}/roles/${roleId}`, "failed to unassign role");
+  }
+
+  /** Jemanden ganz aus dem Vault nehmen - oder, mit dem eigenen Namen, den Vault verlassen. */
+  async removeFromVault(vaultId: string, subject: string): Promise<void> {
+    await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/members/${encodeURIComponent(subject)}`, "failed to remove member");
+  }
+
+  async renameVault(vaultId: string, name: string): Promise<VaultSummary> {
+    return this.send<VaultSummary>("PATCH", `/api/v1/vaults/${vaultId}`, "failed to rename vault", { name });
+  }
+
+  async noteHistory(vaultId: string, noteId: string): Promise<NoteHistory> {
+    return this.json<NoteHistory>(`/api/v1/vaults/${vaultId}/notes/${noteId}/history`, "failed to load history");
+  }
+
+  /** Neueste zuerst; `path` = Ordner, `""` = der ganze Vault. */
+  async vaultLog(vaultId: string, path: string, limit = 100): Promise<HistoryEvent[]> {
+    return this.json<HistoryEvent[]>(`/api/v1/vaults/${vaultId}/audit?${new URLSearchParams({ path, limit: String(limit) })}`, "failed to load log");
   }
 
   /** Wie {@link json}, aber mit beliebiger Methode; leere Antworten (204/200 ohne Inhalt) ergeben `undefined`. */

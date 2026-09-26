@@ -42,6 +42,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     private final NoteRepository notes;
     private final VaultAccessGuard access;
     private final VaultAnnouncementService announcements;
+    private final de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker activity;
 
     /** Pro Session (WS-Verbindung) die aktuell gejointen Notiz-Raeume - Grundlage fuer Autorisierung und Cleanup. */
     private final Map<String, Set<NoteId>> joinedNotesBySession = new ConcurrentHashMap<>();
@@ -58,11 +59,13 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     private final Map<String, Set<NoteId>> writableNotesBySession = new ConcurrentHashMap<>();
 
     public SyncWebSocketHandler(SyncRelayService relay, NoteRepository notes, VaultAccessGuard access,
-                                VaultAnnouncementService announcements) {
+                                VaultAnnouncementService announcements,
+                                de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker activity) {
         this.relay = relay;
         this.notes = notes;
         this.access = access;
         this.announcements = announcements;
+        this.activity = activity;
     }
 
     @Override
@@ -103,6 +106,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
                 if (hasWriteAccess(session, frame.noteId())) {
                     relay.onUpdate(frame.noteId(), syncSession, frame.payload(), isCiphertextNote(frame.noteId()));
                     var vaultId = vaultIdOf(session);
+                    activity.edited(vaultId, frame.noteId(), actorOf(session));
                     announcements.announceNoteUpdated(vaultId, frame.noteId(),
                         () -> notes.findById(vaultId, frame.noteId()).map(Note::path));
                 }
@@ -138,6 +142,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             writableNotesBySession.get(session.getId()).add(noteId);
         }
         relay.onJoin(noteId, syncSession);
+        activity.opened(vaultId, noteId, actor);
     }
 
     private void handleLeave(WebSocketSession session, NoteId noteId, SyncSession syncSession) {

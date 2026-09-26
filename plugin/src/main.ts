@@ -44,6 +44,8 @@ import { DeletionConflictModal } from "./ui/DeletionConflictModal";
 import { AiChangesModal } from "./ui/AiChangesModal";
 import { InviteModal } from "./ui/InviteModal";
 import { ShareModal, type ShareTarget } from "./ui/ShareModal";
+import { HistoryModal } from "./ui/HistoryModal";
+import { VaultAdminView, VIEW_TYPE_VAULT_ADMIN } from "./ui/VaultAdminView";
 import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
 import { presentStatus, type StatusPresentation } from "./ui/statusPresentation";
 import { type Collaborator, type LiveNote, StatusView, VIEW_TYPE_STATUS } from "./ui/StatusView";
@@ -278,6 +280,18 @@ export default class StoneIntelligencePlugin extends Plugin {
     });
     this.addSettingTab(new StoneIntelligenceSettingTab(this.app, this, this));
     this.registerView(VIEW_TYPE_STATUS, (leaf) => new StatusView(leaf, this));
+    this.registerView(VIEW_TYPE_VAULT_ADMIN, (leaf) => new VaultAdminView(leaf, {
+      api: () => this.noteApiClient,
+      currentVaultId: () => this.settings.vaultId || null,
+      vaultName: () => this.vaultName(),
+      accountName: () => this.accountName(),
+      openInvite: () => this.openInvite(),
+      vaultRenamed: (name) => {
+        this.settings.vaultName = name;
+        void this.saveSettings();
+        this.refreshActivityFlags();
+      },
+    }));
     this.addRibbonIcon("refresh-cw", "StoneIntelligence-Sync", () => void this.activateStatusView());
     this.setupStatusBar();
     this.registerCommands();
@@ -560,6 +574,14 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     new InviteModal(this.app, this.noteApiClient, this.settings.vaultId, this.vaultName() ?? "Vault").open();
+  }
+
+  canOpenVaultAdmin(): boolean {
+    return this.isReady();
+  }
+
+  openVaultAdmin(): void {
+    void this.activateVaultAdminView();
   }
 
   openAiChanges(): void {
@@ -957,6 +979,30 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
+      id: "stoneintelligence-vault-admin",
+      name: "Vault-Verwaltung öffnen (Mitglieder, Gruppen, Rollen)",
+      checkCallback: (checking) => {
+        if (checking) {
+          return this.isReady();
+        }
+        void this.activateVaultAdminView();
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "stoneintelligence-history-active",
+      name: "Verlauf der aktuellen Datei",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        const target = file && this.isReady() ? this.shareTargetFor(file) : null;
+        if (checking || !target) {
+          return target !== null;
+        }
+        this.openHistory(target);
+        return true;
+      },
+    });
+    this.addCommand({
       id: "stoneintelligence-ai-changes",
       name: "KI-Änderungen anzeigen und rückgängig machen",
       checkCallback: (checking) => {
@@ -1001,6 +1047,8 @@ export default class StoneIntelligencePlugin extends Plugin {
       if (target) {
         menu.addItem((item) => item.setTitle("StoneIntelligence: Freigabe…").setIcon("users")
           .onClick(() => this.openShare([target])));
+        menu.addItem((item) => item.setTitle("StoneIntelligence: Verlauf und Protokoll…").setIcon("history")
+          .onClick(() => this.openHistory(target)));
       }
       if (!(file instanceof TFile) || file.extension !== "md") {
         return;
@@ -1048,6 +1096,29 @@ export default class StoneIntelligencePlugin extends Plugin {
     const state = this.vaultState();
     const noteId = state.noteIds[file.path] ?? state.fileIds?.[file.path];
     return noteId ? { kind: "entry", noteId, path: file.path } : null;
+  }
+
+  private openHistory(target: ShareTarget): void {
+    new HistoryModal(this.app, this.noteApiClient, this.settings.vaultId, target).open();
+  }
+
+  async activateVaultAdminView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(VIEW_TYPE_VAULT_ADMIN)[0];
+    if (!leaf) {
+      leaf = workspace.getLeaf("tab");
+      await leaf.setViewState({ type: VIEW_TYPE_VAULT_ADMIN, active: true });
+    }
+    void workspace.revealLeaf(leaf);
+  }
+
+  /** Offene Verwaltungsansichten nach Rechte-Aenderungen neu laden. */
+  private refreshVaultAdminViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_VAULT_ADMIN)) {
+      if (leaf.view instanceof VaultAdminView) {
+        void leaf.view.reload();
+      }
+    }
   }
 
   private openShare(targets: ShareTarget[]): void {
@@ -1986,6 +2057,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       if (this.isReady()) {
         this.requestPass();
         void this.refreshSharedFolders();
+        this.refreshVaultAdminViews();
       }
       return;
     }

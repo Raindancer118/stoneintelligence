@@ -30,6 +30,9 @@ export interface StatusViewHost {
   openSettings(): void;
   canInvite(): boolean;
   openInvite(): void;
+  /** Ob ein StoneIntelligence-Vault verbunden ist und man angemeldet ist. */
+  canOpenVaultAdmin(): boolean;
+  openVaultAdmin(): void;
 }
 
 const ACTIVITY_TEXT: Record<ActivityKind, { icon: string; text: string }> = {
@@ -140,6 +143,9 @@ export class StatusView extends ItemView {
     }
     if (this.host.canInvite()) {
       this.button(actions, "Einladen", "user-plus", () => this.host.openInvite());
+    }
+    if (this.host.canOpenVaultAdmin()) {
+      this.button(actions, "Verwaltung", "users", () => this.host.openVaultAdmin());
     }
   }
 

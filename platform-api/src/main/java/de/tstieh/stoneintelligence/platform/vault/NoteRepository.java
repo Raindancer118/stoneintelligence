@@ -59,4 +59,11 @@ public interface NoteRepository {
      * Notes fremder Vaults loeschen, wenn er nur die NoteId kennt/erraet.
      */
     Tombstone delete(VaultId vaultId, NoteId noteId, String operationId, String deletedBy);
+
+    /** Angelegt/zuletzt bearbeitet/zuletzt geoeffnet; leer, wenn es den Eintrag nicht gibt. */
+    Optional<NoteActivity> activity(VaultId vaultId, NoteId noteId);
+
+    void markEdited(VaultId vaultId, NoteId noteId, String actor, java.time.Instant at);
+
+    void markOpened(VaultId vaultId, NoteId noteId, String actor, java.time.Instant at);
 }

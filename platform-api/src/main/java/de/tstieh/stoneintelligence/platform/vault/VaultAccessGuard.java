@@ -99,6 +99,13 @@ public class VaultAccessGuard {
     public record EntryAccess(java.util.Set<Permission> permissions, Boolean shared) {
     }
 
+    /** Wie {@link #accessAt}, laedt aber Mitgliedschaft und Freigaben nur einmal fuer beliebig viele Pfade. */
+    public java.util.function.Function<String, EffectiveAccess> accessChecker(VaultId vaultId, String actor) {
+        var who = membership(vaultId, actor);
+        var vaultGrants = grants.list(vaultId);
+        return path -> AccessResolver.resolve(who, vaultGrants, path);
+    }
+
     /** Laedt Mitgliedschaft und Freigaben einmal und prueft dann beliebig viele Pfade. */
     private Predicate<String> reader(VaultId vaultId, String actor) {
         var who = membership(vaultId, actor);
