@@ -54,13 +54,27 @@ final class JobProcessor {
     private final Supplier<LocalDate> clock;
     private final Duration progressInterval;
     private final Path resumeRoot;
+    private final Supplier<de.tstieh.stoneintelligence.worker.embed.Embedder> embedder;
+    private final LinkingRun.Thresholds thresholds;
 
     JobProcessor(PlatformApi platform, LlmFactory llms, ServiceModels models, Supplier<LocalDate> clock, Path resumeRoot) {
-        this(platform, llms, models, clock, PROGRESS_MIN_INTERVAL, resumeRoot);
+        this(platform, llms, models, clock, PROGRESS_MIN_INTERVAL, resumeRoot, () -> null, new LinkingRun.Thresholds(1.1, 1.1));
+    }
+
+    JobProcessor(PlatformApi platform, LlmFactory llms, ServiceModels models, Supplier<LocalDate> clock, Path resumeRoot,
+                 Supplier<de.tstieh.stoneintelligence.worker.embed.Embedder> embedder, LinkingRun.Thresholds thresholds) {
+        this(platform, llms, models, clock, PROGRESS_MIN_INTERVAL, resumeRoot, embedder, thresholds);
     }
 
     JobProcessor(PlatformApi platform, LlmFactory llms, ServiceModels models, Supplier<LocalDate> clock, Duration progressInterval,
                  Path resumeRoot) {
+        this(platform, llms, models, clock, progressInterval, resumeRoot, () -> null, new LinkingRun.Thresholds(1.1, 1.1));
+    }
+
+    JobProcessor(PlatformApi platform, LlmFactory llms, ServiceModels models, Supplier<LocalDate> clock, Duration progressInterval,
+                 Path resumeRoot, Supplier<de.tstieh.stoneintelligence.worker.embed.Embedder> embedder, LinkingRun.Thresholds thresholds) {
+        this.embedder = embedder;
+        this.thresholds = thresholds;
         this.platform = platform;
         this.llms = llms;
         this.models = models;
@@ -99,7 +113,7 @@ final class JobProcessor {
         try {
             if (job.isLinking()) {
                 heartbeat.scheduleAtFixedRate(() -> beat(job, cancelled), HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
-                new LinkingRun(platform).run(job);
+                new LinkingRun(platform, embedder.get(), thresholds).run(job);
                 return;
             }
             var model = models.forService(job.service());

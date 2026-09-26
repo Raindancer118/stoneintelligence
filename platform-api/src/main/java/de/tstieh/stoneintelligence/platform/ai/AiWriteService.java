@@ -220,18 +220,22 @@ public class AiWriteService {
             return List.of();
         }
         var names = linkNames(vaultId);
+        var alreadyLinked = changeSets.linkedTargets(vaultId, noteId);
         var wanted = new ArrayList<java.util.Map.Entry<String, LinkRequest>>();
         for (var request : requests) {
             var target = note(vaultId, request.target());
             requireLevel(service, target.level());
-            if (!target.id().equals(noteId) && !target.isFile()) {
+            // Einmal verlinkt, nie wieder: wer den Link entfernt hat, will ihn nicht zurueck.
+            if (!target.id().equals(noteId) && !target.isFile() && !alreadyLinked.contains(target.id())) {
                 wanted.add(java.util.Map.entry(linkTargetOf(target.path(), names), request));
             }
         }
         var max = settings.maxLinksPerNote() == null ? Integer.MAX_VALUE : settings.maxLinksPerNote();
         var applied = new ArrayList<LinkText.Insertion>();
+        var linkedTargets = new ArrayList<NoteId>();
         writeWith(note, current -> {
             applied.clear();
+            linkedTargets.clear();
             var text = current;
             for (var entry : wanted) {
                 if (applied.size() >= max) {
@@ -240,11 +244,13 @@ public class AiWriteService {
                 var insertion = LinkText.insert(text, entry.getKey(), entry.getValue().anchor(), entry.getValue().allowRelated());
                 if (insertion.isPresent()) {
                     applied.add(insertion.get());
+                    linkedTargets.add(entry.getValue().target());
                     text = insertion.get().text();
                 }
             }
             return text;
         }, service.agent());
+        linkedTargets.forEach(target -> changeSets.rememberLink(vaultId, noteId, target, clock.get()));
         if (!applied.isEmpty()) {
             changeSets.addChange(new AiChange(UUID.randomUUID(), changeSetId, noteId, note.path(), AiChange.Kind.LINKED,
                 "", "", clock.get(), applied));

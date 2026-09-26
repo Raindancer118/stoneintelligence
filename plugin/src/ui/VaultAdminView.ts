@@ -342,8 +342,17 @@ export class VaultAdminView extends ItemView {
       const next = { ...linking, ...change };
       void this.run((api, vaultId) => api.updateLinking(vaultId, {
         enabled: next.enabled, linkHumanNotes: next.linkHumanNotes, maxLinksPerNote: next.maxLinksPerNote, service: next.service,
+        mode: next.mode ?? null,
       }), next.enabled ? "Die Verlinkung läuft jetzt jede Nacht um 2 Uhr." : "Die nächtliche Verlinkung ist aus.");
     };
+    new Setting(root).setName("Was verlinkt wird")
+      .setDesc("Ähnliche Inhalte kommen unter „Verwandt“ – berechnet auf dem Server, ohne externe KI.")
+      .addDropdown((dropdown) => dropdown
+        .addOption("LITERAL", "Nur wörtliche Nennungen")
+        .addOption("SEMANTIC", "Auch ähnliche Inhalte")
+        .setValue(linking.mode === "SEMANTIC" ? "SEMANTIC" : "LITERAL")
+        .setDisabled(!this.manage || this.busy)
+        .onChange((value) => save({ mode: value as LinkingSettings["mode"] })));
     new Setting(root).setName("Jede Nacht um 2 Uhr verlinken")
       .setDesc(linking.enabled && linking.requestedBy ? `Läuft mit den Rechten von ${linking.requestedBy}.` : "Aus.")
       .addToggle((toggle) => toggle.setValue(linking.enabled).setDisabled(!this.manage || this.busy)

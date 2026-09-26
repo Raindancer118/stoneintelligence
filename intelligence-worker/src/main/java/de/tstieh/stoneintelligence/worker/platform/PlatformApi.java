@@ -40,6 +40,15 @@ public interface PlatformApi {
 
     void update(String vaultId, UUID changeSetId, String noteId, String text);
 
+    /** Modus der Verlinkung des Vaults: LITERAL, SEMANTIC oder AI (ADR 0012). */
+    String linkingMode(String vaultId);
+
+    List<EmbeddingState> embeddingStates(String vaultId, UUID changeSetId);
+
+    void storeEmbeddings(String vaultId, UUID changeSetId, String noteId, String model, String contentHash, List<EmbeddedChunk> chunks);
+
+    List<SimilarChunk> similar(String vaultId, UUID changeSetId, String noteId, int limit);
+
     /** Links in einer Notiz setzen (ADR 0012) - der Server fuegt nur Markup ein; liefert, wie viele gesetzt wurden. */
     int link(String vaultId, UUID changeSetId, String noteId, List<ProposedLink> links);
 

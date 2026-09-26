@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class JdbcFolderRepositoryIT extends FolderRepositoryContractTest {
 
     @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine")
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(de.tstieh.stoneintelligence.platform.TestImages.POSTGRES)
         .withDatabaseName("stoneintelligence").withUsername("stoneintelligence").withPassword("test");
 
     private static JdbcClient jdbcClient;
@@ -49,7 +49,7 @@ class JdbcFolderRepositoryIT extends FolderRepositoryContractTest {
     // sonst wuerden neue Plugins sie fuer "anderswo geloescht" halten.
     @Test
     void should_backfillTheFoldersOfExistingNotes_whenMigrating() {
-        var fresh = new PostgreSQLContainer<>("postgres:17-alpine");
+        var fresh = new PostgreSQLContainer<>(de.tstieh.stoneintelligence.platform.TestImages.POSTGRES);
         fresh.start();
         try {
             var client = JdbcClient.create(new SimpleDriverDataSource(

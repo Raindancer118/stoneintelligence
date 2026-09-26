@@ -23,9 +23,19 @@ public class LinkingService {
 
     private static final Logger LOG = LoggerFactory.getLogger(LinkingService.class);
 
-    /** Was sich an den Einstellungen aendern laesst; {@code service == null}: bisheriger bzw. erster eingerichteter Dienst. */
-    public record Change(boolean enabled, boolean linkHumanNotes, Integer maxLinksPerNote, String service) {
+    /**
+     * Was sich an den Einstellungen aendern laesst; {@code service == null}: bisheriger bzw. erster
+     * eingerichteter Dienst, {@code mode == null}: bisheriger Modus.
+     */
+    public record Change(boolean enabled, boolean linkHumanNotes, Integer maxLinksPerNote, String service, LinkingSettings.Mode mode) {
     }
+
+    /** Eine aehnliche Notiz fuer "Aehnliche Notizen": wo sie liegt, welcher Abschnitt passt, wie sehr (0..1). */
+    public record SimilarNote(NoteId noteId, String path, String heading, double similarity) {
+    }
+
+    /** Hoechstens so viele Abschnitte je Notiz - schuetzt vor riesigen Anfragen. */
+    static final int MAX_CHUNKS = 500;
 
     private final LinkingSettingsRepository settings;
     private final AiJobService jobs;
@@ -33,10 +43,12 @@ public class LinkingService {
     private final VaultAccessGuard access;
     private final NoteRepository notes;
     private final AiServiceDirectory services;
+    private final NoteEmbeddingRepository embeddings;
     private final Supplier<Instant> clock;
 
     public LinkingService(LinkingSettingsRepository settings, AiJobService jobs, AiWriteService ai, VaultAccessGuard access,
-                          NoteRepository notes, AiServiceDirectory services, Supplier<Instant> clock) {
+                          NoteRepository notes, AiServiceDirectory services, NoteEmbeddingRepository embeddings, Supplier<Instant> clock) {
+        this.embeddings = embeddings;
         this.settings = settings;
         this.jobs = jobs;
         this.ai = ai;
@@ -51,12 +63,21 @@ public class LinkingService {
         return current(vaultId);
     }
 
+    /** Fuer den Worker (kein Mensch dahinter - der Zugang ist das Worker-Token). */
+    public LinkingSettings internalSettings(VaultId vaultId) {
+        return current(vaultId);
+    }
+
     /** Aendern darf, wer den Vault verwaltet; der naechtliche Lauf handelt danach in seinem Namen. */
     public LinkingSettings update(VaultId vaultId, String actor, Change change) {
         access.require(vaultId, actor, Permission.MANAGE);
         var before = current(vaultId);
         var service = serviceId(change.service() != null ? change.service() : before.service());
-        var next = new LinkingSettings(vaultId, change.enabled(), before.mode(), change.linkHumanNotes(), change.maxLinksPerNote(),
+        var mode = change.mode() != null ? change.mode() : before.mode();
+        if (mode == LinkingSettings.Mode.AI) {
+            throw new AiWriteRefusedException("Die Prüfung durch eine KI gibt es noch nicht - bitte „wörtlich“ oder „ähnliche Inhalte“ wählen");
+        }
+        var next = new LinkingSettings(vaultId, change.enabled(), mode, change.linkHumanNotes(), change.maxLinksPerNote(),
             service, actor, before.lastRunAt(), clock.get());
         settings.save(next);
         return current(vaultId);
@@ -106,6 +127,85 @@ public class LinkingService {
             access.require(vaultId, changeSet.requestedBy(), Permission.READ, target.path());
         }
         return ai.linkNote(vaultId, changeSetId, noteId, requests, current(vaultId));
+    }
+
+    /** Was schon indiziert ist - nur fuer Notizen, die der Lauf sehen darf. */
+    public List<NoteEmbeddingRepository.State> embeddingStates(VaultId vaultId, UUID changeSetId) {
+        var visible = visibleToRun(vaultId, changeSetId);
+        return embeddings.states(vaultId).stream().filter(state -> visible.contains(state.noteId())).toList();
+    }
+
+    /** Vektoren einer Notiz speichern - nur, wenn die Person hinter dem Lauf sie lesen und der Dienst sie verarbeiten darf. */
+    public void storeEmbeddings(VaultId vaultId, UUID changeSetId, NoteId noteId, String model, String contentHash,
+                                List<NoteEmbeddingRepository.Chunk> chunks) {
+        var changeSet = ai.changeSet(vaultId, changeSetId).orElseThrow(() -> new AiWriteRefusedException("KI-Änderung nicht gefunden"));
+        var note = notes.findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId));
+        access.require(vaultId, changeSet.requestedBy(), Permission.READ, note.path());
+        var service = services.find(changeSet.service())
+            .orElseThrow(() -> new AiWriteRefusedException("KI-Dienst " + changeSet.service() + " ist nicht (mehr) eingerichtet"));
+        if (!ai.mayProcess(service, note.level())) {
+            throw new AiWriteRefusedException(service.name() + " darf " + note.path() + " nicht verarbeiten");
+        }
+        if (model == null || model.isBlank() || contentHash == null || contentHash.isBlank() || chunks.isEmpty() || chunks.size() > MAX_CHUNKS) {
+            throw new AiWriteRefusedException("model, contentHash und 1 bis " + MAX_CHUNKS + " Abschnitte sind Pflicht");
+        }
+        for (var chunk : chunks) {
+            if (chunk.vector() == null || chunk.vector().length != 384) {
+                throw new AiWriteRefusedException("Jeder Abschnitt braucht einen Vektor mit 384 Werten");
+            }
+            for (var value : chunk.vector()) {
+                if (!Float.isFinite(value)) {
+                    throw new AiWriteRefusedException("Vektoren duerfen nur endliche Zahlen enthalten");
+                }
+            }
+        }
+        embeddings.replace(vaultId, noteId, model, contentHash, chunks);
+    }
+
+    /** Aehnliche Notizen fuer einen Lauf (Stufe 2) - nur unter denen, die er sehen darf. */
+    public List<NoteEmbeddingRepository.Similar> similarForRun(VaultId vaultId, UUID changeSetId, NoteId noteId, int limit) {
+        var visible = visibleToRun(vaultId, changeSetId);
+        if (!visible.contains(noteId)) {
+            throw new AiWriteRefusedException("Diese Notiz gehört nicht zum Lauf");
+        }
+        return embeddings.similarTo(vaultId, noteId, Math.max(1, limit) * 3).stream()
+            .filter(similar -> visible.contains(similar.noteId())).limit(Math.max(1, limit)).toList();
+    }
+
+    /** "Aehnliche Notizen" fuer Menschen: wer die Notiz lesen darf, sieht aehnliche, die er ebenfalls lesen darf. */
+    public List<SimilarNote> similarNotes(VaultId vaultId, String actor, NoteId noteId, int limit) {
+        access.requireMember(vaultId, actor);
+        var note = notes.findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId));
+        access.require(vaultId, actor, Permission.READ, note.path());
+        var mayRead = access.accessChecker(vaultId, actor);
+        var result = new java.util.ArrayList<SimilarNote>();
+        for (var similar : embeddings.similarTo(vaultId, noteId, Math.max(1, limit) * 3)) {
+            var other = notes.findById(vaultId, similar.noteId());
+            if (other.isPresent() && mayRead.apply(other.get().path()).allows(Permission.READ)) {
+                result.add(new SimilarNote(similar.noteId(), other.get().path(), similar.heading(), similar.similarity()));
+            }
+            if (result.size() >= limit) {
+                break;
+            }
+        }
+        return result;
+    }
+
+    /** Notizen, die ein Lauf kennen darf: fuer die Person dahinter lesbar und fuer den Dienst verarbeitbar. */
+    private java.util.Set<NoteId> visibleToRun(VaultId vaultId, UUID changeSetId) {
+        var changeSet = ai.changeSet(vaultId, changeSetId).orElseThrow(() -> new AiWriteRefusedException("KI-Änderung nicht gefunden"));
+        var service = services.find(changeSet.service())
+            .orElseThrow(() -> new AiWriteRefusedException("KI-Dienst " + changeSet.service() + " ist nicht (mehr) eingerichtet"));
+        var visible = new java.util.HashSet<NoteId>();
+        String cursor = null;
+        do {
+            var page = notes.list(vaultId, cursor, 500);
+            access.readableNotes(vaultId, changeSet.requestedBy(), page.notes()).stream()
+                .filter(note -> ai.mayProcess(service, note.level()))
+                .forEach(note -> visible.add(note.id()));
+            cursor = page.complete() ? null : page.nextCursor().orElse(null);
+        } while (cursor != null);
+        return visible;
     }
 
     private LinkingSettings current(VaultId vaultId) {

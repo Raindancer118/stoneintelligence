@@ -22,6 +22,8 @@
   let newPath = $state("");
   let showCreate = $state(false);
   let dirty = $state(false);
+  let similar = $state<import("../api").SimilarNote[] | null>(null);
+  let similarLoading = $state(false);
   let sharing = $state<{ kind: "entry"; noteId: string; path: string } | { kind: "folder"; path: string } | null>(null);
   let alive = true;
   const folders = $derived([...new Set(notes.map(n => n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : ""))].filter(Boolean).sort());
@@ -30,7 +32,16 @@
 
   function setDirty(value: boolean) { dirty = value; onDirtyChange(value || creating); }
   function mayLeave() { return !dirty || window.confirm("Ungespeicherte Änderungen verwerfen? Du kannst die Notiz vorher speichern oder als Markdown exportieren."); }
-  function select(note: Note | null) { if (selected?.id === note?.id || !mayLeave()) return; selected = note; sharing = null; setDirty(false); }
+  function select(note: Note | null) { if (selected?.id === note?.id || !mayLeave()) return; selected = note; sharing = null; similar = null; setDirty(false); }
+  async function showSimilar() {
+    if (!selected || similarLoading) return;
+    if (similar) { similar = null; return; }
+    similarLoading = true;
+    try { similar = await api.similarNotes(vault.id, selected.id); }
+    catch (e) { error = e instanceof Error ? e.message : "Ähnliche Notizen konnten nicht geladen werden."; }
+    finally { similarLoading = false; }
+  }
+  function openSimilar(path: string) { const note = notes.find(n => n.path === path); if (note) select(note); }
 
   async function load(reset = false) {
     loading = true; error = "";
@@ -94,7 +105,8 @@
   </section>
   <section class="note-content" aria-label="Ausgewählte Notiz">
     {#if sharing}{#key JSON.stringify(sharing)}<SharePanel {vault} target={sharing} onClose={() => sharing = null} />{/key}{/if}
-    {#if selected}<div class="note-actions"><button class="quiet back-to-list" onclick={() => select(null)}>Zur Notizliste</button><button class="quiet" onclick={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null}>Freigabe</button></div>{#key selected.id}{#if selected.kind === "FILE"}<FileViewer note={selected} {permissions} onChanged={changed} onDeleted={deleted} />{:else}<NoteEditor note={selected} {permissions} onChanged={changed} onDeleted={deleted} onDirtyChange={setDirty} />{/if}{/key}
+    {#if selected}<div class="note-actions"><button class="quiet back-to-list" onclick={() => select(null)}>Zur Notizliste</button><span class="note-actions-right">{#if selected.kind !== "FILE"}<button class="quiet" aria-expanded={similar !== null} disabled={similarLoading} onclick={showSimilar}>Ähnliche Notizen</button>{/if}<button class="quiet" onclick={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null}>Freigabe</button></span></div>
+    {#if similar}<section class="similar" aria-label="Ähnliche Notizen">{#if similar.length}<ul>{#each similar as other (other.noteId)}<li><button class="link" onclick={() => openSimilar(other.path)}>{other.path.split("/").pop()?.replace(/\.md$/i, "")}</button><span class="hint">{Math.round(other.similarity * 100)} % ähnlich{other.heading ? ` · „${other.heading}“` : ""}</span></li>{/each}</ul>{:else}<p class="hint">Noch nichts gefunden. Ähnlichkeiten entstehen beim Verlinken (KI → Verlinkung).</p>{/if}</section>{/if}{#key selected.id}{#if selected.kind === "FILE"}<FileViewer note={selected} {permissions} onChanged={changed} onDeleted={deleted} />{:else}<NoteEditor note={selected} {permissions} onChanged={changed} onDeleted={deleted} onDirtyChange={setDirty} />{/if}{/key}
     {:else}<div class="welcome-document"><svg viewBox="0 0 64 72" width="64" height="72" fill="none" aria-hidden="true"><path d="M10 3h29l15 15v51H10z" stroke="currentColor" stroke-width="2"/><path d="M39 3v16h15M20 32h24M20 42h24M20 52h15" stroke="currentColor" stroke-width="2"/></svg><h3>Dein Wissen, direkt im Browser.</h3><p>Wähle eine Notiz aus der Liste, um sie zu lesen{permissions.includes("WRITE") ? " oder zu bearbeiten" : ""}.</p>{#if permissions.includes("CREATE")}<button class="primary" onclick={() => showCreate = true}>Erste Gedanken festhalten</button>{/if}<p class="hint">Mit Obsidian verbunden. Gespeicherte Änderungen stehen auch deinen anderen Geräten zur Verfügung.</p></div>{/if}
   </section>
 </div>
@@ -112,7 +124,8 @@
   .note-content { min-width: 0; } .welcome-document { min-height: 32rem; display: flex; flex-direction: column; justify-content: center; align-items: start; padding: 3rem clamp(1.5rem, 5vw, 5rem); background: var(--surface); border-radius: 8px; }
   .welcome-document svg { color: var(--forest); margin-bottom: 2rem; } .welcome-document h3 { font-size: 1.7rem; max-width: 25ch; } .welcome-document p { max-width: 46ch; color: var(--ink-dim); } .welcome-document .hint { margin-top: 2.5rem; max-width: 50ch; }
   .create-form { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; background: var(--surface-raised); padding: 1.25rem; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 1.5rem; } .create-form > div { flex: 1; min-width: min(20rem, 100%); } .create-form input { width: 100%; } .create-form .hint { margin: .4rem 0 0; }
-  .search-scope { margin-bottom: 0; } .share-folder { width: 100%; margin-bottom: .75rem; } .note-actions { display: flex; justify-content: space-between; margin-bottom: .75rem; } .note-actions .back-to-list { margin-bottom: 0; } .back-to-list { display: none; margin-bottom: .75rem; }
+  .search-scope { margin-bottom: 0; } .share-folder { width: 100%; margin-bottom: .75rem; } .note-actions { display: flex; justify-content: space-between; margin-bottom: .75rem; } .note-actions .back-to-list { margin-bottom: 0; } .note-actions-right { display: flex; gap: .4rem; margin-left: auto; }
+  .similar { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: .8rem 1rem; margin-bottom: 1rem; } .similar ul { list-style: none; margin: 0; padding: 0; } .similar li { display: flex; flex-wrap: wrap; gap: .6rem; align-items: baseline; padding: .35rem 0; } .back-to-list { display: none; margin-bottom: .75rem; }
   @media (max-width: 950px) { .notes-layout { grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr); gap: 1rem; } }
   @media (max-width: 700px) { .workspace-tools.note-open { display: none; } .notes-layout { display: block; } .has-selection .note-index { display: none; } .note-index { position: static; } .note-rows { max-height: none; } .back-to-list { display: inline-block; } .welcome-document { display: none; } .tool-actions { width: 100%; } .tool-actions button { flex: 1; } }
 </style>

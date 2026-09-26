@@ -64,7 +64,8 @@ class LinkingServiceTest {
     private final AiJobService jobs = new AiJobService(jobRepository, () -> services,
         (vault, service, requestedBy, label) -> ai.startChangeSet(vault, service, requestedBy, label).id(),
         (vault, changeSet, actor) -> ai.revert(vault, changeSet, actor), now::get);
-    private final LinkingService linking = new LinkingService(settings, jobs, ai, access, notes, services, now::get);
+    private final FakeNoteEmbeddingRepository embeddings = new FakeNoteEmbeddingRepository(notes);
+    private final LinkingService linking = new LinkingService(settings, jobs, ai, access, notes, services, embeddings, now::get);
 
     @BeforeEach
     void members() {
@@ -92,19 +93,29 @@ class LinkingServiceTest {
         void should_startOff_andLetOnlyManagersSwitchItOn_inTheirOwnName() {
             assertThat(linking.settings(vaultId, "ben").enabled()).isFalse();
 
-            assertThatThrownBy(() -> linking.update(vaultId, "ben", new LinkingService.Change(true, true, null, null)))
+            assertThatThrownBy(() -> linking.update(vaultId, "ben", new LinkingService.Change(true, true, null, null, null)))
                 .isInstanceOf(ForbiddenException.class);
-            var saved = linking.update(vaultId, "tom", new LinkingService.Change(true, true, 5, null));
+            var saved = linking.update(vaultId, "tom", new LinkingService.Change(true, true, 5, null, LinkingSettings.Mode.SEMANTIC));
 
             assertThat(saved.enabled()).isTrue();
             assertThat(saved.requestedBy()).isEqualTo("tom");
             assertThat(saved.maxLinksPerNote()).isEqualTo(5);
             assertThat(saved.service()).isEqualTo("lokal");
+            assertThat(saved.mode()).isEqualTo(LinkingSettings.Mode.SEMANTIC);
+            assertThat(linking.update(vaultId, "tom", new LinkingService.Change(true, true, 5, null, null)).mode())
+                .as("no mode given keeps the mode").isEqualTo(LinkingSettings.Mode.SEMANTIC);
+        }
+
+        // Stufe 3 (KI-Pruefung) gibt es noch nicht - der Modus darf nicht so tun.
+        @Test
+        void should_refuseTheAiModeUntilItExists() {
+            assertThatThrownBy(() -> linking.update(vaultId, "tom", new LinkingService.Change(true, true, null, null, LinkingSettings.Mode.AI)))
+                .isInstanceOf(AiWriteRefusedException.class);
         }
 
         @Test
         void should_refuseAServiceThatDoesNotExist() {
-            assertThatThrownBy(() -> linking.update(vaultId, "tom", new LinkingService.Change(true, true, null, "gibtsnicht")))
+            assertThatThrownBy(() -> linking.update(vaultId, "tom", new LinkingService.Change(true, true, null, "gibtsnicht", null)))
                 .isInstanceOf(AiWriteRefusedException.class);
         }
     }
@@ -123,7 +134,7 @@ class LinkingServiceTest {
 
         @Test
         void should_startTheNightlyRun_onlyForEnabledVaults_whoseRequesterMayStillWrite() {
-            linking.update(vaultId, "tom", new LinkingService.Change(true, true, null, null));
+            linking.update(vaultId, "tom", new LinkingService.Change(true, true, null, null, null));
             var other = VaultId.newId();
             settings.save(new LinkingSettings(other, true, LinkingSettings.Mode.AI, true, null, "lokal", "weg", null, now.get()));
 
@@ -176,6 +187,66 @@ class LinkingServiceTest {
             grants.put(vaultId, GrantTarget.entry(source, "Pflanzen.md"), GrantScope.user("tom"), Set.of(Permission.READ), "tom");
             assertThatThrownBy(() -> linking.link(vaultId, changeSet, source, List.of()))
                 .isInstanceOf(ForbiddenException.class);
+        }
+    }
+
+    @Nested
+    class Aehnlichkeit {
+
+        private float[] vector(int axis, double tilt) {
+            return NoteEmbeddingRepositoryContractTest.vector(axis, tilt);
+        }
+
+        private java.util.UUID run() {
+            linking.runNow(vaultId, "tom");
+            return jobs.claim().orElseThrow().changeSetId();
+        }
+
+        @Test
+        void should_storeVectors_andReportWhatIsIndexed_onlyForNotesTheRunMaySee() {
+            var visible = note("Licht.md", "# Licht\n");
+            var hidden = note("Privat/Tagebuch.md", "# Geheim\n");
+            grants.put(vaultId, GrantTarget.folder("Privat"), GrantScope.user("tom"), Set.of(), "tom");
+            var changeSet = run();
+
+            linking.storeEmbeddings(vaultId, changeSet, visible, "m", "h1",
+                List.of(new NoteEmbeddingRepository.Chunk(0, "Licht", vector(3, 0))));
+
+            assertThat(linking.embeddingStates(vaultId, changeSet)).extracting(NoteEmbeddingRepository.State::noteId).containsExactly(visible);
+            assertThatThrownBy(() -> linking.storeEmbeddings(vaultId, changeSet, hidden, "m", "h",
+                List.of(new NoteEmbeddingRepository.Chunk(0, null, vector(3, 0))))).isInstanceOf(ForbiddenException.class);
+        }
+
+        @Test
+        void should_refuseVectorsOfTheWrongSize_orTooMany() {
+            var note = note("Licht.md", "# Licht\n");
+            var changeSet = run();
+
+            assertThatThrownBy(() -> linking.storeEmbeddings(vaultId, changeSet, note, "m", "h",
+                List.of(new NoteEmbeddingRepository.Chunk(0, null, new float[3])))).isInstanceOf(AiWriteRefusedException.class);
+            var tooMany = java.util.stream.IntStream.range(0, 501).mapToObj(i -> new NoteEmbeddingRepository.Chunk(i, null, vector(3, 0))).toList();
+            assertThatThrownBy(() -> linking.storeEmbeddings(vaultId, changeSet, note, "m", "h", tooMany))
+                .isInstanceOf(AiWriteRefusedException.class);
+        }
+
+        @Test
+        void should_showSimilarNotes_onlyAmongThoseTheReaderMaySee() {
+            var source = note("Pflanzen.md", "x\n");
+            var close = note("Photosynthese.md", "x\n");
+            var secret = note("Privat/Gewaechshaus.md", "x\n");
+            var changeSet = run();
+            linking.storeEmbeddings(vaultId, changeSet, source, "m", "h", List.of(new NoteEmbeddingRepository.Chunk(0, null, vector(5, 0))));
+            linking.storeEmbeddings(vaultId, changeSet, close, "m", "h", List.of(new NoteEmbeddingRepository.Chunk(0, "Licht", vector(5, 0.2))));
+            linking.storeEmbeddings(vaultId, changeSet, secret, "m", "h", List.of(new NoteEmbeddingRepository.Chunk(0, null, vector(5, 0.1))));
+            grants.put(vaultId, GrantTarget.folder("Privat"), GrantScope.user("ben"), Set.of(), "tom");
+
+            var forBen = linking.similarNotes(vaultId, "ben", source, 10);
+            var forTom = linking.similarNotes(vaultId, "tom", source, 10);
+
+            assertThat(forBen).extracting(LinkingService.SimilarNote::path).containsExactly("Photosynthese.md");
+            assertThat(forTom).extracting(LinkingService.SimilarNote::path).containsExactly("Privat/Gewaechshaus.md", "Photosynthese.md");
+            assertThat(forBen.getFirst().heading()).isEqualTo("Licht");
+            assertThatThrownBy(() -> linking.similarNotes(vaultId, "mallory", source, 10)).isInstanceOf(ForbiddenException.class);
         }
     }
 }

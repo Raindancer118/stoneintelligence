@@ -13,4 +13,9 @@ class FakeAiChangeSetRepositoryTest extends AiChangeSetRepositoryContractTest {
     protected VaultId existingVault() {
         return VaultId.newId();
     }
+
+    @Override
+    protected de.tstieh.stoneintelligence.domain.id.NoteId existingNote(VaultId vaultId, String path) {
+        return de.tstieh.stoneintelligence.domain.id.NoteId.newId();
+    }
 }

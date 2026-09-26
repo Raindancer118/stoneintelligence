@@ -15,7 +15,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class JdbcAiChangeSetRepositoryIT extends AiChangeSetRepositoryContractTest {
 
     @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine")
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(de.tstieh.stoneintelligence.platform.TestImages.POSTGRES)
         .withDatabaseName("stoneintelligence").withUsername("stoneintelligence").withPassword("test");
 
     private static JdbcClient jdbcClient;
@@ -38,5 +38,11 @@ class JdbcAiChangeSetRepositoryIT extends AiChangeSetRepositoryContractTest {
     @Override
     protected VaultId existingVault() {
         return new JdbcVaultRepository(jdbcClient).create("KI-Test").id();
+    }
+
+    @Override
+    protected de.tstieh.stoneintelligence.domain.id.NoteId existingNote(VaultId vaultId, String path) {
+        return new de.tstieh.stoneintelligence.platform.vault.JdbcNoteRepository(jdbcClient)
+            .create(vaultId, path, de.tstieh.stoneintelligence.domain.notelevel.NoteLevel.of(1), "tom").id();
     }
 }

@@ -45,7 +45,7 @@ class AiEndToEndIT {
     private static final String WORKER_HEADER = "X-StoneIntelligence-Worker-Token";
 
     @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine")
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(de.tstieh.stoneintelligence.platform.TestImages.POSTGRES)
         .withDatabaseName("stoneintelligence").withUsername("stoneintelligence").withPassword("test");
 
     @DynamicPropertySource

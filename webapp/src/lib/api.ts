@@ -65,8 +65,11 @@ export interface AiChangeSet {
 }
 export interface AiChange { noteId: string; path: string; kind: "CREATED" | "UPDATED" | "FILE_CREATED" | "LINKED"; at: string; }
 /** Naechtliche Verlinkung (ADR 0012); `maxLinksPerNote === null` = unbegrenzt. */
+export type LinkingMode = "LITERAL" | "SEMANTIC" | "AI";
+/** Eine aehnliche Notiz (ADR 0012): ihr passendster Abschnitt und wie aehnlich (0..1). */
+export interface SimilarNote { noteId: string; path: string; heading: string | null; similarity: number; }
 export interface LinkingSettings {
-  enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null;
+  enabled: boolean; mode?: LinkingMode; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null;
   requestedBy: string | null; lastRunAt: string | null;
 }
 export interface AiChangeSetDetail { changeSet: AiChangeSet; changes: AiChange[]; }
@@ -226,7 +229,9 @@ export const api = {
   removeFolderGrant: (vaultId: string, path: string, scopeType: ScopeType, subject: string | null) =>
     request<void>(`/api/v1/vaults/${vaultId}/folders/access/grants?${new URLSearchParams({ path })}&${scopeQuery(scopeType, subject)}`, { method: "DELETE" }),
   linkingSettings: (vaultId: string) => request<LinkingSettings>(`/api/v1/vaults/${vaultId}/linking`),
-  updateLinking: (vaultId: string, change: { enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null }) =>
+  similarNotes: (vaultId: string, noteId: string, limit = 10) =>
+    request<SimilarNote[]>(`/api/v1/vaults/${vaultId}/notes/${noteId}/similar?limit=${limit}`),
+  updateLinking: (vaultId: string, change: { enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null; mode?: LinkingMode | null }) =>
     request<LinkingSettings>(`/api/v1/vaults/${vaultId}/linking`, { method: "PUT", body: JSON.stringify(change) }),
   runLinking: (vaultId: string) => request<AiJob>(`/api/v1/vaults/${vaultId}/linking/run`, { method: "POST" }),
   listMembers: (vaultId: string) => request<VaultMember[]>(`/api/v1/vaults/${vaultId}/members`),

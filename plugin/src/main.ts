@@ -45,6 +45,7 @@ import { AiChangesModal } from "./ui/AiChangesModal";
 import { InviteModal } from "./ui/InviteModal";
 import { ShareModal, type ShareTarget } from "./ui/ShareModal";
 import { HistoryModal } from "./ui/HistoryModal";
+import { SimilarNotesModal } from "./ui/SimilarNotesModal";
 import { type Tab as VaultAdminTab, VaultAdminView, VIEW_TYPE_VAULT_ADMIN } from "./ui/VaultAdminView";
 import { AiReadModal, type AiReadTarget } from "./ui/AiReadModal";
 import { canReadWithAi } from "./sync/aiJobText";
@@ -1005,6 +1006,20 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
+      id: "stoneintelligence-similar-active",
+      name: "Ähnliche Notizen zur aktuellen Notiz",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        const target = file && this.isReady() ? this.shareTargetFor(file) : null;
+        const available = target?.kind === "entry" && target.path.toLowerCase().endsWith(".md");
+        if (checking || !available || target?.kind !== "entry") {
+          return Boolean(available);
+        }
+        this.openSimilar(target.noteId, target.path);
+        return true;
+      },
+    });
+    this.addCommand({
       id: "stoneintelligence-ai-changes",
       name: "KI-Änderungen anzeigen und rückgängig machen",
       checkCallback: (checking) => {
@@ -1051,6 +1066,10 @@ export default class StoneIntelligencePlugin extends Plugin {
           .onClick(() => this.openShare([target])));
         menu.addItem((item) => item.setTitle("StoneIntelligence: Verlauf und Protokoll…").setIcon("history")
           .onClick(() => this.openHistory(target)));
+        if (target.kind === "entry" && target.path.toLowerCase().endsWith(".md")) {
+          menu.addItem((item) => item.setTitle("StoneIntelligence: Ähnliche Notizen…").setIcon("waypoints")
+            .onClick(() => this.openSimilar(target.noteId, target.path)));
+        }
       }
       const aiTarget = this.aiTargetFor(file);
       if (aiTarget) {
@@ -1122,6 +1141,10 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   private openAiRead(targets: AiReadTarget[]): void {
     new AiReadModal(this.app, this.noteApiClient, this.settings.vaultId, targets, () => void this.activateVaultAdminView("ai")).open();
+  }
+
+  private openSimilar(noteId: string, path: string): void {
+    new SimilarNotesModal(this.app, this.noteApiClient, this.settings.vaultId, noteId, path, (other) => this.openFile(other)).open();
   }
 
   private openHistory(target: ShareTarget): void {

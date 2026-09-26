@@ -60,4 +60,20 @@ public final class FakeAiChangeSetRepository implements AiChangeSetRepository {
         changes.removeIf(change -> old.contains(change.changeSetId()));
         return old.size();
     }
+
+    private final java.util.Set<java.util.List<Object>> pairs = new java.util.HashSet<>();
+
+    @Override
+    public synchronized java.util.Set<de.tstieh.stoneintelligence.domain.id.NoteId> linkedTargets(
+            de.tstieh.stoneintelligence.domain.id.VaultId vaultId, de.tstieh.stoneintelligence.domain.id.NoteId source) {
+        return pairs.stream().filter(pair -> pair.get(0).equals(vaultId) && pair.get(1).equals(source))
+            .map(pair -> (de.tstieh.stoneintelligence.domain.id.NoteId) pair.get(2)).collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    @Override
+    public synchronized void rememberLink(de.tstieh.stoneintelligence.domain.id.VaultId vaultId,
+                                          de.tstieh.stoneintelligence.domain.id.NoteId source,
+                                          de.tstieh.stoneintelligence.domain.id.NoteId target, java.time.Instant at) {
+        pairs.add(java.util.List.of(vaultId, source, target));
+    }
 }
