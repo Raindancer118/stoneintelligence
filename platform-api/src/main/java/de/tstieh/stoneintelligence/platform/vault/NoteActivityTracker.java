@@ -23,6 +23,7 @@ public class NoteActivityTracker {
     private final Clock clock;
     private final Map<String, Instant> lastWritten = new ConcurrentHashMap<>();
 
+    @org.springframework.beans.factory.annotation.Autowired
     public NoteActivityTracker(NoteRepository notes) {
         this(notes, Clock.systemUTC());
     }
