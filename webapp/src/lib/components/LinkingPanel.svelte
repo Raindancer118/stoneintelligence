@@ -33,6 +33,14 @@
     finally { busy = false; }
   }
 
+  async function consent(value: boolean) {
+    if (busy) return;
+    busy = true; error = ""; message = "";
+    try { settings = await api.setLinkingConsent(vault.id, value); message = value ? "Deine Notizen dürfen jetzt zur KI-Prüfung." : "Deine Notizen gehen nicht mehr zur KI-Prüfung."; }
+    catch (e) { error = explain(e); }
+    finally { busy = false; }
+  }
+
   function saveMax() {
     const parsed = max.trim() === "" ? null : Number.parseInt(max, 10);
     if (parsed !== null && (!Number.isFinite(parsed) || parsed < 1)) { error = "Bitte eine Zahl ab 1 eintragen oder das Feld leer lassen."; return; }
@@ -52,11 +60,16 @@
     <h3>Verlinkung</h3>
     <p class="hint">Nennt eine Notiz den Titel oder einen Alias einer anderen, wird die Stelle zum Link – nur eingefügtes Markup, der Text bleibt, wie er ist. Das geschieht auf dem Server, ohne externe KI; jeder Lauf lässt sich unten unter „Änderungen der KI“ rückgängig machen.</p>
     <label class="mode">Was verlinkt wird
-      <select value={settings.mode === "SEMANTIC" ? "SEMANTIC" : "LITERAL"} disabled={!manage || busy} onchange={e => save({ mode: e.currentTarget.value as "LITERAL" | "SEMANTIC" })}>
+      <select value={settings.mode ?? "LITERAL"} disabled={!manage || busy} onchange={e => save({ mode: e.currentTarget.value as "LITERAL" | "SEMANTIC" | "AI" })}>
         <option value="LITERAL">Nur wörtliche Nennungen</option>
         <option value="SEMANTIC">Auch ähnliche Inhalte (unter „Verwandt“)</option>
+        <option value="AI">Ähnliche Inhalte, von einer KI geprüft</option>
       </select>
     </label>
+    {#if settings.mode === "AI"}
+      <p class="hint">Eine KI entscheidet, ob ähnliche Notizen wirklich zusammengehören, und wählt die Stelle. Dafür gehen nachts Auszüge an den KI-Anbieter – nur von Notizen, deren Verfasser zugestimmt haben (siehe <a href="/datenschutz">Datenschutz</a>).</p>
+      <label class="toggle"><input type="checkbox" checked={Boolean(settings.aiConsent)} disabled={busy} onchange={e => consent(e.currentTarget.checked)} /> Meine Notizen dürfen zur KI-Prüfung (jederzeit widerrufbar; bisher {settings.aiConsentCount ?? 0} Mitglied(er))</label>
+    {/if}
     <label class="toggle"><input type="checkbox" checked={settings.enabled} disabled={!manage || busy} onchange={e => save({ enabled: e.currentTarget.checked })} /> Jede Nacht um 2 Uhr verlinken{settings.enabled && settings.requestedBy ? ` (mit den Rechten von ${settings.requestedBy})` : ""}</label>
     <label class="toggle"><input type="checkbox" checked={settings.linkHumanNotes} disabled={!manage || busy} onchange={e => save({ linkHumanNotes: e.currentTarget.checked })} /> Auch in Notizen von Menschen</label>
     <form class="max" onsubmit={e => { e.preventDefault(); saveMax(); }}>

@@ -71,6 +71,8 @@ export interface SimilarNote { noteId: string; path: string; heading: string | n
 export interface LinkingSettings {
   enabled: boolean; mode?: LinkingMode; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null;
   requestedBy: string | null; lastRunAt: string | null;
+  /** Meine Einwilligung zur KI-Pruefung eigener Notizen, und wie viele Mitglieder insgesamt eingewilligt haben. */
+  aiConsent?: boolean; aiConsentCount?: number;
 }
 export interface AiChangeSetDetail { changeSet: AiChangeSet; changes: AiChange[]; }
 export interface AiRevertReport { reverted: number; conflicts: { path: string; reason: string }[]; }
@@ -233,6 +235,8 @@ export const api = {
     request<SimilarNote[]>(`/api/v1/vaults/${vaultId}/notes/${noteId}/similar?limit=${limit}`),
   updateLinking: (vaultId: string, change: { enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null; mode?: LinkingMode | null }) =>
     request<LinkingSettings>(`/api/v1/vaults/${vaultId}/linking`, { method: "PUT", body: JSON.stringify(change) }),
+  setLinkingConsent: (vaultId: string, consent: boolean) =>
+    request<LinkingSettings>(`/api/v1/vaults/${vaultId}/linking/consent`, { method: "PUT", body: JSON.stringify({ consent }) }),
   runLinking: (vaultId: string) => request<AiJob>(`/api/v1/vaults/${vaultId}/linking/run`, { method: "POST" }),
   listMembers: (vaultId: string) => request<VaultMember[]>(`/api/v1/vaults/${vaultId}/members`),
   removeFromVault: (vaultId: string, subject: string) =>

@@ -65,7 +65,7 @@ class LinkingServiceTest {
         (vault, service, requestedBy, label) -> ai.startChangeSet(vault, service, requestedBy, label).id(),
         (vault, changeSet, actor) -> ai.revert(vault, changeSet, actor), now::get);
     private final FakeNoteEmbeddingRepository embeddings = new FakeNoteEmbeddingRepository(notes);
-    private final LinkingService linking = new LinkingService(settings, jobs, ai, access, notes, services, embeddings, now::get);
+    private final LinkingService linking = new LinkingService(settings, jobs, ai, access, notes, services, embeddings, changeSets, now::get);
 
     @BeforeEach
     void members() {
@@ -106,11 +106,10 @@ class LinkingServiceTest {
                 .as("no mode given keeps the mode").isEqualTo(LinkingSettings.Mode.SEMANTIC);
         }
 
-        // Stufe 3 (KI-Pruefung) gibt es noch nicht - der Modus darf nicht so tun.
         @Test
-        void should_refuseTheAiModeUntilItExists() {
-            assertThatThrownBy(() -> linking.update(vaultId, "tom", new LinkingService.Change(true, true, null, null, LinkingSettings.Mode.AI)))
-                .isInstanceOf(AiWriteRefusedException.class);
+        void should_acceptTheAiMode() {
+            assertThat(linking.update(vaultId, "tom", new LinkingService.Change(true, true, null, null, LinkingSettings.Mode.AI)).mode())
+                .isEqualTo(LinkingSettings.Mode.AI);
         }
 
         @Test
@@ -247,6 +246,64 @@ class LinkingServiceTest {
             assertThat(forTom).extracting(LinkingService.SimilarNote::path).containsExactly("Privat/Gewaechshaus.md", "Photosynthese.md");
             assertThat(forBen.getFirst().heading()).isEqualTo("Licht");
             assertThatThrownBy(() -> linking.similarNotes(vaultId, "mallory", source, 10)).isInstanceOf(ForbiddenException.class);
+        }
+    }
+
+    // Stufe 3: bereits verlinkte Paare kommen nicht mehr als Kandidaten; Ablehnungen merkt sich der Server.
+    @Nested
+    class KiPruefung {
+
+        private java.util.UUID run() {
+            linking.runNow(vaultId, "tom");
+            return jobs.claim().orElseThrow().changeSetId();
+        }
+
+        @Test
+        void should_offerOnlyCandidatesThatAreNotLinkedYet() {
+            var source = note("Pflanzen.md", "Pflanzen.\n");
+            var linked = note("Licht.md", "# Licht\n");
+            var open = note("Wasser.md", "# Wasser\n");
+            var changeSet = run();
+            var vector = NoteEmbeddingRepositoryContractTest.vector(5, 0);
+            for (var id : List.of(source, linked, open)) {
+                linking.storeEmbeddings(vaultId, changeSet, id, "m", "h", List.of(new NoteEmbeddingRepository.Chunk(0, null, vector)));
+            }
+            linking.link(vaultId, changeSet, source, List.of(new AiWriteService.LinkRequest(linked, "Licht", true)));
+
+            assertThat(linking.similarForRun(vaultId, changeSet, source, 10)).extracting(NoteEmbeddingRepository.Similar::noteId)
+                .containsExactly(open);
+        }
+
+        // Einwilligung gibt jede Person nur fuer sich selbst - auch Verwaltende nicht fuer andere.
+        @Test
+        void should_letEveryMemberConsentForThemselves_only() {
+            linking.setAiConsent(vaultId, "ben", true);
+
+            assertThat(linking.settings(vaultId, "ben").aiConsents()).containsExactly("ben");
+            linking.setAiConsent(vaultId, "ben", false);
+            assertThat(linking.internalSettings(vaultId).aiConsents()).isEmpty();
+            assertThatThrownBy(() -> linking.setAiConsent(vaultId, "mallory", true)).isInstanceOf(ForbiddenException.class);
+        }
+
+        @Test
+        void should_countConsentOnlyWhileThePersonIsAMember() {
+            linking.setAiConsent(vaultId, "ben", true);
+            for (var group : authorization.listGroups(vaultId)) {
+                authorization.removeMember(group.id(), "ben");
+            }
+
+            assertThat(linking.internalSettings(vaultId).aiConsents()).isEmpty();
+        }
+
+        @Test
+        void should_rememberARejection_forTheTextsItWasMadeOn() {
+            var source = note("Pflanzen.md", "Pflanzen.\n");
+            var target = note("Steuer.md", "# Steuer\n");
+            var changeSet = run();
+
+            linking.reject(vaultId, changeSet, source, target, "s1", "t1");
+
+            assertThat(linking.rejections(vaultId, changeSet, source)).containsEntry(target, List.of("s1", "t1"));
         }
     }
 }

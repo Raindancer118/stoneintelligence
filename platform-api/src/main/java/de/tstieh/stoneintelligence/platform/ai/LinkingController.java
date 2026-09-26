@@ -23,12 +23,23 @@ public class LinkingController {
 
     @GetMapping("/api/v1/vaults/{vaultId}/linking")
     public LinkingResponse settings(@PathVariable String vaultId, Authentication auth) {
-        return LinkingResponse.from(linking.settings(VaultId.of(vaultId), auth.getName()));
+        return LinkingResponse.from(linking.settings(VaultId.of(vaultId), auth.getName()), auth.getName());
     }
 
     @PutMapping("/api/v1/vaults/{vaultId}/linking")
     public LinkingResponse update(@PathVariable String vaultId, @RequestBody LinkingService.Change change, Authentication auth) {
-        return LinkingResponse.from(linking.update(VaultId.of(vaultId), auth.getName(), change));
+        return LinkingResponse.from(linking.update(VaultId.of(vaultId), auth.getName(), change), auth.getName());
+    }
+
+    /** Eigene Einwilligung fuer die KI-gepruefte Verlinkung geben oder widerrufen. */
+    @PutMapping("/api/v1/vaults/{vaultId}/linking/consent")
+    public LinkingResponse consent(@PathVariable String vaultId, @RequestBody ConsentRequest request, Authentication auth) {
+        var vId = VaultId.of(vaultId);
+        linking.setAiConsent(vId, auth.getName(), request.consent());
+        return LinkingResponse.from(linking.settings(vId, auth.getName()), auth.getName());
+    }
+
+    public record ConsentRequest(boolean consent) {
     }
 
     @PostMapping("/api/v1/vaults/{vaultId}/linking/run")
@@ -57,11 +68,23 @@ public class LinkingController {
     public record SimilarResponse(String noteId, String path, String heading, double similarity) {
     }
 
+    /**
+     * {@code aiConsent}: ob der Aufrufer eingewilligt hat; {@code aiConsentCount}: wie viele Mitglieder
+     * insgesamt - wer genau, bleibt jeder Person selbst ueberlassen.
+     */
     public record LinkingResponse(boolean enabled, String mode, boolean linkHumanNotes, Integer maxLinksPerNote, String service,
-                                  String requestedBy, Instant lastRunAt) {
-        static LinkingResponse from(LinkingSettings settings) {
+                                  String requestedBy, Instant lastRunAt, boolean aiConsent, int aiConsentCount) {
+        static LinkingResponse from(LinkingSettings settings, String actor) {
             return new LinkingResponse(settings.enabled(), settings.mode().name(), settings.linkHumanNotes(), settings.maxLinksPerNote(),
-                settings.service(), settings.requestedBy(), settings.lastRunAt());
+                settings.service(), settings.requestedBy(), settings.lastRunAt(), settings.aiConsents().contains(actor),
+                settings.aiConsents().size());
+        }
+    }
+
+    /** Fuer den Worker: dazu die Personen, deren Notizen im Modus AI an den Anbieter duerfen. */
+    public record WorkerLinkingResponse(String mode, java.util.Set<String> aiConsents) {
+        static WorkerLinkingResponse from(LinkingSettings settings) {
+            return new WorkerLinkingResponse(settings.mode().name(), settings.aiConsents());
         }
     }
 }

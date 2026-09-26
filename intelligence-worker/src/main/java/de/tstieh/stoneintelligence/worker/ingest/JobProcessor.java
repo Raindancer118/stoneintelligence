@@ -113,7 +113,7 @@ final class JobProcessor {
         try {
             if (job.isLinking()) {
                 heartbeat.scheduleAtFixedRate(() -> beat(job, cancelled), HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
-                new LinkingRun(platform, embedder.get(), thresholds).run(job);
+                new LinkingRun(platform, embedder.get(), thresholds, () -> linkingModel(job)).run(job);
                 return;
             }
             var model = models.forService(job.service());
@@ -184,6 +184,16 @@ final class JobProcessor {
             if (!keepAnswers) {
                 ResumableLlmClient.delete(answers);
             }
+        }
+    }
+
+    /** Das Sprachmodell des KI-Diensts fuer Stufe 3 - oder {@code null}, wenn fuer den Dienst keins eingerichtet ist. */
+    private de.tstieh.stoneintelligence.stoneai.extract.LlmClient linkingModel(ClaimedJob job) {
+        try {
+            return llms.forService(models.forService(job.service()));
+        } catch (RuntimeException notConfigured) {
+            LOG.warn("Job {}: kein Sprachmodell fuer {}: {}", job.jobId(), job.service(), notConfigured.getMessage());
+            return null;
         }
     }
 

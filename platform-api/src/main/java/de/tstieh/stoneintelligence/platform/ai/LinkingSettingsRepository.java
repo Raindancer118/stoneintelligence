@@ -15,4 +15,9 @@ public interface LinkingSettingsRepository {
     List<LinkingSettings> enabled();
 
     void markRun(VaultId vaultId, Instant at);
+
+    /** Wer eingewilligt hat, dass Auszuege seiner Notizen im Modus AI an den KI-Anbieter gehen. */
+    java.util.Set<String> aiConsents(VaultId vaultId);
+
+    void setAiConsent(VaultId vaultId, String subject, boolean consent, Instant at);
 }

@@ -27,6 +27,10 @@ class FakePlatform implements PlatformApi {
     /** Gespeicherte Vektoren je Notiz, wie der Server sie haelt. */
     final Map<String, de.tstieh.stoneintelligence.worker.platform.EmbeddingState> embeddingStates = new LinkedHashMap<>();
     final Map<String, List<de.tstieh.stoneintelligence.worker.platform.EmbeddedChunk>> embeddings = new LinkedHashMap<>();
+    /** Wie der Server: einmal verlinkte Paare und abgelehnte Ziele je Quelle. */
+    final java.util.Set<String> linkedPairs = new java.util.HashSet<>();
+    final Map<String, Map<String, de.tstieh.stoneintelligence.worker.platform.Rejection>> rejections = new LinkedHashMap<>();
+    final Map<String, String> relations = new LinkedHashMap<>();
 
     final Map<String, Stored> notes = new LinkedHashMap<>();
     final List<ClaimedJob> queue = new ArrayList<>();
@@ -145,12 +149,19 @@ class FakePlatform implements PlatformApi {
         var text = note.text();
         var applied = 0;
         for (var link : links) {
+            if (linkedPairs.contains(noteId + ">" + link.target())) {
+                continue;
+            }
             var targetPath = notes.get(link.target()).path();
             var target = targetPath.substring(targetPath.lastIndexOf('/') + 1).replaceAll("\\.md$", "");
             var inserted = de.tstieh.stoneintelligence.domain.link.LinkText.insert(text, target, link.anchor(), link.allowRelated());
             if (inserted.isPresent()) {
                 text = inserted.get().text();
                 applied++;
+                linkedPairs.add(noteId + ">" + link.target());
+                if (link.relation() != null) {
+                    relations.put(note.path() + ">" + targetPath, link.relation());
+                }
             }
         }
         notes.put(noteId, new Stored(noteId, note.path(), note.level(), note.createdBy(), text));
@@ -158,9 +169,12 @@ class FakePlatform implements PlatformApi {
         return applied;
     }
 
+    /** Wer der KI-Pruefung eigener Notizen zugestimmt hat. */
+    final java.util.Set<String> aiConsents = new java.util.HashSet<>(java.util.Set.of("tom"));
+
     @Override
-    public String linkingMode(String vaultId) {
-        return linkingMode;
+    public de.tstieh.stoneintelligence.worker.platform.LinkingSettings linkingSettings(String vaultId) {
+        return new de.tstieh.stoneintelligence.worker.platform.LinkingSettings(linkingMode, aiConsents);
     }
 
     @Override
@@ -181,7 +195,7 @@ class FakePlatform implements PlatformApi {
     public List<de.tstieh.stoneintelligence.worker.platform.SimilarChunk> similar(String vaultId, UUID changeSetId, String noteId, int limit) {
         var result = new ArrayList<de.tstieh.stoneintelligence.worker.platform.SimilarChunk>();
         for (var entry : embeddings.entrySet()) {
-            if (entry.getKey().equals(noteId)) {
+            if (entry.getKey().equals(noteId) || linkedPairs.contains(noteId + ">" + entry.getKey())) {
                 continue;
             }
             de.tstieh.stoneintelligence.worker.platform.SimilarChunk best = null;
@@ -202,5 +216,16 @@ class FakePlatform implements PlatformApi {
         }
         result.sort(java.util.Comparator.comparingDouble(de.tstieh.stoneintelligence.worker.platform.SimilarChunk::similarity).reversed());
         return result.subList(0, Math.min(limit, result.size()));
+    }
+
+    @Override
+    public List<de.tstieh.stoneintelligence.worker.platform.Rejection> rejections(String vaultId, UUID changeSetId, String noteId) {
+        return List.copyOf(rejections.getOrDefault(noteId, Map.of()).values());
+    }
+
+    @Override
+    public void reject(String vaultId, UUID changeSetId, String noteId, de.tstieh.stoneintelligence.worker.platform.Rejection rejection) {
+        rejections.computeIfAbsent(noteId, id -> new LinkedHashMap<>()).put(rejection.target(), rejection);
+        events.add("reject " + notes.get(noteId).path() + " -> " + notes.get(rejection.target()).path());
     }
 }

@@ -49,4 +49,18 @@ public abstract class LinkingSettingsRepositoryContractTest {
         repository.save(new LinkingSettings(on, true, LinkingSettings.Mode.AI, true, 3, null, "tom", null, NOW));
         assertThat(repository.find(on)).get().extracting(LinkingSettings::lastRunAt).isEqualTo(NOW.plusSeconds(60));
     }
+
+    @Test
+    void should_recordAndWithdrawConsent_perVaultAndPerson() {
+        var repository = repository();
+        var vault = newVault();
+
+        repository.setAiConsent(vault, "anna", true, NOW);
+        repository.setAiConsent(vault, "anna", true, NOW.plusSeconds(1));
+        repository.setAiConsent(vault, "ben", true, NOW);
+        repository.setAiConsent(vault, "ben", false, NOW);
+
+        assertThat(repository.aiConsents(vault)).containsExactly("anna");
+        assertThat(repository.aiConsents(newVault())).isEmpty();
+    }
 }

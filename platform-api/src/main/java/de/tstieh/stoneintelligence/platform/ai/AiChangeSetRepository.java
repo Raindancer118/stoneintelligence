@@ -32,4 +32,18 @@ public interface AiChangeSetRepository {
 
     void rememberLink(de.tstieh.stoneintelligence.domain.id.VaultId vaultId, de.tstieh.stoneintelligence.domain.id.NoteId source,
                       de.tstieh.stoneintelligence.domain.id.NoteId target, java.time.Instant at);
+
+    /** Abgelehnte Ziele einer Quelle, je mit den Text-Hashes beider Notizen zur Zeit der Ablehnung. */
+    java.util.Map<de.tstieh.stoneintelligence.domain.id.NoteId, java.util.List<String>> rejectedTargets(
+        de.tstieh.stoneintelligence.domain.id.VaultId vaultId, de.tstieh.stoneintelligence.domain.id.NoteId source);
+
+    void rememberRejection(de.tstieh.stoneintelligence.domain.id.VaultId vaultId, de.tstieh.stoneintelligence.domain.id.NoteId source,
+                           de.tstieh.stoneintelligence.domain.id.NoteId target, String sourceHash, String targetHash, java.time.Instant at);
+
+    void rememberRelation(de.tstieh.stoneintelligence.domain.id.VaultId vaultId, de.tstieh.stoneintelligence.domain.id.NoteId source,
+                          de.tstieh.stoneintelligence.domain.id.NoteId target, LinkRelation relation, UUID changeSetId, java.time.Instant at);
+
+    /** Beziehungen, die von {@code source} ausgehen. */
+    java.util.Map<de.tstieh.stoneintelligence.domain.id.NoteId, LinkRelation> relationsFrom(
+        de.tstieh.stoneintelligence.domain.id.VaultId vaultId, de.tstieh.stoneintelligence.domain.id.NoteId source);
 }

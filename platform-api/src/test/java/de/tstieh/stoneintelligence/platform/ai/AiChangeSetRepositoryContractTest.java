@@ -89,6 +89,28 @@ public abstract class AiChangeSetRepositoryContractTest {
     }
 
     @Test
+    void should_rememberRejections_withTheTextVersions_andReplaceThem() {
+        var source = existingNote(vaultId, "Quelle.md");
+        var target = existingNote(vaultId, "Ziel.md");
+
+        changeSets.rememberRejection(vaultId, source, target, "s1", "t1", now);
+        changeSets.rememberRejection(vaultId, source, target, "s2", "t2", now.plusSeconds(1));
+
+        assertThat(changeSets.rejectedTargets(vaultId, source)).containsExactly(java.util.Map.entry(target, java.util.List.of("s2", "t2")));
+        assertThat(changeSets.rejectedTargets(vaultId, target)).isEmpty();
+    }
+
+    @Test
+    void should_rememberTheKindOfRelation_perPair() {
+        var source = existingNote(vaultId, "Quelle.md");
+        var target = existingNote(vaultId, "Ziel.md");
+
+        changeSets.rememberRelation(vaultId, source, target, LinkRelation.PART_OF, null, now);
+
+        assertThat(changeSets.relationsFrom(vaultId, source)).containsExactly(java.util.Map.entry(target, LinkRelation.PART_OF));
+    }
+
+    @Test
     void should_markRevertedOnlyOnce() {
         var set = changeSets.create(vaultId, "gemini", "ki:Gemini", "tom", "x", now);
 

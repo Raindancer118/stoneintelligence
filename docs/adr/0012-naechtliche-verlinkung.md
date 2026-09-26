@@ -1,6 +1,6 @@
 # ADR 0012: Nächtliche Verlinkung (Embeddings + KI-Prüfung)
 
-Status: Angenommen (2026-09-26)
+Status: Angenommen und umgesetzt (2026-09-26, Releases 0.28.0 bis 0.30.0)
 
 ## Kontext
 
@@ -176,3 +176,26 @@ Beziehungstypen, `link_decisions`) samt Datenschutzhinweis.
   Notizen prüfen; einen gesonderten vollen Abgleich am Sonntag braucht es nicht.
 - **„Ähnliche Notizen"** (`GET …/notes/{id}/similar`): in Obsidian über das Datei-Kontextmenü und einen
   Befehl, im Web in der Notizansicht. Es zeigt nur Notizen, die man lesen darf.
+
+## Nachtrag: Stufe 3 und Einwilligung (27.09.2026, 0.30.0)
+
+- **Modus `AI`:** Kandidaten ab 0,82 (`STONEAI_LINK_AI_SIMILARITY`) bis unter die Duplikatschwelle prüft
+  `LinkJudge`, ein SMART-Aufruf je Quellnotiz mit höchstens 8 Kandidaten. Die Antwort wird streng
+  geprüft: Ein Anker zählt nur, wenn er wörtlich in der Quelle steht, sonst kommt der Link unter
+  `## Verwandt`. Unbekannte Beziehungen werden zu `related_to`. Ist die Antwort unlesbar, gilt das als
+  keine Entscheidung. Ist kein Kontingent frei, wartet der Lauf mit dem bestehenden Mechanismus, bereits
+  getroffene Entscheidungen bleiben erhalten.
+- **Gemerkt wird** in `platform.link_rejections` (Ablehnung mit den Text-Hashes beider Notizen; neu gefragt
+  wird erst nach einer Änderung) und in `platform.note_relations` (Beziehungstyp je gesetztem Link).
+  Bereits verlinkte Paare kommen gar nicht erst als Kandidaten.
+- **Abweichung vom ursprünglichen Plan: Einwilligung je Mitglied.** Die Übermittlung an Anbieter in den USA
+  beruht auf Einwilligung (Art. 49 Abs. 1 lit. a DSGVO), und Verwaltende können sie nicht für andere
+  geben. Deshalb gehen im Modus `AI` nur Notizen, deren Verfasser eingewilligt hat, und Notizen der KI
+  selbst an den Anbieter, als Quelle wie als Ziel. Gespeichert wird die Einwilligung in
+  `platform.linking_ai_consents`; sie ist jederzeit widerrufbar und wirkt nur, solange die Person
+  Mitglied ist. Notizen ohne Einwilligung werden weiterhin lokal verlinkt (Stufen 1 und 2).
+- **Datenschutzerklärung angepasst.** Das umfasst die Verlinkung auch in Notizen von Menschen, die lokale
+  Berechnung, die Übermittlung nur mit Einwilligung und die Speicherdauern. Dabei wurde auch der seit
+  0.28.0 falsche Satz „Die KI verändert keine von Menschen angelegten Notizen" korrigiert.
+- **Betriebsproben:** `EmbedderCheck` (lokales Modell) und `LinkJudgeCheck <dienst>` (echtes Sprachmodell,
+  erfundenes Beispiel ohne Vault-Inhalte).

@@ -346,13 +346,24 @@ export class VaultAdminView extends ItemView {
       }), next.enabled ? "Die Verlinkung läuft jetzt jede Nacht um 2 Uhr." : "Die nächtliche Verlinkung ist aus.");
     };
     new Setting(root).setName("Was verlinkt wird")
-      .setDesc("Ähnliche Inhalte kommen unter „Verwandt“ – berechnet auf dem Server, ohne externe KI.")
+      .setDesc(linking.mode === "AI"
+        ? "Eine KI entscheidet, ob ähnliche Notizen wirklich zusammengehören, und wählt die Stelle. Dafür gehen nachts Auszüge an den KI-Anbieter – nur von Notizen, deren Verfasser zugestimmt haben (unten)."
+        : "Ähnliche Inhalte kommen unter „Verwandt“ – berechnet auf dem Server, ohne externe KI.")
       .addDropdown((dropdown) => dropdown
         .addOption("LITERAL", "Nur wörtliche Nennungen")
         .addOption("SEMANTIC", "Auch ähnliche Inhalte")
-        .setValue(linking.mode === "SEMANTIC" ? "SEMANTIC" : "LITERAL")
+        .addOption("AI", "Ähnliche Inhalte, von einer KI geprüft")
+        .setValue(linking.mode ?? "LITERAL")
         .setDisabled(!this.manage || this.busy)
         .onChange((value) => save({ mode: value as LinkingSettings["mode"] })));
+    if (linking.mode === "AI") {
+      new Setting(root).setName("Meine Notizen dürfen zur KI-Prüfung")
+        .setDesc(`Auszüge deiner Notizen gehen dann nachts an den KI-Anbieter (auch in die USA, s. Datenschutzerklärung). `
+          + `Jederzeit widerrufbar. Bisher zugestimmt: ${linking.aiConsentCount ?? 0} Mitglied(er).`)
+        .addToggle((toggle) => toggle.setValue(Boolean(linking.aiConsent)).setDisabled(this.busy)
+          .onChange((on) => void this.run((api, vaultId) => api.setLinkingConsent(vaultId, on),
+            on ? "Deine Notizen dürfen jetzt zur KI-Prüfung." : "Deine Notizen gehen nicht mehr zur KI-Prüfung.")));
+    }
     new Setting(root).setName("Jede Nacht um 2 Uhr verlinken")
       .setDesc(linking.enabled && linking.requestedBy ? `Läuft mit den Rechten von ${linking.requestedBy}.` : "Aus.")
       .addToggle((toggle) => toggle.setValue(linking.enabled).setDisabled(!this.manage || this.busy)

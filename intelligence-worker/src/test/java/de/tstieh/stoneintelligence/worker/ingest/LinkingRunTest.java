@@ -1,5 +1,6 @@
 package de.tstieh.stoneintelligence.worker.ingest;
 
+import java.util.List;
 import java.util.UUID;
 import de.tstieh.stoneintelligence.worker.platform.ClaimedJob;
 import org.junit.jupiter.api.Test;
@@ -102,6 +103,94 @@ class LinkingRunTest {
             run().run(linkingJob());
 
             assertThat(text("Kopie A.md")).doesNotContain("[[");
+        }
+    }
+
+    // ADR 0012, Stufe 3: die KI entscheidet ueber die Grauzone; Ablehnungen werden nicht erneut gefragt.
+    @org.junit.jupiter.api.Nested
+    class MitKi {
+
+        private final WordEmbedder embedder = new WordEmbedder();
+        private final List<String> asked = new java.util.ArrayList<>();
+        private String answer = "{\"links\": [{\"ziel\": 1, \"sinnvoll\": true, \"beziehung\": \"part_of\", \"anker\": \"Sonnenlicht\"}]}";
+
+        private LinkingRun run() {
+            de.tstieh.stoneintelligence.stoneai.extract.LlmClient llm = new de.tstieh.stoneintelligence.stoneai.extract.LlmClient() {
+                @Override
+                public de.tstieh.stoneintelligence.stoneai.extract.LlmAnswer complete(
+                        de.tstieh.stoneintelligence.stoneai.extract.Tier tier, String system, String user) {
+                    asked.add(user);
+                    return new de.tstieh.stoneintelligence.stoneai.extract.LlmAnswer(answer, 10, "fake");
+                }
+
+                @Override
+                public de.tstieh.stoneintelligence.stoneai.extract.LlmAnswer readImage(byte[] png, String prompt) {
+                    throw new UnsupportedOperationException();
+                }
+            };
+            return new LinkingRun(platform, embedder, new LinkingRun.Thresholds(0.5, 0.99, 0.3), () -> llm);
+        }
+
+        @Test
+        void should_linkWhatTheModelFindsUseful_atTheQuotedWord_withItsRelation() {
+            platform.linkingMode = "AI";
+            platform.human("Photosynthese.md", "# Photosynthese\nChlorophyll wandelt Sonnenlicht Energie Zucker\n", 1);
+            platform.human("Blatt.md", "# Blatt\nChlorophyll wandelt Sonnenlicht Energie Stärke\n", 1);
+
+            run().run(linkingJob());
+
+            assertThat(text("Blatt.md")).contains("[[Photosynthese|Sonnenlicht]]");
+            assertThat(platform.relations).containsEntry("Blatt.md>Photosynthese.md", "part_of");
+        }
+
+        @Test
+        void should_rememberRejections_andNotAskAgainUntilANoteChanges() {
+            platform.linkingMode = "AI";
+            answer = "{\"links\": [{\"ziel\": 1, \"sinnvoll\": false, \"beziehung\": \"related_to\", \"anker\": \"\"}]}";
+            platform.human("Photosynthese.md", "# Photosynthese\nChlorophyll wandelt Sonnenlicht Energie Zucker\n", 1);
+            platform.human("Blatt.md", "# Blatt\nChlorophyll wandelt Sonnenlicht Energie Stärke\n", 1);
+
+            run().run(linkingJob());
+            var afterFirst = asked.size();
+            run().run(linkingJob());
+
+            assertThat(afterFirst).isEqualTo(2);
+            assertThat(asked).as("unchanged notes are not asked again").hasSize(afterFirst);
+            assertThat(text("Blatt.md")).doesNotContain("[[");
+            assertThat(platform.events).contains("reject Blatt.md -> Photosynthese.md");
+
+            var blatt = platform.notes.values().stream().filter(n -> n.path().equals("Blatt.md")).findFirst().orElseThrow();
+            platform.notes.put(blatt.noteId(), new FakePlatform.Stored(blatt.noteId(), "Blatt.md", 1, "tom",
+                "# Blatt\nChlorophyll wandelt Sonnenlicht Energie Stärke Glukose\n"));
+            run().run(linkingJob());
+            assertThat(asked).as("a changed note is asked again").hasSizeGreaterThan(afterFirst);
+        }
+
+        // Ohne Einwilligung der Person, die sie geschrieben hat, geht keine Notiz an den KI-Anbieter.
+        @Test
+        void should_sendOnlyNotesWhoseAuthorsConsented() {
+            platform.linkingMode = "AI";
+            platform.aiConsents.clear();
+            platform.human("Photosynthese.md", "# Photosynthese\nChlorophyll wandelt Sonnenlicht Energie Zucker\n", 1);
+            platform.human("Blatt.md", "# Blatt\nChlorophyll wandelt Sonnenlicht Energie Stärke\n", 1);
+
+            run().run(linkingJob());
+            assertThat(asked).isEmpty();
+
+            platform.aiConsents.add("tom");
+            run().run(linkingJob());
+            assertThat(asked).hasSize(2);
+        }
+
+        @Test
+        void should_notAskTheModelOutsideAiMode() {
+            platform.linkingMode = "SEMANTIC";
+            platform.human("Photosynthese.md", "# Photosynthese\nChlorophyll wandelt Sonnenlicht Energie Zucker\n", 1);
+            platform.human("Blatt.md", "# Blatt\nChlorophyll wandelt Sonnenlicht Energie Stärke\n", 1);
+
+            run().run(linkingJob());
+
+            assertThat(asked).isEmpty();
         }
     }
 }

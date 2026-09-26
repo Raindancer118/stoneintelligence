@@ -76,4 +76,47 @@ public final class FakeAiChangeSetRepository implements AiChangeSetRepository {
                                           de.tstieh.stoneintelligence.domain.id.NoteId target, java.time.Instant at) {
         pairs.add(java.util.List.of(vaultId, source, target));
     }
+
+    private final java.util.Map<java.util.List<Object>, java.util.List<String>> rejections = new java.util.HashMap<>();
+    private final java.util.Map<java.util.List<Object>, LinkRelation> relations = new java.util.HashMap<>();
+
+    @Override
+    public synchronized java.util.Map<de.tstieh.stoneintelligence.domain.id.NoteId, java.util.List<String>> rejectedTargets(
+            de.tstieh.stoneintelligence.domain.id.VaultId vaultId, de.tstieh.stoneintelligence.domain.id.NoteId source) {
+        var result = new java.util.HashMap<de.tstieh.stoneintelligence.domain.id.NoteId, java.util.List<String>>();
+        rejections.forEach((key, hashes) -> {
+            if (key.get(0).equals(vaultId) && key.get(1).equals(source)) {
+                result.put((de.tstieh.stoneintelligence.domain.id.NoteId) key.get(2), hashes);
+            }
+        });
+        return result;
+    }
+
+    @Override
+    public synchronized void rememberRejection(de.tstieh.stoneintelligence.domain.id.VaultId vaultId,
+                                               de.tstieh.stoneintelligence.domain.id.NoteId source,
+                                               de.tstieh.stoneintelligence.domain.id.NoteId target, String sourceHash, String targetHash,
+                                               java.time.Instant at) {
+        rejections.put(java.util.List.of(vaultId, source, target), java.util.List.of(sourceHash, targetHash));
+    }
+
+    @Override
+    public synchronized void rememberRelation(de.tstieh.stoneintelligence.domain.id.VaultId vaultId,
+                                              de.tstieh.stoneintelligence.domain.id.NoteId source,
+                                              de.tstieh.stoneintelligence.domain.id.NoteId target, LinkRelation relation,
+                                              java.util.UUID changeSetId, java.time.Instant at) {
+        relations.put(java.util.List.of(vaultId, source, target), relation);
+    }
+
+    @Override
+    public synchronized java.util.Map<de.tstieh.stoneintelligence.domain.id.NoteId, LinkRelation> relationsFrom(
+            de.tstieh.stoneintelligence.domain.id.VaultId vaultId, de.tstieh.stoneintelligence.domain.id.NoteId source) {
+        var result = new java.util.HashMap<de.tstieh.stoneintelligence.domain.id.NoteId, LinkRelation>();
+        relations.forEach((key, relation) -> {
+            if (key.get(0).equals(vaultId) && key.get(1).equals(source)) {
+                result.put((de.tstieh.stoneintelligence.domain.id.NoteId) key.get(2), relation);
+            }
+        });
+        return result;
+    }
 }

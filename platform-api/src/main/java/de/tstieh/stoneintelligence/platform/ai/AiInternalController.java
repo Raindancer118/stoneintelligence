@@ -119,7 +119,8 @@ public class AiInternalController {
             throw new AiWriteRefusedException("1 bis 200 Links je Notiz");
         }
         var requests = request.links().stream()
-            .map(link -> new AiWriteService.LinkRequest(NoteId.of(link.target()), String.valueOf(link.anchor()), link.allowRelated()))
+            .map(link -> new AiWriteService.LinkRequest(NoteId.of(link.target()), String.valueOf(link.anchor()), link.allowRelated(),
+                link.relation() == null ? null : LinkRelation.of(link.relation())))
             .toList();
         var applied = linking.link(VaultId.of(vaultId), changeSetId, NoteId.of(noteId), requests);
         return new LinksApplied(applied.stream().map(link -> new AppliedLink(link.placement().name(), link.markup())).toList());
@@ -127,8 +128,8 @@ public class AiInternalController {
 
     /** Einstellungen des Vaults fuer den Lauf - der Worker richtet sich nach dem Modus. */
     @GetMapping("/vaults/{vaultId}/linking")
-    public LinkingController.LinkingResponse linkingSettings(@PathVariable String vaultId) {
-        return LinkingController.LinkingResponse.from(linking.internalSettings(VaultId.of(vaultId)));
+    public LinkingController.WorkerLinkingResponse linkingSettings(@PathVariable String vaultId) {
+        return LinkingController.WorkerLinkingResponse.from(linking.internalSettings(VaultId.of(vaultId)));
     }
 
     /** Was schon indiziert ist (Modell, Quelltext-Hash je Notiz) - der Worker rechnet nur Geaendertes neu. */
@@ -163,7 +164,25 @@ public class AiInternalController {
     public record SimilarChunk(String noteId, int chunk, String heading, double similarity) { }
 
     public record LinkNoteRequest(List<ProposedLink> links) { }
-    public record ProposedLink(String target, String anchor, boolean allowRelated) { }
+    public record ProposedLink(String target, String anchor, boolean allowRelated, String relation) { }
+
+    /** Abgelehnte Ziele einer Notiz mit den Text-Hashes zur Zeit der Ablehnung (Stufe 3). */
+    @GetMapping("/vaults/{vaultId}/change-sets/{changeSetId}/notes/{noteId}/rejections")
+    public List<Rejection> rejections(@PathVariable String vaultId, @PathVariable UUID changeSetId, @PathVariable String noteId) {
+        return linking.rejections(VaultId.of(vaultId), changeSetId, NoteId.of(noteId)).entrySet().stream()
+            .map(entry -> new Rejection(entry.getKey().value().toString(), entry.getValue().get(0), entry.getValue().get(1)))
+            .toList();
+    }
+
+    @PostMapping("/vaults/{vaultId}/change-sets/{changeSetId}/notes/{noteId}/rejections")
+    public Rejection reject(@PathVariable String vaultId, @PathVariable UUID changeSetId, @PathVariable String noteId,
+                            @RequestBody Rejection rejection) {
+        linking.reject(VaultId.of(vaultId), changeSetId, NoteId.of(noteId), NoteId.of(rejection.target()), rejection.sourceHash(),
+            rejection.targetHash());
+        return rejection;
+    }
+
+    public record Rejection(String target, String sourceHash, String targetHash) { }
     public record AppliedLink(String placement, String markup) { }
     public record LinksApplied(List<AppliedLink> applied) { }
 
