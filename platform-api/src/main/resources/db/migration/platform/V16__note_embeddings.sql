@@ -4,7 +4,9 @@
 -- Notiztexts, aus dem die Abschnitte stammen - weicht er ab, rechnet der Worker neu; ebenso bei
 -- anderem model. Mit der Notiz verschwinden auch ihre Vektoren (CASCADE: ohne Notiz bedeutungslos).
 -- Die Dimension (384) gehoert zum gepinnten Modell multilingual-e5-small.
-CREATE EXTENSION IF NOT EXISTS vector;
+-- Ausdruecklich nach public: Flyway laeuft mit search_path=platform, die Anwendung mit dem Standard -
+-- sonst laege der Typ vector in platform und jede Abfrage der Anwendung fande ihn nicht.
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
 
 CREATE TABLE platform.note_embeddings (
     note_id       uuid NOT NULL REFERENCES platform.notes(id) ON DELETE CASCADE,
@@ -13,14 +15,14 @@ CREATE TABLE platform.note_embeddings (
     model         text NOT NULL,
     content_hash  text NOT NULL,
     heading       text,
-    embedding     vector(384) NOT NULL,
+    embedding     public.vector(384) NOT NULL,
     updated_at    timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (note_id, chunk)
 );
 
 CREATE INDEX note_embeddings_by_vault ON platform.note_embeddings (vault_id);
-CREATE INDEX note_embeddings_hnsw ON platform.note_embeddings USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX note_embeddings_hnsw ON platform.note_embeddings USING hnsw (embedding public.vector_cosine_ops);
 
 -- Modus: LITERAL (nur woertliche Nennungen, Stufe 1), SEMANTIC (dazu aehnliche Inhalte, lokal),
 -- AI (dazu KI-Pruefung, Stufe 3 - folgt). Bisher stand nur der Standard AI drin, der noch nichts
