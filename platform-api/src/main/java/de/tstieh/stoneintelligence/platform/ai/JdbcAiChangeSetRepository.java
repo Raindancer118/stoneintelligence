@@ -171,4 +171,65 @@ public class JdbcAiChangeSetRepository implements AiChangeSetRepository {
             .param("at", Timestamp.from(at))
             .update();
     }
+
+    @Override
+    public java.util.Map<NoteId, List<String>> rejectedTargets(VaultId vaultId, NoteId source) {
+        var result = new java.util.LinkedHashMap<NoteId, List<String>>();
+        jdbcClient.sql("""
+                SELECT target_note_id, source_hash, target_hash FROM platform.link_rejections
+                WHERE vault_id = :vaultId AND source_note_id = :source
+                """)
+            .param("vaultId", vaultId.value())
+            .param("source", source.value())
+            .query((rs, row) -> java.util.Map.entry(NoteId.of((UUID) rs.getObject("target_note_id")),
+                List.of(rs.getString("source_hash"), rs.getString("target_hash"))))
+            .list()
+            .forEach(entry -> result.put(entry.getKey(), entry.getValue()));
+        return result;
+    }
+
+    @Override
+    public void rememberRejection(VaultId vaultId, NoteId source, NoteId target, String sourceHash, String targetHash, Instant at) {
+        jdbcClient.sql("""
+                INSERT INTO platform.link_rejections (vault_id, source_note_id, target_note_id, source_hash, target_hash, decided_at)
+                VALUES (:vaultId, :source, :target, :sourceHash, :targetHash, :at)
+                ON CONFLICT (source_note_id, target_note_id) DO UPDATE
+                SET source_hash = EXCLUDED.source_hash, target_hash = EXCLUDED.target_hash, decided_at = EXCLUDED.decided_at
+                """)
+            .param("vaultId", vaultId.value())
+            .param("source", source.value())
+            .param("target", target.value())
+            .param("sourceHash", sourceHash)
+            .param("targetHash", targetHash)
+            .param("at", Timestamp.from(at))
+            .update();
+    }
+
+    @Override
+    public void rememberRelation(VaultId vaultId, NoteId source, NoteId target, LinkRelation relation, UUID changeSetId, Instant at) {
+        jdbcClient.sql("""
+                INSERT INTO platform.note_relations (vault_id, source_note_id, target_note_id, relation, change_set_id, created_at)
+                VALUES (:vaultId, :source, :target, :relation, :changeSetId, :at)
+                ON CONFLICT (source_note_id, target_note_id) DO UPDATE SET relation = EXCLUDED.relation
+                """)
+            .param("vaultId", vaultId.value())
+            .param("source", source.value())
+            .param("target", target.value())
+            .param("relation", relation.code())
+            .param("changeSetId", changeSetId)
+            .param("at", Timestamp.from(at))
+            .update();
+    }
+
+    @Override
+    public java.util.Map<NoteId, LinkRelation> relationsFrom(VaultId vaultId, NoteId source) {
+        var result = new java.util.LinkedHashMap<NoteId, LinkRelation>();
+        jdbcClient.sql("SELECT target_note_id, relation FROM platform.note_relations WHERE vault_id = :vaultId AND source_note_id = :source")
+            .param("vaultId", vaultId.value())
+            .param("source", source.value())
+            .query((rs, row) -> java.util.Map.entry(NoteId.of((UUID) rs.getObject("target_note_id")), LinkRelation.of(rs.getString("relation"))))
+            .list()
+            .forEach(entry -> result.put(entry.getKey(), entry.getValue()));
+        return result;
+    }
 }

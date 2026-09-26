@@ -43,6 +43,8 @@ export interface SimilarNote { noteId: string; path: string; heading: string | n
 export interface LinkingSettings {
   enabled: boolean; mode?: LinkingMode; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null;
   requestedBy: string | null; lastRunAt: string | null;
+  /** Meine Einwilligung zur KI-Pruefung eigener Notizen, und wie viele Mitglieder insgesamt eingewilligt haben. */
+  aiConsent?: boolean; aiConsentCount?: number;
 }
 /** Wie viel Kontingent ein KI-Dienst laut letzter Worker-Meldung hat; `exhausted === null` = unbekannt. */
 export interface AiCapacity { service: string; reportedAt: string | null; stale: boolean; exhausted: boolean | null; availableAgainAt: string | null; }
@@ -498,6 +500,11 @@ export class NoteApiClient {
   /** Notizen mit aehnlichem Inhalt - nur solche, die ich lesen darf; leer, solange noch kein Lauf indiziert hat. */
   async similarNotes(vaultId: string, noteId: string, limit = 10): Promise<SimilarNote[]> {
     return this.json<SimilarNote[]>(`/api/v1/vaults/${vaultId}/notes/${noteId}/similar?limit=${limit}`, "failed to find similar notes");
+  }
+
+  /** Eigene Einwilligung (Art. 49 DSGVO), dass Auszuege meiner Notizen bei der KI-geprueften Verlinkung an den Anbieter gehen. */
+  async setLinkingConsent(vaultId: string, consent: boolean): Promise<LinkingSettings> {
+    return this.send<LinkingSettings>("PUT", `/api/v1/vaults/${vaultId}/linking/consent`, "failed to change consent", { consent });
   }
 
   /** "Jetzt verlinken" - im eigenen Namen, braucht Schreibrecht im Vault. */

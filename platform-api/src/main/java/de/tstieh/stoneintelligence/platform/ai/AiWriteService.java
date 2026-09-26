@@ -202,7 +202,11 @@ public class AiWriteService {
     }
 
     /** Ein vorgeschlagener Link: das Ziel und das Wort, an dem er haengen soll ({@code allowRelated}: sonst unter "Verwandt"). */
-    public record LinkRequest(NoteId target, String anchor, boolean allowRelated) {
+    public record LinkRequest(NoteId target, String anchor, boolean allowRelated, LinkRelation relation) {
+
+        public LinkRequest(NoteId target, String anchor, boolean allowRelated) {
+            this(target, anchor, allowRelated, null);
+        }
     }
 
     /**
@@ -232,7 +236,7 @@ public class AiWriteService {
         }
         var max = settings.maxLinksPerNote() == null ? Integer.MAX_VALUE : settings.maxLinksPerNote();
         var applied = new ArrayList<LinkText.Insertion>();
-        var linkedTargets = new ArrayList<NoteId>();
+        var linkedTargets = new ArrayList<LinkRequest>();
         writeWith(note, current -> {
             applied.clear();
             linkedTargets.clear();
@@ -244,13 +248,18 @@ public class AiWriteService {
                 var insertion = LinkText.insert(text, entry.getKey(), entry.getValue().anchor(), entry.getValue().allowRelated());
                 if (insertion.isPresent()) {
                     applied.add(insertion.get());
-                    linkedTargets.add(entry.getValue().target());
+                    linkedTargets.add(entry.getValue());
                     text = insertion.get().text();
                 }
             }
             return text;
         }, service.agent());
-        linkedTargets.forEach(target -> changeSets.rememberLink(vaultId, noteId, target, clock.get()));
+        for (var linked : linkedTargets) {
+            changeSets.rememberLink(vaultId, noteId, linked.target(), clock.get());
+            if (linked.relation() != null) {
+                changeSets.rememberRelation(vaultId, noteId, linked.target(), linked.relation(), changeSetId, clock.get());
+            }
+        }
         if (!applied.isEmpty()) {
             changeSets.addChange(new AiChange(UUID.randomUUID(), changeSetId, noteId, note.path(), AiChange.Kind.LINKED,
                 "", "", clock.get(), applied));

@@ -44,11 +44,14 @@ public class LinkingService {
     private final NoteRepository notes;
     private final AiServiceDirectory services;
     private final NoteEmbeddingRepository embeddings;
+    private final AiChangeSetRepository changeSets;
     private final Supplier<Instant> clock;
 
     public LinkingService(LinkingSettingsRepository settings, AiJobService jobs, AiWriteService ai, VaultAccessGuard access,
-                          NoteRepository notes, AiServiceDirectory services, NoteEmbeddingRepository embeddings, Supplier<Instant> clock) {
+                          NoteRepository notes, AiServiceDirectory services, NoteEmbeddingRepository embeddings,
+                          AiChangeSetRepository changeSets, Supplier<Instant> clock) {
         this.embeddings = embeddings;
+        this.changeSets = changeSets;
         this.settings = settings;
         this.jobs = jobs;
         this.ai = ai;
@@ -74,13 +77,19 @@ public class LinkingService {
         var before = current(vaultId);
         var service = serviceId(change.service() != null ? change.service() : before.service());
         var mode = change.mode() != null ? change.mode() : before.mode();
-        if (mode == LinkingSettings.Mode.AI) {
-            throw new AiWriteRefusedException("Die Prüfung durch eine KI gibt es noch nicht - bitte „wörtlich“ oder „ähnliche Inhalte“ wählen");
-        }
         var next = new LinkingSettings(vaultId, change.enabled(), mode, change.linkHumanNotes(), change.maxLinksPerNote(),
             service, actor, before.lastRunAt(), clock.get());
         settings.save(next);
         return current(vaultId);
+    }
+
+    /**
+     * Einwilligung (Art. 49 Abs. 1 lit. a DSGVO), dass Auszuege eigener Notizen bei der KI-geprueften
+     * Verlinkung an den KI-Anbieter gehen - jede Person nur fuer sich selbst, jederzeit widerrufbar.
+     */
+    public void setAiConsent(VaultId vaultId, String actor, boolean consent) {
+        access.requireMember(vaultId, actor);
+        settings.setAiConsent(vaultId, actor, consent, clock.get());
     }
 
     /** "Jetzt verlinken": im Namen der Person, die es anstoesst - sie braucht Schreibrecht im Vault. */
@@ -168,8 +177,28 @@ public class LinkingService {
         if (!visible.contains(noteId)) {
             throw new AiWriteRefusedException("Diese Notiz gehört nicht zum Lauf");
         }
-        return embeddings.similarTo(vaultId, noteId, Math.max(1, limit) * 3).stream()
-            .filter(similar -> visible.contains(similar.noteId())).limit(Math.max(1, limit)).toList();
+        // Schon einmal verlinkt: nie wieder Kandidat - spart KI-Aufrufe und haelt entfernte Links entfernt.
+        var linked = changeSets.linkedTargets(vaultId, noteId);
+        return embeddings.similarTo(vaultId, noteId, Math.max(1, limit) * 3 + linked.size()).stream()
+            .filter(similar -> visible.contains(similar.noteId()) && !linked.contains(similar.noteId()))
+            .limit(Math.max(1, limit)).toList();
+    }
+
+    /** Abgelehnte Ziele einer Notiz samt den Text-Hashes, auf denen die Ablehnung beruhte. */
+    public java.util.Map<NoteId, List<String>> rejections(VaultId vaultId, UUID changeSetId, NoteId noteId) {
+        if (!visibleToRun(vaultId, changeSetId).contains(noteId)) {
+            throw new AiWriteRefusedException("Diese Notiz gehört nicht zum Lauf");
+        }
+        return changeSets.rejectedTargets(vaultId, noteId);
+    }
+
+    /** Die KI fand den Link nicht sinnvoll - erst wieder fragen, wenn sich eine der Notizen aendert. */
+    public void reject(VaultId vaultId, UUID changeSetId, NoteId source, NoteId target, String sourceHash, String targetHash) {
+        var visible = visibleToRun(vaultId, changeSetId);
+        if (!visible.contains(source) || !visible.contains(target) || sourceHash == null || targetHash == null) {
+            throw new AiWriteRefusedException("Quelle und Ziel müssen zum Lauf gehören, beide Hashes sind Pflicht");
+        }
+        changeSets.rememberRejection(vaultId, source, target, sourceHash, targetHash, clock.get());
     }
 
     /** "Aehnliche Notizen" fuer Menschen: wer die Notiz lesen darf, sieht aehnliche, die er ebenfalls lesen darf. */
@@ -209,7 +238,11 @@ public class LinkingService {
     }
 
     private LinkingSettings current(VaultId vaultId) {
-        return settings.find(vaultId).orElseGet(() -> LinkingSettings.defaults(vaultId, null, clock.get()));
+        // Eine Einwilligung wirkt nur, solange die Person Mitglied ist (Datenschutzerklaerung).
+        var consents = settings.aiConsents(vaultId).stream()
+            .filter(subject -> access.membership(vaultId, subject).isMember())
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        return settings.find(vaultId).orElseGet(() -> LinkingSettings.defaults(vaultId, null, clock.get())).withAiConsents(consents);
     }
 
     private String serviceId(String wanted) {

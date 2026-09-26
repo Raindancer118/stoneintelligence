@@ -120,8 +120,8 @@ public final class PlatformHttpClient implements PlatformApi {
     }
 
     @Override
-    public String linkingMode(String vaultId) {
-        return parse(send(request("/internal/ai/vaults/" + vaultId + "/linking").GET()), new TypeReference<LinkingSettingsRef>() { }).mode();
+    public LinkingSettings linkingSettings(String vaultId) {
+        return parse(send(request("/internal/ai/vaults/" + vaultId + "/linking").GET()), new TypeReference<LinkingSettings>() { });
     }
 
     @Override
@@ -142,6 +142,17 @@ public final class PlatformHttpClient implements PlatformApi {
     public List<SimilarChunk> similar(String vaultId, UUID changeSetId, String noteId, int limit) {
         return parse(send(request(notesPath(vaultId, changeSetId) + "/" + noteId + "/similar?limit=" + limit).GET()),
             new TypeReference<List<SimilarChunk>>() { });
+    }
+
+    @Override
+    public List<Rejection> rejections(String vaultId, UUID changeSetId, String noteId) {
+        return parse(send(request(notesPath(vaultId, changeSetId) + "/" + noteId + "/rejections").GET()),
+            new TypeReference<List<Rejection>>() { });
+    }
+
+    @Override
+    public void reject(String vaultId, UUID changeSetId, String noteId, Rejection rejection) {
+        post(notesPath(vaultId, changeSetId) + "/" + noteId + "/rejections", rejection);
     }
 
     @Override
@@ -224,6 +235,5 @@ public final class PlatformHttpClient implements PlatformApi {
     record NoteRef(String noteId, String path) { }
     record ServiceRef(String id) { }
     record AppliedLink(String placement, String markup) { }
-    record LinkingSettingsRef(String mode) { }
     record LinksApplied(List<AppliedLink> applied) { }
 }

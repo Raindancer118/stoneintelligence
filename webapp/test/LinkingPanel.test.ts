@@ -4,7 +4,7 @@ import LinkingPanel from "../src/lib/components/LinkingPanel.svelte";
 import { api } from "../src/lib/api";
 
 vi.mock("../src/lib/api", async (original) => ({ ...(await original<typeof import("../src/lib/api")>()), api: {
-  linkingSettings: vi.fn(), updateLinking: vi.fn(), runLinking: vi.fn(),
+  linkingSettings: vi.fn(), updateLinking: vi.fn(), runLinking: vi.fn(), setLinkingConsent: vi.fn(),
 } }));
 
 const vault = { id: "vault", name: "Team", createdAt: "" };
@@ -54,5 +54,15 @@ describe("linking panel", () => {
 
     await screen.findByText(/Die Verlinkung läuft/);
     expect(started).toHaveBeenCalled();
+  });
+  it("lets every member consent for their own notes when the AI checks links", async () => {
+    vi.mocked(api.linkingSettings).mockResolvedValue({ ...off, mode: "AI", aiConsent: false, aiConsentCount: 1 });
+    vi.mocked(api.setLinkingConsent).mockResolvedValue({ ...off, mode: "AI", aiConsent: true, aiConsentCount: 2 });
+    render(LinkingPanel, { vault, permissions: ["READ"] });
+
+    await fireEvent.click(await screen.findByLabelText(/Meine Notizen dürfen zur KI-Prüfung/));
+
+    await screen.findByText("Deine Notizen dürfen jetzt zur KI-Prüfung.");
+    expect(api.setLinkingConsent).toHaveBeenCalledWith("vault", true);
   });
 });

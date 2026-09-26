@@ -84,8 +84,8 @@ public class AiConfig {
     @Bean
     public LinkingService linkingService(LinkingSettingsRepository settings, AiJobService jobs, @Lazy AiWriteService ai,
                                          VaultAccessGuard access, NoteRepository notes, AiServiceDirectory services,
-                                         NoteEmbeddingRepository embeddings) {
-        return new LinkingService(settings, jobs, ai, access, notes, services, embeddings, Instant::now);
+                                         NoteEmbeddingRepository embeddings, AiChangeSetRepository changeSets) {
+        return new LinkingService(settings, jobs, ai, access, notes, services, embeddings, changeSets, Instant::now);
     }
 
     @Bean

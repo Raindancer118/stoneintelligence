@@ -34,4 +34,21 @@ public final class FakeLinkingSettingsRepository implements LinkingSettingsRepos
         settings.computeIfPresent(vaultId, (id, s) -> new LinkingSettings(id, s.enabled(), s.mode(), s.linkHumanNotes(),
             s.maxLinksPerNote(), s.service(), s.requestedBy(), at, s.updatedAt()));
     }
+
+    private final Map<VaultId, java.util.Set<String>> consents = new ConcurrentHashMap<>();
+
+    @Override
+    public java.util.Set<String> aiConsents(VaultId vaultId) {
+        return java.util.Set.copyOf(consents.getOrDefault(vaultId, java.util.Set.of()));
+    }
+
+    @Override
+    public void setAiConsent(VaultId vaultId, String subject, boolean consent, Instant at) {
+        var current = consents.computeIfAbsent(vaultId, id -> ConcurrentHashMap.newKeySet());
+        if (consent) {
+            current.add(subject);
+        } else {
+            current.remove(subject);
+        }
+    }
 }

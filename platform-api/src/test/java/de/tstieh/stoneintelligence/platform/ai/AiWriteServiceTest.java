@@ -154,6 +154,17 @@ class AiWriteServiceTest {
         }
 
         @Test
+        void should_rememberWhatKindOfRelationALinkExpresses() {
+            var target = humanNote("Photosynthese.md", "# Photosynthese\n");
+            var source = humanNote("Chlorophyll.md", "Chlorophyll ermöglicht die Photosynthese.\n");
+
+            service.linkNote(vaultId, newChangeSet().id(), source,
+                List.of(new AiWriteService.LinkRequest(target, "Photosynthese", true, LinkRelation.PART_OF)), linking(true, null));
+
+            assertThat(changeSets.relationsFrom(vaultId, source)).containsEntry(target, LinkRelation.PART_OF);
+        }
+
+        @Test
         void should_notRecordAnything_whenTheNoteAlreadyLinksThere() {
             var changeSet = newChangeSet();
             var target = humanNote("Licht.md", "# Licht\n");

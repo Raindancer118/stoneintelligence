@@ -71,4 +71,26 @@ public class JdbcLinkingSettingsRepository implements LinkingSettingsRepository 
             (Integer) rs.getObject("max_links_per_note"), rs.getString("service"), rs.getString("requested_by"),
             lastRun == null ? null : lastRun.toInstant(), rs.getTimestamp("updated_at").toInstant());
     }
+
+    @Override
+    public java.util.Set<String> aiConsents(VaultId vaultId) {
+        return java.util.Set.copyOf(jdbcClient.sql("SELECT subject FROM platform.linking_ai_consents WHERE vault_id = :vaultId")
+            .param("vaultId", vaultId.value())
+            .query(String.class)
+            .list());
+    }
+
+    @Override
+    public void setAiConsent(VaultId vaultId, String subject, boolean consent, Instant at) {
+        if (consent) {
+            jdbcClient.sql("""
+                    INSERT INTO platform.linking_ai_consents (vault_id, subject, consented_at) VALUES (:vaultId, :subject, :at)
+                    ON CONFLICT (vault_id, subject) DO NOTHING
+                    """)
+                .param("vaultId", vaultId.value()).param("subject", subject).param("at", Timestamp.from(at)).update();
+        } else {
+            jdbcClient.sql("DELETE FROM platform.linking_ai_consents WHERE vault_id = :vaultId AND subject = :subject")
+                .param("vaultId", vaultId.value()).param("subject", subject).update();
+        }
+    }
 }

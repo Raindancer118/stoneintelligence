@@ -327,4 +327,41 @@ class AiEndToEndIT {
         assertThat(ok(send("GET", internal + "/notes/" + pflanzen.get("noteId"), WORKER, null)))
             .containsEntry("text", "Pflanzen brauchen Licht.\n");
     }
+
+    // ADR 0012, Stufen 2 und 3 ueber echtes HTTP und Postgres mit pgvector.
+    @Test
+    void should_indexSimilarNotes_judgeThem_andAskForConsent() throws Exception {
+        var anna = user("ai-erna");
+        var vault = ok(send("POST", "/api/v1/vaults", anna, Map.of("name", "Stufe 3")));
+        var base = "/api/v1/vaults/" + vault.get("id");
+        assertThat(ok(send("PUT", base + "/linking", anna, Map.of("enabled", true, "linkHumanNotes", true, "service", "lokal", "mode", "AI"))))
+            .containsEntry("mode", "AI").containsEntry("aiConsent", false).containsEntry("aiConsentCount", 0);
+        assertThat(ok(send("PUT", base + "/linking/consent", anna, Map.of("consent", true))))
+            .containsEntry("aiConsent", true).containsEntry("aiConsentCount", 1);
+
+        ok(send("POST", base + "/linking/run", anna, null));
+        var run = ok(send("POST", "/internal/ai/jobs/claim", WORKER, null));
+        var internal = "/internal/ai/vaults/" + vault.get("id") + "/change-sets/" + run.get("changeSetId");
+        assertThat(ok(send("GET", "/internal/ai/vaults/" + vault.get("id") + "/linking", WORKER, null)).toString())
+            .contains("mode=AI").contains("ai-erna");
+        var a = ok(send("POST", internal + "/notes", WORKER, Map.of("path", "A.md", "text", "# A\n", "level", 1)));
+        var b = ok(send("POST", internal + "/notes", WORKER, Map.of("path", "B.md", "text", "# B\n", "level", 1)));
+        var vector = new float[384];
+        vector[3] = 1;
+        for (var note : List.of(a, b)) {
+            assertThat(send("PUT", internal + "/notes/" + note.get("noteId") + "/embeddings", WORKER,
+                Map.of("model", "m", "contentHash", "h", "chunks", List.of(Map.of("index", 0, "heading", "A", "vector", vector)))).statusCode())
+                .isEqualTo(200);
+        }
+        assertThat(okList(send("GET", internal + "/embeddings", WORKER, null))).hasSize(2);
+        assertThat(okList(send("GET", internal + "/notes/" + a.get("noteId") + "/similar", WORKER, null)))
+            .singleElement().satisfies(similar -> assertThat(similar).containsEntry("noteId", b.get("noteId")));
+        assertThat(okList(send("GET", base + "/notes/" + a.get("noteId") + "/similar", anna, null))).hasSize(1);
+
+        ok(send("POST", internal + "/notes/" + a.get("noteId") + "/rejections", WORKER,
+            Map.of("target", b.get("noteId"), "sourceHash", "s1", "targetHash", "t1")));
+        assertThat(okList(send("GET", internal + "/notes/" + a.get("noteId") + "/rejections", WORKER, null)))
+            .singleElement().satisfies(rejection -> assertThat(rejection).containsEntry("sourceHash", "s1"));
+        ok(send("POST", "/internal/ai/jobs/" + run.get("jobId") + "/complete", WORKER, null));
+    }
 }

@@ -52,7 +52,14 @@
       <li><strong>Google</strong> (Gemini-API; Google LLC, USA).</li>
     </ul>
     <p>Dabei werden Daten in die USA übermittelt. Für dieses Land besteht nur für nach dem EU-U.S. Data Privacy Framework zertifizierte Unternehmen ein Angemessenheitsbeschluss; ob ein Anbieter zertifiziert ist, kann sich ändern. Die Übermittlung erfolgt deshalb auf Grundlage deiner ausdrücklichen Einwilligung, die du vor jedem Hochladen erteilst (Art. 49 Abs. 1 lit. a DSGVO). Risiko: Behörden in den USA könnten auf die Daten zugreifen, ohne dass dir dieselben Rechtsbehelfe wie in der EU offenstehen. <strong>Je nach Vertragsstufe dürfen die Anbieter übermittelte Inhalte auch zur Verbesserung ihrer Dienste verwenden und von Menschen prüfen lassen.</strong> Lies deshalb keine Dokumente mit vertraulichen Inhalten oder personenbezogenen Daten anderer ein.</p>
-    <p>Die KI verändert keine von Menschen angelegten Notizen; jede Verarbeitung lässt sich im Reiter „KI-Wissen" vollständig rückgängig machen. Es findet keine automatisierte Entscheidung im Sinne von Art. 22 DSGVO statt.</p>
+    <p>Jede Verarbeitung lässt sich im Reiter „KI-Wissen" vollständig rückgängig machen. Es findet keine automatisierte Entscheidung im Sinne von Art. 22 DSGVO statt.</p>
+
+    <h3>Verlinkung von Notizen</h3>
+    <p>Verwaltende eines Vaults können die nächtliche Verlinkung einschalten (standardmäßig aus). Sie fügt in Notizen – auch in von Menschen geschriebene, sofern der Vault das erlaubt – Links auf andere Notizen ein; der übrige Text bleibt unverändert, jeder Lauf lässt sich rückgängig machen.</p>
+    <ul>
+      <li><strong>Wörtliche Nennungen und ähnliche Inhalte</strong> werden ausschließlich auf unserem Server berechnet. Für die Ähnlichkeit werden aus den Notizen mit einem lokal betriebenen Sprachmodell Zahlenvektoren gebildet und gespeichert; sie werden mit der Notiz gelöscht. Dabei werden keine Daten an Dritte übermittelt (Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO, die von dir gewünschte Funktion des Vaults).</li>
+      <li><strong>„Von einer KI geprüft"</strong> (nur, wenn die Verwaltenden diesen Modus wählen): Dann gehen nachts Auszüge ähnlicher Notizen an den oben genannten KI-Anbieter, der beurteilt, ob ein Link sinnvoll ist. Das betrifft nur Notizen von Personen, die dem für ihre eigenen Notizen ausdrücklich zugestimmt haben (Art. 49 Abs. 1 lit. a DSGVO), und von der KI erzeugte Notizen. Die Einwilligung gibst und widerrufst du jederzeit in den Einstellungen der Verlinkung; ein Widerruf wirkt ab dem nächsten Lauf. Für die Übermittlung in die USA gilt das oben Gesagte.</li>
+    </ul>
   </section>
 
   <section>
@@ -60,6 +67,7 @@
     <ul>
       <li>Notizen, Dateien und Ordner: bis sie gelöscht werden oder der Vault aufgelöst wird. Ersetzte Fassungen von Dateien und die Inhalte gelöschter Dateien werden nach 24 Stunden entfernt.</li>
       <li>Zum Einlesen hochgeladene Dokumente: bis die Verarbeitung abgeschlossen ist; Angaben zur Verarbeitung und die Aufzeichnung der KI-Änderungen (für „Rückgängig"): 90 Tage.</li>
+      <li>Ähnlichkeitsvektoren, gesetzte und abgelehnte Verknüpfungen: solange die beteiligten Notizen bestehen; Einwilligungen zur KI-Prüfung: bis zum Widerruf; sie wirken nur, solange du Mitglied des Vaults bist.</li>
       <li>Einladungen: 30 Tage nach Annahme, Widerruf oder Ablauf.</li>
       <li>Änderungsprotokoll: solange der Vault besteht.</li>
       <li>Technische Zugriffsdaten: werden fortlaufend überschrieben.</li>
@@ -69,7 +77,7 @@
 
   <section>
     <h2>8. Empfänger</h2>
-    <p>Mitglieder eines Vaults sehen dessen Inhalte im Rahmen ihrer Rechte. Darüber hinaus erhalten nur die oben genannten Dienstleister Daten (Hetzner als Auftragsverarbeiter, KI-Anbieter nur auf deine Anforderung). Eine Weitergabe an sonstige Dritte findet nicht statt.</p>
+    <p>Mitglieder eines Vaults sehen dessen Inhalte im Rahmen ihrer Rechte. Darüber hinaus erhalten nur die oben genannten Dienstleister Daten (Hetzner als Auftragsverarbeiter, KI-Anbieter nur auf deine Anforderung bzw. mit deiner Einwilligung). Eine Weitergabe an sonstige Dritte findet nicht statt.</p>
   </section>
 
   <section>
