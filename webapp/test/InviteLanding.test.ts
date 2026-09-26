@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import InviteLanding from "../src/lib/components/InviteLanding.svelte";
 import { api } from "../src/lib/api";
-vi.mock("../src/lib/api", () => ({ api: { describeInvitation: vi.fn(), acceptInvitation: vi.fn() } }));
+vi.mock("../src/lib/api", async (original) => ({ ...(await original<typeof import("../src/lib/api")>()), api: { describeInvitation: vi.fn(), acceptInvitation: vi.fn() } }));
 const pending = {
   state: "PENDING", vaultName: "Team-Notizen", invitedBy: "tom", maskedEmail: "n***@example.org", access: "EDIT",
   expiresAt: "2026-10-07T10:00:00Z", enrollmentUrl: "https://portal.example/if/flow/x/?itoken=1",
