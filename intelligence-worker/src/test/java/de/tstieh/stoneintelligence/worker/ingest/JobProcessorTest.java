@@ -153,8 +153,10 @@ class JobProcessorTest {
 
         processor(llm).process(job("Skript.md", skript.toString()));
 
-        // Four sections start together (llm.parallelCalls), then the budget is spent.
-        assertThat(platform.events).anySatisfy(event -> assertThat(event).startsWith("progress 100").contains("nicht verarbeitet").contains("Teil 6"));
+        // Wie viele Abschnitte vor dem Ende des Budgets noch starten, haengt von der Parallelitaet
+        // (llm.parallelCalls) und damit vom Rechner ab - fest steht nur, dass die ungelesenen genannt werden.
+        assertThat(platform.events).anySatisfy(event -> assertThat(event).startsWith("progress 100").contains("nicht verarbeitet")
+            .containsPattern("Skript — Teil \\d"));
         assertThat(platform.events).last().isEqualTo("complete");
     }
 
