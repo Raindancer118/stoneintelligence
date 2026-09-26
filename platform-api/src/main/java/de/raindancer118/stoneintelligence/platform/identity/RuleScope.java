@@ -1,6 +1,6 @@
 package de.raindancer118.stoneintelligence.platform.identity;
 
-/** Wer eine {@link PathRule}/Themen-ACL betrifft - "Jeder" oder ein konkretes Subject. */
+/** Wer eine Themen-ACL ({@link TopicRule}) betrifft - "Jeder" oder ein konkretes Subject. */
 public sealed interface RuleScope {
 
     record Everyone() implements RuleScope {

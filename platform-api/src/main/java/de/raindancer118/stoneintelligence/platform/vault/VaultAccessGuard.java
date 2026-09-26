@@ -1,56 +1,89 @@
 package de.raindancer118.stoneintelligence.platform.vault;
 
+import java.util.List;
+import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
+import de.raindancer118.stoneintelligence.platform.identity.AccessGrantRepository;
+import de.raindancer118.stoneintelligence.platform.identity.AccessResolver;
 import de.raindancer118.stoneintelligence.platform.identity.AuthorizationRepository;
+import de.raindancer118.stoneintelligence.platform.identity.EffectiveAccess;
+import de.raindancer118.stoneintelligence.platform.identity.Membership;
 import de.raindancer118.stoneintelligence.platform.identity.Permission;
-import de.raindancer118.stoneintelligence.platform.identity.PathRules;
-import de.raindancer118.stoneintelligence.platform.identity.RuleEffect;
 import org.springframework.stereotype.Component;
 
 /**
- * Setzt die in ADR 0006 (Punkt 6) als "expliziter naechster Schritt, kein optionales Feature"
- * markierte scharfe Durchsetzung von {@code AuthorizationRepository.effectivePermissions} und
- * {@link PathRules} tatsaechlich als Vorbedingung um. {@code TopicRules} bleibt unverdrahtet -
- * {@link Note} traegt (noch) keine Themen-Zuordnung, dafuer fehlt das Datenmodell.
+ * Die eine Stelle, an der entschieden wird, wer was darf (ADR 0006, ADR 0011): Vault-Rechte aus
+ * Gruppen und Rollen, verfeinert durch Freigaben je Ordner und Eintrag ({@link AccessResolver}).
+ *
+ * <p>Zwei Ebenen: {@link #require(VaultId, String, Permission)} prueft ein Vault-Recht (etwa
+ * {@link Permission#MANAGE} fuer die Verwaltung), die Varianten mit Pfad pruefen genau diese
+ * Stelle - dort kann eine Freigabe mehr erlauben als die Vault-Rolle (eine einzelne Notiz
+ * bearbeiten) oder weniger (einen Ordner ausblenden). Auflistungen verlangen deshalb nur
+ * Mitgliedschaft ({@link #requireMember}) und filtern dann je Eintrag. {@code TopicRules} bleibt
+ * unverdrahtet - {@link Note} traegt (noch) keine Themen.
  */
 @Component
 public class VaultAccessGuard {
 
     private final AuthorizationRepository authorization;
+    private final AccessGrantRepository grants;
 
-    public VaultAccessGuard(AuthorizationRepository authorization) {
+    public VaultAccessGuard(AuthorizationRepository authorization, AccessGrantRepository grants) {
         this.authorization = authorization;
+        this.grants = grants;
     }
 
+    public Membership membership(VaultId vaultId, String actor) {
+        return authorization.membership(vaultId, actor);
+    }
+
+    /** Vault-Recht aus den Rollen, unabhaengig von Freigaben (Verwaltung, KI-Auftraege, ...). */
     public void require(VaultId vaultId, String actor, Permission permission) {
         if (!authorization.effectivePermissions(vaultId, actor).contains(permission)) {
             throw new ForbiddenException(actor + " lacks " + permission + " in vault " + vaultId.value());
         }
     }
 
-    public void requireReadablePaths(VaultId vaultId, String actor, java.util.List<String> paths) {
-        var rules = authorization.listPathRules(vaultId);
-        if (paths.stream().anyMatch(path -> PathRules.resolve(rules, path, actor) == RuleEffect.DENY)) {
-            throw new ForbiddenException("audit contains a denied path");
+    /** Mitglied des Vaults, egal mit welchen Rechten - Voraussetzung fuer jede Auflistung. */
+    public void requireMember(VaultId vaultId, String actor) {
+        if (!membership(vaultId, actor).isMember()) {
+            throw new ForbiddenException(actor + " is no member of vault " + vaultId.value());
         }
     }
 
-    public java.util.List<Note> readableNotes(VaultId vaultId, String actor, java.util.List<Note> notes) {
-        var rules = authorization.listPathRules(vaultId);
-        return notes.stream().filter(note -> PathRules.resolve(rules, note.path(), actor) != RuleEffect.DENY).toList();
-    }
-
-    /** Nur die Pfade, die {@code actor} sehen darf; {@code asRulePath} bildet z. B. Ordner auf {@code <ordner>/} ab. */
-    public java.util.List<String> readablePaths(VaultId vaultId, String actor, java.util.List<String> paths,
-                                                java.util.function.UnaryOperator<String> asRulePath) {
-        var rules = authorization.listPathRules(vaultId);
-        return paths.stream().filter(path -> PathRules.resolve(rules, asRulePath.apply(path), actor) != RuleEffect.DENY).toList();
+    /** Was {@code actor} an diesem Pfad darf; ein abschliessendes {@code /} meint den Ordner selbst. */
+    public EffectiveAccess accessAt(VaultId vaultId, String actor, String path) {
+        return AccessResolver.resolve(membership(vaultId, actor), grants.list(vaultId), path);
     }
 
     public void require(VaultId vaultId, String actor, Permission permission, String path) {
-        require(vaultId, actor, permission);
-        if (PathRules.resolve(authorization.listPathRules(vaultId), path, actor) == RuleEffect.DENY) {
-            throw new ForbiddenException(actor + " is denied path '" + path + "' in vault " + vaultId.value());
+        if (!accessAt(vaultId, actor, path).allows(permission)) {
+            throw new ForbiddenException(actor + " lacks " + permission + " on '" + path + "' in vault " + vaultId.value());
         }
+    }
+
+    public void requireReadablePaths(VaultId vaultId, String actor, List<String> paths) {
+        if (!paths.stream().allMatch(reader(vaultId, actor))) {
+            throw new ForbiddenException("audit contains a path " + actor + " may not read");
+        }
+    }
+
+    public List<Note> readableNotes(VaultId vaultId, String actor, List<Note> notes) {
+        var mayRead = reader(vaultId, actor);
+        return notes.stream().filter(note -> mayRead.test(note.path())).toList();
+    }
+
+    /** Nur die Pfade, die {@code actor} sehen darf; {@code asRulePath} bildet z. B. Ordner auf {@code <ordner>/} ab. */
+    public List<String> readablePaths(VaultId vaultId, String actor, List<String> paths, UnaryOperator<String> asRulePath) {
+        var mayRead = reader(vaultId, actor);
+        return paths.stream().filter(path -> mayRead.test(asRulePath.apply(path))).toList();
+    }
+
+    /** Laedt Mitgliedschaft und Freigaben einmal und prueft dann beliebig viele Pfade. */
+    private Predicate<String> reader(VaultId vaultId, String actor) {
+        var who = membership(vaultId, actor);
+        var vaultGrants = grants.list(vaultId);
+        return path -> AccessResolver.resolve(who, vaultGrants, path).allows(Permission.READ);
     }
 }

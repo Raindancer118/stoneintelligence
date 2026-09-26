@@ -49,6 +49,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     private final Set<String> contentUpdateSessions = ConcurrentHashMap.newKeySet();
     private final Set<String> folderEventSessions = ConcurrentHashMap.newKeySet();
     private final Set<String> fileEventSessions = ConcurrentHashMap.newKeySet();
+    private final Set<String> accessEventSessions = ConcurrentHashMap.newKeySet();
     /**
      * Pro Session die gejointen Notizen, fuer die der Actor zusaetzlich {@link Permission#WRITE}
      * hat - getrennt von {@link #joinedNotesBySession} (das nur READ voraussetzt), weil sonst
@@ -92,6 +93,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             case SyncFrame.TYPE_SUBSCRIBE_CONTENT_UPDATES -> contentUpdateSessions.add(session.getId());
             case SyncFrame.TYPE_SUBSCRIBE_FOLDER_EVENTS -> folderEventSessions.add(session.getId());
             case SyncFrame.TYPE_SUBSCRIBE_FILE_EVENTS -> fileEventSessions.add(session.getId());
+            case SyncFrame.TYPE_SUBSCRIBE_ACCESS_EVENTS -> accessEventSessions.add(session.getId());
             case SyncFrame.TYPE_AWARENESS -> {
                 if (hasJoined(session, frame.noteId())) {
                     relay.onAwarenessUpdate(frame.noteId(), syncSession, frame.payload());
@@ -175,6 +177,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         contentUpdateSessions.remove(session.getId());
         folderEventSessions.remove(session.getId());
         fileEventSessions.remove(session.getId());
+        accessEventSessions.remove(session.getId());
         var joined = joinedNotesBySession.remove(session.getId());
         if (joined == null) {
             return;
@@ -287,6 +290,37 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         @Override
         public void sendVaultEvent(byte messageType, NoteId noteId, String path) {
             send(messageType, noteId, path.getBytes(StandardCharsets.UTF_8));
+        }
+
+        /**
+         * Gejointe Notizen gegen die neuen Rechte pruefen: ohne Leserecht verlaesst die Verbindung
+         * den Raum (keine Updates mehr), das Schreibrecht wird neu vermerkt. Aeltere Plugins
+         * bekommen keinen Frame - ihre Schreibversuche werden ohnehin verworfen.
+         */
+        @Override
+        public void accessChanged() {
+            var vaultId = vaultIdOf(session);
+            var actor = actorOf(session);
+            var joined = joinedNotesBySession.get(session.getId());
+            var writable = writableNotesBySession.get(session.getId());
+            if (joined != null && writable != null) {
+                for (var noteId : Set.copyOf(joined)) {
+                    var path = notes.findById(vaultId, noteId).map(Note::path);
+                    var now = path.map(p -> access.accessAt(vaultId, actor, p));
+                    if (now.isEmpty() || !now.get().allows(Permission.READ)) {
+                        joined.remove(noteId);
+                        writable.remove(noteId);
+                        relay.onLeave(noteId, this);
+                    } else if (now.get().allows(Permission.WRITE)) {
+                        writable.add(noteId);
+                    } else {
+                        writable.remove(noteId);
+                    }
+                }
+            }
+            if (accessEventSessions.contains(session.getId())) {
+                send(SyncFrame.TYPE_VAULT_ACCESS_CHANGED, SyncFrame.NO_NOTE, new byte[0]);
+            }
         }
 
 

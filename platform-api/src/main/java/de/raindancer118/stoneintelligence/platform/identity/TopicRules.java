@@ -5,7 +5,7 @@ import java.util.Set;
 
 /**
  * Praezedenzlogik fuer themen-/tag-basierte Sichteinschraenkungen (Plan.md Abschnitt 4.4a):
- * pro Thema gewinnt eine Nutzer-Regel gegen eine Jeder-Regel (analog {@link PathRules}). Eine
+ * pro Thema gewinnt eine Nutzer-Regel gegen eine Jeder-Regel (analog zu den Freigaben, s. {@link AccessResolver}). Eine
  * Note kann mehrere Themen tragen - traegt eine Note mehrere und ergeben diese widerspruechliche
  * Effekte, gewinnt die restriktivste Einzelentscheidung (eine verbotene Themen-Zuordnung darf
  * nicht durch eine erlaubte "weggestimmt" werden). Diese Kombinationsregel ist eine bewusste

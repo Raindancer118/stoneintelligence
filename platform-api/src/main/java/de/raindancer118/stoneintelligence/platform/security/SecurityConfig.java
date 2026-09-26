@@ -24,7 +24,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *
  * <p>Der Principal-Name wird bewusst NICHT auf den JWT-{@code sub}-Claim (eine UUID bei
  * Authentik) gemappt, sondern auf {@code preferred_username} - das ist derselbe Subject-String,
- * den {@code AuthorizationRepository}/{@code PathRules} schon vorher fuer Rollen/Gruppen/ACLs
+ * den {@code AuthorizationRepository} und die Freigaben schon vorher fuer Rollen/Gruppen/ACLs
  * verwendet haben (z. B. "tom"), damit bestehende Zuordnungen ohne Migration gueltig bleiben.
  *
  * <p>{@code /ws/sync} bleibt bewusst von der OIDC-Pflicht ausgenommen: der WebSocket-Handshake

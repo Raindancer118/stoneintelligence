@@ -92,6 +92,22 @@ public class VaultAnnouncementService {
     }
 
     /**
+     * Rechte haben sich geaendert (ADR 0011). Wie alle Ankuendigungen erst nach dem Commit, sonst
+     * pruefte eine Verbindung noch gegen den alten Stand.
+     */
+    public void announceAccessChanged(VaultId vaultId) {
+        afterCommit(() -> {
+            for (var subscriber : subscribers.getOrDefault(vaultId, Set.of())) {
+                try {
+                    subscriber.accessChanged();
+                } catch (SyncSessionSendException failedSend) {
+                    unsubscribe(vaultId, subscriber);
+                }
+            }
+        });
+    }
+
+    /**
      * Zustellung je Empfaenger einzeln abgesichert - dieselbe Lehre wie bei
      * {@link SyncRoomRegistry#broadcastExcept}: eine bereits tote, aber noch nicht abgeraeumte
      * Verbindung darf die Ankuendigung an alle nachfolgenden, gesunden Geraete nicht abbrechen,
@@ -127,17 +143,21 @@ public class VaultAnnouncementService {
      * JOIN wurde still verworfen und die Verbindung wartete bis zum Timeout.
      */
     private void announce(VaultId vaultId, byte messageType, NoteId noteId, String path, NoteKind kind) {
+        afterCommit(() -> sendNow(vaultId, messageType, noteId, path, kind));
+    }
+
+    private static void afterCommit(Runnable action) {
         if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
             org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
                 new org.springframework.transaction.support.TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
-                        sendNow(vaultId, messageType, noteId, path, kind);
+                        action.run();
                     }
                 });
             return;
         }
-        sendNow(vaultId, messageType, noteId, path, kind);
+        action.run();
     }
 
     private void sendNow(VaultId vaultId, byte messageType, NoteId noteId, String path, NoteKind kind) {

@@ -234,12 +234,6 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
         return "USER".equals(scopeType) ? RuleScope.user(scopeSubject) : RuleScope.everyone();
     }
 
-    private static final RowMapper<PathRule> PATH_RULE_MAPPER = (rs, rowNum) -> new PathRule(
-        rs.getString("path_prefix"),
-        scopeOf(rs.getString("scope_type"), rs.getString("scope_subject")),
-        RuleEffect.valueOf(rs.getString("effect"))
-    );
-
     private static final RowMapper<TopicRule> TOPIC_RULE_MAPPER = (rs, rowNum) -> new TopicRule(
         rs.getString("topic"),
         scopeOf(rs.getString("scope_type"), rs.getString("scope_subject")),
@@ -247,26 +241,77 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
     );
 
     @Override
-    public PathRule createPathRule(VaultId vaultId, String pathPrefix, RuleScope scope, RuleEffect effect) {
+    public Membership membership(VaultId vaultId, String subject) {
+        var groupIds = new java.util.LinkedHashSet<UUID>();
+        var permissions = java.util.EnumSet.noneOf(Permission.class);
         jdbcClient.sql("""
-                INSERT INTO platform.path_rules (vault_id, path_prefix, scope_type, scope_subject, effect)
-                VALUES (:vaultId, :pathPrefix, :scopeType, :scopeSubject, :effect)
+                SELECT gm.group_id, rp.permission
+                FROM platform.group_members gm
+                JOIN platform.groups g ON g.id = gm.group_id AND g.vault_id = :vaultId
+                LEFT JOIN platform.group_roles gr ON gr.group_id = g.id
+                LEFT JOIN platform.roles r ON r.id = gr.role_id AND r.vault_id = :vaultId
+                LEFT JOIN platform.role_permissions rp ON rp.role_id = r.id
+                WHERE gm.subject = :subject
                 """)
             .param("vaultId", vaultId.value())
-            .param("pathPrefix", pathPrefix)
-            .param("scopeType", scopeTypeOf(scope))
-            .param("scopeSubject", scopeSubjectOf(scope))
-            .param("effect", effect.name())
-            .update();
-        return new PathRule(pathPrefix, scope, effect);
+            .param("subject", subject)
+            .query((rs, rowNum) -> {
+                groupIds.add((UUID) rs.getObject("group_id"));
+                var permission = rs.getString("permission");
+                if (permission != null) {
+                    permissions.add(Permission.valueOf(permission));
+                }
+                return null;
+            })
+            .list();
+        return new Membership(subject, groupIds, permissions);
     }
 
     @Override
-    public List<PathRule> listPathRules(VaultId vaultId) {
-        return jdbcClient.sql("SELECT * FROM platform.path_rules WHERE vault_id = :vaultId ORDER BY id")
+    public boolean roleBelongsToVault(UUID roleId, VaultId vaultId) {
+        return jdbcClient.sql("SELECT EXISTS (SELECT 1 FROM platform.roles WHERE id = :roleId AND vault_id = :vaultId)")
+            .param("roleId", roleId)
             .param("vaultId", vaultId.value())
-            .query(PATH_RULE_MAPPER)
-            .list();
+            .query(Boolean.class)
+            .single();
+    }
+
+    @Override
+    public void renameRole(UUID roleId, String name) {
+        jdbcClient.sql("UPDATE platform.roles SET name = :name WHERE id = :roleId")
+            .param("roleId", roleId)
+            .param("name", name)
+            .update();
+    }
+
+    @Override
+    @Transactional
+    public void setRolePermissions(UUID roleId, Set<Permission> permissions) {
+        jdbcClient.sql("DELETE FROM platform.role_permissions WHERE role_id = :roleId").param("roleId", roleId).update();
+        for (var permission : permissions) {
+            jdbcClient.sql("INSERT INTO platform.role_permissions (role_id, permission) VALUES (:roleId, :permission)")
+                .param("roleId", roleId)
+                .param("permission", permission.name())
+                .update();
+        }
+    }
+
+    @Override
+    public void deleteRole(UUID roleId) {
+        jdbcClient.sql("DELETE FROM platform.roles WHERE id = :roleId").param("roleId", roleId).update();
+    }
+
+    @Override
+    public void renameGroup(UUID groupId, String name) {
+        jdbcClient.sql("UPDATE platform.groups SET name = :name WHERE id = :groupId")
+            .param("groupId", groupId)
+            .param("name", name)
+            .update();
+    }
+
+    @Override
+    public void deleteGroup(UUID groupId) {
+        jdbcClient.sql("DELETE FROM platform.groups WHERE id = :groupId").param("groupId", groupId).update();
     }
 
     @Override

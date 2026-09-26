@@ -55,7 +55,7 @@ class FileServiceTest {
     @BeforeEach
     void setUp() {
         blobs = new FileSystemBlobStore(storage);
-        files = new FileService(notes, versions, blobs, new FolderRegistry(folderRepository, announcements), announcements,
+        files = new FileService(notes, versions, blobs, new FolderRegistry(folderRepository, announcements, new de.raindancer118.stoneintelligence.platform.identity.FakeAccessGrantRepository(notes)), announcements,
             (vault, note, actor, action, payload) -> audit.add(actor + " " + action), new FileLimits(1000, 2500), now::get);
         announcements.subscribe(vaultId, subscriber(fileAware, true));
         announcements.subscribe(vaultId, subscriber(older, false));
@@ -160,7 +160,7 @@ class FileServiceTest {
         files.upload(vaultId, gone.id(), 0, bytes("gelöscht"), "application/pdf", "tom");
         notes.delete(vaultId, gone.id(), "op-1", "tom");
         for (var path : java.nio.file.Files.walk(storage).filter(java.nio.file.Files::isRegularFile).toList()) {
-            java.nio.file.Files.setLastModifiedTime(path, java.nio.file.attribute.FileTime.from(Instant.now().minus(Duration.ofDays(2))));
+            java.nio.file.Files.setLastModifiedTime(path, java.nio.file.attribute.FileTime.from(now.get().minus(Duration.ofDays(2))));
         }
 
         now.set(now.get().plus(Duration.ofDays(2)));
@@ -178,7 +178,7 @@ class FileServiceTest {
     @Test
     void should_reportAnUnavailableStorage_asSuch() {
         var unmounted = new FileService(notes, versions, new FileSystemBlobStore(storage.resolve("fehlt"), false),
-            new FolderRegistry(folderRepository, announcements), announcements, (v, n, a, x, p) -> { }, new FileLimits(1000, 2500), now::get);
+            new FolderRegistry(folderRepository, announcements, new de.raindancer118.stoneintelligence.platform.identity.FakeAccessGrantRepository(notes)), announcements, (v, n, a, x, p) -> { }, new FileLimits(1000, 2500), now::get);
         var file = unmounted.create(vaultId, "a.pdf", NoteLevel.of(1), "tom");
 
         assertThatThrownBy(() -> unmounted.upload(vaultId, file.id(), 0, bytes("x"), "application/pdf", "tom"))

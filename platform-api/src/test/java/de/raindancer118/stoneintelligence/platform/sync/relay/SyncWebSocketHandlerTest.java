@@ -27,8 +27,10 @@ class SyncWebSocketHandlerTest {
     private final SyncRoomRegistry registry = new SyncRoomRegistry();
     private final SyncRelayService relay = new SyncRelayService(snapshotStore, registry);
     private final VaultAnnouncementService announcements = new VaultAnnouncementService();
+    private final de.raindancer118.stoneintelligence.platform.identity.FakeAccessGrantRepository grants =
+        new de.raindancer118.stoneintelligence.platform.identity.FakeAccessGrantRepository(notes);
     private final SyncWebSocketHandler handler =
-        new SyncWebSocketHandler(relay, notes, new VaultAccessGuard(authorization), announcements);
+        new SyncWebSocketHandler(relay, notes, new VaultAccessGuard(authorization, grants), announcements);
 
     private VaultId newReaderOnlyNote(String actor, String path) {
         var vaultId = VaultId.newId();
@@ -145,5 +147,63 @@ class SyncWebSocketHandlerTest {
         send(writer, SyncFrame.TYPE_DOC_UPDATE, note.id(), "update after deletion".getBytes());
 
         assertThat(snapshotStore.listSince(note.id(), 0)).isEmpty();
+    }
+
+    // ADR 0011: aendern sich Freigaben, gelten sie sofort auch fuer offene Verbindungen.
+    @org.junit.jupiter.api.Nested
+    class AccessChanges {
+
+        private static final de.raindancer118.stoneintelligence.platform.identity.GrantScope READER =
+            de.raindancer118.stoneintelligence.platform.identity.GrantScope.user("reader-actor");
+
+        private de.raindancer118.stoneintelligence.platform.identity.GrantTarget target(NoteId noteId) {
+            return de.raindancer118.stoneintelligence.platform.identity.GrantTarget.entry(noteId, "shared.md");
+        }
+
+        @Test
+        void should_stopSendingUpdates_toAConnectionThatLostRead() {
+            var vaultId = newReaderOnlyNote("reader-actor", "shared.md");
+            var noteId = lastNoteId;
+            var reader = connect(vaultId, "reader-actor");
+            send(reader, SyncFrame.TYPE_JOIN, noteId, new byte[0]);
+            grants.put(vaultId, target(noteId), READER, Set.of(), "owner");
+
+            announcements.announceAccessChanged(vaultId);
+            reader.sentMessages.clear();
+            relay.onUpdate(noteId, new RecordingSyncSession("someone-else"), "secret".getBytes(), false);
+
+            assertThat(reader.sentMessages).isEmpty();
+        }
+
+        @Test
+        void should_acceptUpdates_fromAConnectionThatWasGrantedWrite() {
+            var vaultId = newReaderOnlyNote("reader-actor", "shared.md");
+            var noteId = lastNoteId;
+            var reader = connect(vaultId, "reader-actor");
+            send(reader, SyncFrame.TYPE_JOIN, noteId, new byte[0]);
+            grants.put(vaultId, target(noteId), READER, Set.of(Permission.READ, Permission.WRITE), "owner");
+
+            announcements.announceAccessChanged(vaultId);
+            send(reader, SyncFrame.TYPE_DOC_UPDATE, noteId, "now allowed".getBytes());
+
+            assertThat(snapshotStore.listSince(noteId, 0)).hasSize(1);
+        }
+
+        @Test
+        void should_tellOnlySubscribedConnections_withoutNamingAnyPath() {
+            var vaultId = newReaderOnlyNote("reader-actor", "shared.md");
+            var subscribed = connect(vaultId, "reader-actor");
+            var legacy = connect(vaultId, "reader-actor");
+            send(subscribed, SyncFrame.TYPE_SUBSCRIBE_ACCESS_EVENTS, SyncFrame.NO_NOTE, new byte[0]);
+
+            announcements.announceAccessChanged(vaultId);
+
+            assertThat(subscribed.sentMessages).singleElement().satisfies(message -> {
+                var frame = SyncFrame.decode(((BinaryMessage) message).getPayload().array());
+                assertThat(frame.messageType()).isEqualTo(SyncFrame.TYPE_VAULT_ACCESS_CHANGED);
+                assertThat(frame.payload()).isEmpty();
+            });
+            assertThat(legacy.sentMessages).isEmpty();
+        }
     }
 }

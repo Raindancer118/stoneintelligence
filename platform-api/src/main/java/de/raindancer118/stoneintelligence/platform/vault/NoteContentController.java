@@ -43,7 +43,7 @@ public class NoteContentController {
     private Note authorizedNote(String vaultId, String noteId, Authentication auth, Permission permission) {
         var vId = VaultId.of(vaultId);
         var nId = NoteId.of(noteId);
-        access.require(vId, auth.getName(), Permission.READ);
+        access.requireMember(vId, auth.getName());
         var note = notes.findById(vId, nId).orElseThrow(() -> new NoteNotFoundException(vId, nId));
         access.require(vId, auth.getName(), permission, note.path());
         if (note.isFile()) {

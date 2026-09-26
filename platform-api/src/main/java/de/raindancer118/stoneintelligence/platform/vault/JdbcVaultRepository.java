@@ -36,4 +36,13 @@ public class JdbcVaultRepository implements VaultRepository {
             .query(VAULT_MAPPER)
             .optional();
     }
+
+    @Override
+    public Optional<Vault> rename(VaultId id, String name) {
+        return jdbcClient.sql("UPDATE platform.vaults SET name = :name WHERE id = :id RETURNING id, name, created_at")
+            .param("id", id.value())
+            .param("name", name)
+            .query(VAULT_MAPPER)
+            .optional();
+    }
 }

@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
  * kann, waehrend die zugehoerige Aenderung erfolgreich war.
  */
 @Service
-public class AuditService {
+public class AuditService implements AuditRecorder {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -45,6 +45,7 @@ public class AuditService {
         this.jdbcClient = jdbcClient;
     }
 
+    @Override
     public void record(VaultId vaultId, NoteId noteId, String actor, String action, Map<String, Object> payload) {
         String json;
         try {

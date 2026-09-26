@@ -40,4 +40,11 @@ public interface VaultSubscriber {
     }
 
     void sendVaultEvent(byte messageType, NoteId noteId, String path);
+
+    /**
+     * Rechte im Vault haben sich geaendert: gejointe Notizen neu pruefen (Lese-/Schreibrecht kann
+     * weg- oder dazugekommen sein) und - falls abonniert - den Client benachrichtigen.
+     */
+    default void accessChanged() {
+    }
 }

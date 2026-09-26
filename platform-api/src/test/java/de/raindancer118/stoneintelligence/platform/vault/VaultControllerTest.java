@@ -17,9 +17,10 @@ class VaultControllerTest {
         new de.raindancer118.stoneintelligence.platform.invitation.InvitationService(
             new de.raindancer118.stoneintelligence.platform.invitation.FakeInvitationRepository(),
             new de.raindancer118.stoneintelligence.platform.invitation.FakeUserDirectory(), mailer, authorization,
-            new VaultAccessGuard(authorization), vaults, java.time.Clock.systemUTC(),
+            new VaultAccessGuard(authorization, new de.raindancer118.stoneintelligence.platform.identity.FakeAccessGrantRepository(new de.raindancer118.stoneintelligence.platform.vault.FakeNoteRepository())), vaults, java.time.Clock.systemUTC(),
             new de.raindancer118.stoneintelligence.platform.invitation.InvitationSettings("https://kb.example", java.time.Duration.ofDays(14)));
-    private final VaultController controller = new VaultController(vaults, authorization, invitations);
+    private final VaultController controller = new VaultController(vaults, authorization, invitations,
+        new VaultAccessGuard(authorization, new de.raindancer118.stoneintelligence.platform.identity.FakeAccessGrantRepository(new de.raindancer118.stoneintelligence.platform.vault.FakeNoteRepository())));
 
     @Test
     void should_grantCreatorFullPermissions_when_vaultIsCreated() {
@@ -87,5 +88,23 @@ class VaultControllerTest {
         var imposter = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt, java.util.List.of(), "imposter");
 
         assertThat(controller.list(imposter)).isEmpty();
+    }
+
+    @Test
+    void should_renameAVault_onlyForWhoManagesIt() {
+        var tom = new org.springframework.security.authentication.TestingAuthenticationToken("tom", null);
+        var created = controller.create(new VaultController.CreateVaultRequest("Alt"), tom);
+        var group = authorization.createGroup(de.raindancer118.stoneintelligence.domain.id.VaultId.of(created.id()), "guests");
+        authorization.addMember(group.id(), "ben");
+
+        var renamed = controller.rename(created.id(), new VaultController.RenameVaultRequest("Neu"), tom);
+
+        org.assertj.core.api.Assertions.assertThat(renamed.name()).isEqualTo("Neu");
+        org.assertj.core.api.Assertions.assertThat(controller.list(tom)).extracting(VaultController.VaultResponse::name).containsExactly("Neu");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.rename(created.id(),
+                new VaultController.RenameVaultRequest("Meins"), new org.springframework.security.authentication.TestingAuthenticationToken("ben", null)))
+            .isInstanceOf(ForbiddenException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.rename(created.id(), new VaultController.RenameVaultRequest(" "), tom))
+            .isInstanceOf(de.raindancer118.stoneintelligence.platform.identity.InvalidGrantException.class);
     }
 }

@@ -21,4 +21,9 @@ public class FakeVaultRepository implements VaultRepository {
     public Optional<Vault> findById(VaultId id) {
         return Optional.ofNullable(vaults.get(id));
     }
+
+    @Override
+    public Optional<Vault> rename(VaultId id, String name) {
+        return Optional.ofNullable(vaults.computeIfPresent(id, (key, vault) -> new Vault(key, name, vault.createdAt())));
+    }
 }

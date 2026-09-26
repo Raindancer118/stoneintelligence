@@ -75,6 +75,18 @@ public record SyncFrame(byte messageType, NoteId noteId, byte[] payload) {
      * wuerden eine Datei sonst als leere Notiz anlegen.
      */
     public static final byte TYPE_SUBSCRIBE_FILE_EVENTS = 13;
+    /**
+     * Client->Server (NoteId-Feld ohne Bedeutung): diese Verbindung versteht
+     * {@link #TYPE_VAULT_ACCESS_CHANGED} (ADR 0011). Opt-in aus demselben Grund wie Typ 10.
+     */
+    public static final byte TYPE_SUBSCRIBE_ACCESS_EVENTS = 14;
+    /**
+     * Server->Client: Rechte in diesem Vault haben sich geaendert (Freigaben, Mitglieder, Rollen).
+     * Bewusst OHNE Pfad (Payload leer, NoteId-Feld = {@link #NO_NOTE}): ein Pfad verriete
+     * Empfaengern, die ihn nicht sehen duerfen, dass es dort etwas gibt. Der Client holt daraufhin
+     * seine Liste und seine Rechte neu.
+     */
+    public static final byte TYPE_VAULT_ACCESS_CHANGED = 15;
     /** Platzhalter im NoteId-Feld fuer Nachrichten, die keine Notiz betreffen. */
     public static final de.raindancer118.stoneintelligence.domain.id.NoteId NO_NOTE =
         de.raindancer118.stoneintelligence.domain.id.NoteId.of(new java.util.UUID(0, 0));

@@ -20,6 +20,16 @@ public abstract class VaultRepositoryContractTest {
     }
 
     @Test
+    void should_renameAVault_andIgnoreUnknownOnes() {
+        var repository = repository();
+        var created = repository.create("alt");
+
+        assertThat(repository.rename(created.id(), "neu")).get().extracting(Vault::name).isEqualTo("neu");
+        assertThat(repository.findById(created.id())).get().extracting(Vault::name).isEqualTo("neu");
+        assertThat(repository.rename(de.raindancer118.stoneintelligence.domain.id.VaultId.newId(), "x")).isEmpty();
+    }
+
+    @Test
     void should_beEmpty_when_vaultDoesNotExist() {
         var repository = repository();
 

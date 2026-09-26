@@ -98,7 +98,7 @@ public class FileController {
 
     /** Erst Mitgliedschaft, dann der Pfad - wer nicht im Vault ist, erfaehrt nichts ueber dessen Eintraege. */
     private String pathOf(VaultId vaultId, NoteId noteId, String actor) {
-        access.require(vaultId, actor, Permission.READ);
+        access.requireMember(vaultId, actor);
         return notes.findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId)).path();
     }
 
