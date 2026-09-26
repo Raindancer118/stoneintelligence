@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import InvitePeople from "../src/lib/components/InvitePeople.svelte";
 import { api } from "../src/lib/api";
-vi.mock("../src/lib/api", () => ({ api: {
+vi.mock("../src/lib/api", async (original) => ({ ...(await original<typeof import("../src/lib/api")>()), api: {
   searchPeople: vi.fn(), addPerson: vi.fn(), inviteByEmail: vi.fn(), listInvitations: vi.fn(), revokeInvitation: vi.fn(),
 } }));
 const vault = { id: "vault", name: "Team", createdAt: "" };
