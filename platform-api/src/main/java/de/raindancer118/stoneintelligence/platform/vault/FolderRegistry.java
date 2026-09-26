@@ -3,7 +3,9 @@ package de.raindancer118.stoneintelligence.platform.vault;
 import java.util.List;
 import de.raindancer118.stoneintelligence.domain.id.VaultId;
 import de.raindancer118.stoneintelligence.platform.sync.relay.VaultAnnouncementService;
+import de.raindancer118.stoneintelligence.platform.identity.AccessGrantRepository;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Ordner anlegen, verschieben, loeschen - und jedes Mal die anderen Geraete benachrichtigen.
@@ -14,10 +16,12 @@ public class FolderRegistry {
 
     private final FolderRepository folders;
     private final VaultAnnouncementService announcements;
+    private final AccessGrantRepository grants;
 
-    public FolderRegistry(FolderRepository folders, VaultAnnouncementService announcements) {
+    public FolderRegistry(FolderRepository folders, VaultAnnouncementService announcements, AccessGrantRepository grants) {
         this.folders = folders;
         this.announcements = announcements;
+        this.grants = grants;
     }
 
     public List<String> list(VaultId vaultId) {
@@ -36,8 +40,11 @@ public class FolderRegistry {
         }
     }
 
+    /** Die Freigaben des Ordners (ADR 0011) wandern mit - sonst galten sie ploetzlich fuer niemanden mehr. */
+    @Transactional
     public void rename(VaultId vaultId, String from, String to, String actor) {
         folders.renameTree(vaultId, from, to, actor);
+        grants.moveFolder(vaultId, from, to);
         announcements.announceFoldersChanged(vaultId, from);
         announcements.announceFoldersChanged(vaultId, to);
     }
@@ -57,8 +64,10 @@ public class FolderRegistry {
         return true;
     }
 
+    @Transactional
     public void delete(VaultId vaultId, String path) {
         if (folders.deleteTree(vaultId, path) > 0) {
+            grants.removeFolder(vaultId, path);
             announcements.announceFoldersChanged(vaultId, path);
         }
     }

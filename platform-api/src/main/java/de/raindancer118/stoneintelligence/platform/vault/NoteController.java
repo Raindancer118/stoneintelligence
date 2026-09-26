@@ -79,7 +79,7 @@ public class NoteController {
         @PathVariable String vaultId, @PathVariable String noteId, Authentication authentication
     ) {
         var vId = VaultId.of(vaultId);
-        access.require(vId, authentication.getName(), Permission.READ);
+        access.requireMember(vId, authentication.getName());
         notes.findById(vId, NoteId.of(noteId)).ifPresent(note ->
             access.require(vId, authentication.getName(), Permission.READ, note.path()));
         var events = audit.listForNote(vId, NoteId.of(noteId));
@@ -97,7 +97,7 @@ public class NoteController {
         @PathVariable String vaultId, @PathVariable String noteId, Authentication authentication
     ) {
         var vId = VaultId.of(vaultId);
-        access.require(vId, authentication.getName(), Permission.READ);
+        access.requireMember(vId, authentication.getName());
         return notes.findById(vId, NoteId.of(noteId))
             .map(note -> {
                 access.require(vId, authentication.getName(), Permission.READ, note.path());
@@ -112,7 +112,7 @@ public class NoteController {
      * {@code epochId} und ein {@code complete}-Flag - der Client darf eine unvollstaendige
      * Antwort NIE als Grundlage fuer lokale Loeschungen verwenden.
      *
-     * <p>Pfadregeln filtern den Inhalt jeder Seite. Cursor und complete beziehen sich weiterhin
+     * <p>Freigaben filtern den Inhalt jeder Seite (ADR 0011) - es genuegt Mitgliedschaft. Cursor und complete beziehen sich weiterhin
      * auf den serverseitigen Durchlauf; eine gefilterte leere Seite kann deshalb unvollstaendig sein.
      */
     @GetMapping("/api/v1/vaults/{vaultId}/notes")
@@ -124,7 +124,7 @@ public class NoteController {
         Authentication authentication
     ) {
         var vId = VaultId.of(vaultId);
-        access.require(vId, authentication.getName(), Permission.READ);
+        access.requireMember(vId, authentication.getName());
         var page = notes.list(vId, cursor, pageSize, parseKinds(kinds));
         var readable = access.readableNotes(vId, authentication.getName(), page.notes());
         var revisions = snapshots.latestRevisions(readable.stream().filter(note -> !note.isFile()).map(Note::id).toList());

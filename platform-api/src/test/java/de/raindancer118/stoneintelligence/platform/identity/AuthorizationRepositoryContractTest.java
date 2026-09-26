@@ -183,38 +183,84 @@ public abstract class AuthorizationRepositoryContractTest {
     }
 
     @Nested
-    class PathRuleStorage {
+    class MembershipLookup {
 
         @Test
-        void should_listCreatedRule_when_queriedForItsVault() {
+        void should_nameGroupsAndVaultPermissions_evenForAGroupWithoutRoles() {
             var repository = repository();
             var vaultId = newVault();
+            var role = repository.createRole(vaultId, "reader", Set.of(Permission.READ));
+            var readers = repository.createGroup(vaultId, "readers");
+            var guests = repository.createGroup(vaultId, "guests");
+            repository.assignRole(readers.id(), role.id());
+            repository.addMember(readers.id(), "tom");
+            repository.addMember(guests.id(), "tom");
+            repository.addMember(guests.id(), "guest");
 
-            repository.createPathRule(vaultId, "private", RuleScope.everyone(), RuleEffect.DENY);
+            var tom = repository.membership(vaultId, "tom");
+            var guest = repository.membership(vaultId, "guest");
 
-            assertThat(repository.listPathRules(vaultId))
-                .containsExactly(new PathRule("private", RuleScope.everyone(), RuleEffect.DENY));
+            assertThat(tom.groupIds()).containsExactlyInAnyOrder(readers.id(), guests.id());
+            assertThat(tom.vaultPermissions()).containsExactly(Permission.READ);
+            assertThat(guest.isMember()).isTrue();
+            assertThat(guest.vaultPermissions()).isEmpty();
+            assertThat(repository.membership(newVault(), "tom").isMember()).isFalse();
+        }
+    }
+
+    @Nested
+    class RoleAndGroupManagement {
+
+        @Test
+        void should_renameAndRedefineARole() {
+            var repository = repository();
+            var vaultId = newVault();
+            var role = repository.createRole(vaultId, "reader", Set.of(Permission.READ));
+
+            repository.renameRole(role.id(), "editor");
+            repository.setRolePermissions(role.id(), Set.of(Permission.READ, Permission.WRITE));
+
+            assertThat(repository.listRoles(vaultId)).singleElement().satisfies(changed -> {
+                assertThat(changed.name()).isEqualTo("editor");
+                assertThat(changed.permissions()).containsExactlyInAnyOrder(Permission.READ, Permission.WRITE);
+            });
+            assertThat(repository.roleBelongsToVault(role.id(), vaultId)).isTrue();
+            assertThat(repository.roleBelongsToVault(role.id(), newVault())).isFalse();
         }
 
         @Test
-        void should_notLeakRulesFromOtherVaults_when_listing() {
+        void should_takeTheRightsAway_whenARoleIsDeleted() {
             var repository = repository();
             var vaultId = newVault();
-            var otherVaultId = newVault();
-            repository.createPathRule(otherVaultId, "private", RuleScope.everyone(), RuleEffect.DENY);
+            var role = repository.createRole(vaultId, "editor", Set.of(Permission.WRITE));
+            var group = repository.createGroup(vaultId, "editors");
+            repository.assignRole(group.id(), role.id());
+            repository.addMember(group.id(), "tom");
 
-            assertThat(repository.listPathRules(vaultId)).isEmpty();
+            repository.deleteRole(role.id());
+
+            assertThat(repository.listRoles(vaultId)).isEmpty();
+            assertThat(repository.listRoleIdsForGroup(group.id())).isEmpty();
+            assertThat(repository.effectivePermissions(vaultId, "tom")).isEmpty();
         }
 
         @Test
-        void should_preserveUserScopedRule_when_storedAndListed() {
+        void should_renameAGroup_andEndItsMemberships_whenDeleted() {
             var repository = repository();
             var vaultId = newVault();
+            var role = repository.createRole(vaultId, "editor", Set.of(Permission.WRITE));
+            var group = repository.createGroup(vaultId, "editors");
+            repository.assignRole(group.id(), role.id());
+            repository.addMember(group.id(), "tom");
 
-            repository.createPathRule(vaultId, "private", RuleScope.user("tom"), RuleEffect.ALLOW);
+            repository.renameGroup(group.id(), "writers");
+            assertThat(repository.listGroups(vaultId)).extracting(Group::name).containsExactly("writers");
 
-            assertThat(repository.listPathRules(vaultId))
-                .containsExactly(new PathRule("private", RuleScope.user("tom"), RuleEffect.ALLOW));
+            repository.deleteGroup(group.id());
+
+            assertThat(repository.listGroups(vaultId)).isEmpty();
+            assertThat(repository.membership(vaultId, "tom").isMember()).isFalse();
+            assertThat(repository.listRoles(vaultId)).hasSize(1);
         }
     }
 

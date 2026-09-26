@@ -62,7 +62,7 @@ class AiOriginalFileTest {
 
     @BeforeEach
     void setUp() {
-        var folders = new FolderRegistry(folderRepository, announcements);
+        var folders = new FolderRegistry(folderRepository, announcements, new de.raindancer118.stoneintelligence.platform.identity.FakeAccessGrantRepository(notes));
         files = new FileService(notes, new FakeFileVersionRepository(notes), new FileSystemBlobStore(storage), folders,
             announcements, (vault, note, actor, action, payload) -> { }, new FileLimits(1000, 2500), Instant::now);
         service = new AiWriteService(notes, snapshots, new SyncRelayService(snapshots, new SyncRoomRegistry()), yjs,

@@ -25,11 +25,15 @@ public class VaultController {
     private final AuthorizationRepository authorization;
     private final de.raindancer118.stoneintelligence.platform.invitation.InvitationService invitations;
 
+    private final VaultAccessGuard access;
+
     public VaultController(VaultRepository vaults, AuthorizationRepository authorization,
-                           de.raindancer118.stoneintelligence.platform.invitation.InvitationService invitations) {
+                           de.raindancer118.stoneintelligence.platform.invitation.InvitationService invitations,
+                           VaultAccessGuard access) {
         this.vaults = vaults;
         this.authorization = authorization;
         this.invitations = invitations;
+        this.access = access;
     }
 
     @PostMapping("/api/v1/vaults")
@@ -71,7 +75,22 @@ public class VaultController {
             authentication.getName());
     }
 
+    @org.springframework.web.bind.annotation.PatchMapping("/api/v1/vaults/{vaultId}")
+    public VaultResponse rename(@org.springframework.web.bind.annotation.PathVariable String vaultId,
+                                @RequestBody RenameVaultRequest request, Authentication authentication) {
+        var vId = de.raindancer118.stoneintelligence.domain.id.VaultId.of(vaultId);
+        access.require(vId, authentication.getName(), Permission.MANAGE);
+        if (request.name() == null || request.name().isBlank()) {
+            throw new de.raindancer118.stoneintelligence.platform.identity.InvalidGrantException("a vault needs a name");
+        }
+        return vaults.rename(vId, request.name().strip()).map(VaultResponse::from)
+            .orElseThrow(() -> new ForbiddenException("no such vault"));
+    }
+
     public record CreateVaultRequest(String name) {
+    }
+
+    public record RenameVaultRequest(String name) {
     }
 
     public record VaultResponse(String id, String name, Instant createdAt) {

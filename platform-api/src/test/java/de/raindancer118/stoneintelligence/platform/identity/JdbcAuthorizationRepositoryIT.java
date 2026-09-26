@@ -110,7 +110,10 @@ class JdbcAuthorizationRepositoryIT extends AuthorizationRepositoryContractTest 
         var otherRole = repository.createRole(otherVault, "private", Set.of(Permission.DELETE));
         var otherGroup = repository.createGroup(otherVault, "private");
         repository.assignRole(otherGroup.id(), otherRole.id());
-        var controller = new AuthorizationController(repository, new VaultAccessGuard(repository));
+        var notes = new de.raindancer118.stoneintelligence.platform.vault.FakeNoteRepository();
+        var grants = new FakeAccessGrantRepository(notes);
+        var controller = new AuthorizationController(repository, new VaultAccessGuard(repository, grants), grants, notes,
+            (vault, note, actor, action, payload) -> { }, new de.raindancer118.stoneintelligence.platform.sync.relay.VaultAnnouncementService());
         queryCount.set(0);
 
         var groups = controller.listGroups(vaultId.value().toString(), new TestingAuthenticationToken("tom", null));

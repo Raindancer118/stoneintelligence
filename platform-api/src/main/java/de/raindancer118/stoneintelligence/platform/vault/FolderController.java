@@ -36,7 +36,7 @@ public class FolderController {
     @GetMapping
     public List<String> list(@PathVariable String vaultId, Authentication auth) {
         var vId = VaultId.of(vaultId);
-        access.require(vId, auth.getName(), Permission.READ);
+        access.requireMember(vId, auth.getName());
         return access.readablePaths(vId, auth.getName(), folders.list(vId), path -> path + "/");
     }
 

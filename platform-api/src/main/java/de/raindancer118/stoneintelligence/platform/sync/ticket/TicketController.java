@@ -38,7 +38,7 @@ public class TicketController {
     public IssuedTicketResponse issueTicket(@PathVariable String vaultId, Authentication authentication) {
         var actor = authentication.getName();
         var vId = VaultId.of(vaultId);
-        access.require(vId, actor, Permission.READ);
+        access.requireMember(vId, actor);
 
         var ticket = ticketService.issue(vId, actor);
         return new IssuedTicketResponse(ticket.token(), ticket.expiresAt());

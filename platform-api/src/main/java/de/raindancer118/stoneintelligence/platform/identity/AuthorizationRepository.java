@@ -42,14 +42,26 @@ public interface AuthorizationRepository {
     /**
      * Vereinigung aller Permissions aus allen Rollen aller Gruppen, denen {@code subject} in
      * diesem Vault angehoert (Allow-Aggregation auf dieser Ebene - Deny-Semantik lebt in den
-     * spezifischeren Ordner-/Themen-ACLs, s. {@link PathRules}).
+     * Freigaben je Ordner/Eintrag, s. {@link AccessResolver}).
      */
     Set<Permission> effectivePermissions(VaultId vaultId, String subject);
 
-    /** Ordner-ACL (Plan.md Abschnitt 3) - Praezedenz wird durch {@link PathRules#resolve} berechnet. */
-    PathRule createPathRule(VaultId vaultId, String pathPrefix, RuleScope scope, RuleEffect effect);
+    /** Gruppen und Vault-Rechte von {@code subject} in diesem Vault (Grundlage fuer {@link AccessResolver}). */
+    Membership membership(VaultId vaultId, String subject);
 
-    List<PathRule> listPathRules(VaultId vaultId);
+    boolean roleBelongsToVault(UUID roleId, VaultId vaultId);
+
+    void renameRole(UUID roleId, String name);
+
+    void setRolePermissions(UUID roleId, Set<Permission> permissions);
+
+    /** Entfernt die Rolle samt ihren Zuweisungen an Gruppen. */
+    void deleteRole(UUID roleId);
+
+    void renameGroup(UUID groupId, String name);
+
+    /** Entfernt die Gruppe samt Mitgliedschaften und Rollen-Zuweisungen. */
+    void deleteGroup(UUID groupId);
 
     /** Themen-/Tag-ACL (Plan.md Abschnitt 4.4a) - Praezedenz wird durch {@link TopicRules#resolve} berechnet. */
     TopicRule createTopicRule(VaultId vaultId, String topic, RuleScope scope, RuleEffect effect);

@@ -32,7 +32,7 @@ class InvitationServiceTest {
     private final RecordingMailer mailer = new RecordingMailer();
     private final MutableClock clock = new MutableClock(Instant.parse("2026-09-23T10:00:00Z"));
     private final InvitationService service = new InvitationService(invitations, directory, mailer, authorization,
-        new VaultAccessGuard(authorization), vaults, clock, new InvitationSettings("https://kb.example", Duration.ofDays(14)));
+        new VaultAccessGuard(authorization, new de.raindancer118.stoneintelligence.platform.identity.FakeAccessGrantRepository(new de.raindancer118.stoneintelligence.platform.vault.FakeNoteRepository())), vaults, clock, new InvitationSettings("https://kb.example", Duration.ofDays(14)));
 
     private VaultId vaultId;
 

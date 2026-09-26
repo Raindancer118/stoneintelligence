@@ -19,7 +19,6 @@ public final class FakeAuthorizationRepository implements AuthorizationRepositor
     private final Map<UUID, Role> roles = new HashMap<>();
     private final Map<UUID, Group> groups = new HashMap<>();
     private final Map<UUID, Set<UUID>> groupRoles = new HashMap<>();
-    private final List<Scoped<PathRule>> pathRules = new ArrayList<>();
     private final List<Scoped<TopicRule>> topicRules = new ArrayList<>();
 
     @Override
@@ -131,18 +130,45 @@ public final class FakeAuthorizationRepository implements AuthorizationRepositor
     }
 
     @Override
-    public synchronized PathRule createPathRule(VaultId vaultId, String pathPrefix, RuleScope scope, RuleEffect effect) {
-        var rule = new PathRule(pathPrefix, scope, effect);
-        pathRules.add(new Scoped<>(vaultId, rule));
-        return rule;
+    public synchronized Membership membership(VaultId vaultId, String subject) {
+        var groupIds = groups.values().stream()
+            .filter(group -> group.vaultId().equals(vaultId) && group.memberSubjects().contains(subject))
+            .map(Group::id)
+            .collect(Collectors.toUnmodifiableSet());
+        return new Membership(subject, groupIds, effectivePermissions(vaultId, subject));
     }
 
     @Override
-    public synchronized List<PathRule> listPathRules(VaultId vaultId) {
-        return pathRules.stream()
-            .filter(scoped -> scoped.vaultId().equals(vaultId))
-            .map(Scoped::rule)
-            .toList();
+    public synchronized boolean roleBelongsToVault(UUID roleId, VaultId vaultId) {
+        var role = roles.get(roleId);
+        return role != null && role.vaultId().equals(vaultId);
+    }
+
+    @Override
+    public synchronized void renameRole(UUID roleId, String name) {
+        roles.computeIfPresent(roleId, (id, role) -> new Role(id, role.vaultId(), name, role.permissions()));
+    }
+
+    @Override
+    public synchronized void setRolePermissions(UUID roleId, Set<Permission> permissions) {
+        roles.computeIfPresent(roleId, (id, role) -> new Role(id, role.vaultId(), role.name(), Set.copyOf(permissions)));
+    }
+
+    @Override
+    public synchronized void deleteRole(UUID roleId) {
+        roles.remove(roleId);
+        groupRoles.values().forEach(roleIds -> roleIds.remove(roleId));
+    }
+
+    @Override
+    public synchronized void renameGroup(UUID groupId, String name) {
+        groups.computeIfPresent(groupId, (id, group) -> new Group(id, group.vaultId(), name, group.memberSubjects()));
+    }
+
+    @Override
+    public synchronized void deleteGroup(UUID groupId) {
+        groups.remove(groupId);
+        groupRoles.remove(groupId);
     }
 
     @Override
