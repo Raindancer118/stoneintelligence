@@ -15,6 +15,7 @@ import de.tstieh.stoneintelligence.domain.notelevel.NoteLevel;
 public final class FakeNoteRepository implements NoteRepository {
 
     private final Map<NoteId, Note> notes = new LinkedHashMap<>();
+    private final Map<NoteId, NoteActivity> activities = new LinkedHashMap<>();
     // Monoton wachsende Sequenznummer je Note (spiegelt die bigserial-Spalte der Jdbc-Variante) -
     // NICHT die NoteId selbst, die hat keine Beziehung zur Einfuegereihenfolge (s. ReconciliationCursor).
     private final Map<NoteId, Long> noteSequences = new LinkedHashMap<>();
@@ -96,5 +97,23 @@ public final class FakeNoteRepository implements NoteRepository {
             UUID.randomUUID(), vaultId, noteId, operationId, tombstoneSequenceCounter.incrementAndGet(), deletedBy, Instant.now());
         tombstonesByOperationKey.put(key, tombstone);
         return tombstone;
+    }
+
+    @Override
+    public synchronized Optional<NoteActivity> activity(VaultId vaultId, NoteId noteId) {
+        return findById(vaultId, noteId).map(note -> activities.getOrDefault(noteId,
+            new NoteActivity(note.createdBy(), note.createdAt(), null, null, null, null)));
+    }
+
+    @Override
+    public synchronized void markEdited(VaultId vaultId, NoteId noteId, String actor, Instant at) {
+        activity(vaultId, noteId).ifPresent(current -> activities.put(noteId, new NoteActivity(current.createdBy(), current.createdAt(),
+            actor, at, current.lastOpenedBy(), current.lastOpenedAt())));
+    }
+
+    @Override
+    public synchronized void markOpened(VaultId vaultId, NoteId noteId, String actor, Instant at) {
+        activity(vaultId, noteId).ifPresent(current -> activities.put(noteId, new NoteActivity(current.createdBy(), current.createdAt(),
+            current.lastEditedBy(), current.lastEditedAt(), actor, at)));
     }
 }

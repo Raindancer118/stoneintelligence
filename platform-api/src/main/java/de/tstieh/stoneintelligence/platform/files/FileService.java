@@ -83,6 +83,7 @@ public class FileService {
         }
         var version = versions.append(noteId, expectedRevision, blob, sanitized(contentType), actor, clock.get());
         audit.record(vaultId, noteId, actor, "file.content-updated", Map.of("revision", version.revision(), "size", version.size()));
+        notes.markEdited(vaultId, noteId, actor, version.createdAt());
         announcements.announceFileUpdated(vaultId, noteId, file.path());
         return version;
     }

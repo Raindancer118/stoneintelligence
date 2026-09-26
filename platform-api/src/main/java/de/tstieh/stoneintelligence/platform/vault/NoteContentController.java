@@ -78,6 +78,7 @@ public class NoteContentController {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Note changed; reload before saving"));
         audit.record(note.vaultId(), note.id(), auth.getName(), "note.content-updated",
             java.util.Map.of("revision", saved.serverSequence()));
+        notes.markEdited(note.vaultId(), note.id(), auth.getName(), java.time.Instant.now());
         announcements.announceNoteUpdated(note.vaultId(), note.id(), () -> java.util.Optional.of(note.path()));
         return new SavedResponse(saved.serverSequence());
     }

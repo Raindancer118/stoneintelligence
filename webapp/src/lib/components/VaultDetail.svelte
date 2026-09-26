@@ -1,16 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type Group, type PathRule, type Role, type Vault } from "../api";
+  import { api, ApiError, type Group, type Role, type Vault, type VaultMember } from "../api";
+  import { explainAccessError, permissionsLabel } from "../accessPlan";
   import { connectionConfigJson } from "../connectionConfig";
   import InvitePeople from "./InvitePeople.svelte";
 
-  let { vault }: { vault: Vault } = $props();
+  let { vault, me = "" }: { vault: Vault; me?: string } = $props();
 
   const ALL_PERMISSIONS = ["READ", "WRITE", "DELETE", "CREATE", "MANAGE"];
 
   let roles = $state<Role[]>([]);
   let groups = $state<Group[]>([]);
-  let pathRules = $state<PathRule[]>([]);
+  let members = $state<VaultMember[]>([]);
+  let editingRole = $state<Record<string, string>>({});
+  let editingGroup = $state<Record<string, string>>({});
   let error = $state<string | null>(null);
   let configCopied = $state(false);
 
@@ -18,14 +21,13 @@
   let newRolePermissions = $state<Set<string>>(new Set());
   let newGroupName = $state("");
   let newMemberByGroup = $state<Record<string, string>>({});
-  let newPathRule = $state({ pathPrefix: "", scopeSubject: "", effect: "DENY" as "ALLOW" | "DENY" });
 
   async function refresh() {
     try {
-      [roles, groups, pathRules] = await Promise.all([
+      [roles, groups, members] = await Promise.all([
         api.listRoles(vault.id),
         api.listGroups(vault.id),
-        api.listPathRules(vault.id),
+        api.listMembers(vault.id),
       ]);
     } catch (e) {
       error = (e as Error).message;
@@ -100,21 +102,53 @@
     }
   }
 
-  async function createPathRule() {
-    if (!newPathRule.pathPrefix.trim()) return;
+  /** Fuehrt eine Verwaltungsaenderung aus und laedt danach nur, was sie betrifft. */
+  async function change(action: () => Promise<unknown>, reload: ("roles" | "groups" | "members")[]) {
     try {
-      await api.createPathRule(
-        vault.id,
-        newPathRule.pathPrefix.trim(),
-        newPathRule.scopeSubject.trim() || null,
-        newPathRule.effect,
-      );
-      newPathRule = { pathPrefix: "", scopeSubject: "", effect: "DENY" };
+      await action();
       error = null;
-      pathRules = await api.listPathRules(vault.id);
+      for (const part of reload) {
+        if (part === "roles") roles = await api.listRoles(vault.id);
+        if (part === "groups") groups = await api.listGroups(vault.id);
+        if (part === "members") members = await api.listMembers(vault.id);
+      }
     } catch (e) {
-      error = (e as Error).message;
+      error = e instanceof ApiError ? explainAccessError(e.status) : (e as Error).message;
     }
+  }
+
+  function removeFromVault(subject: string) {
+    const self = subject === me;
+    if (!window.confirm(self ? "Den Vault verlassen? Du verlierst den Zugriff auf alle Notizen, bis dich jemand wieder einlädt."
+      : `${subject} aus dem Vault nehmen? Alle Gruppen und persönlichen Freigaben fallen weg.`)) return;
+    void change(() => api.removeFromVault(vault.id, subject), ["members", "groups"]);
+  }
+
+  function toggleRolePermission(role: Role, permission: string) {
+    const next = role.permissions.includes(permission) ? role.permissions.filter(p => p !== permission) : [...role.permissions, permission];
+    void change(() => api.updateRole(vault.id, role.id, null, next), ["roles", "members"]);
+  }
+
+  function renameRole(role: Role) {
+    const name = (editingRole[role.id] ?? "").trim();
+    if (!name || name === role.name) return;
+    void change(() => api.updateRole(vault.id, role.id, name, null), ["roles"]);
+  }
+
+  function deleteRole(role: Role) {
+    if (!window.confirm(`Rolle „${role.name}“ löschen? Gruppen mit dieser Rolle verlieren deren Rechte.`)) return;
+    void change(() => api.deleteRole(vault.id, role.id), ["roles", "groups", "members"]);
+  }
+
+  function renameGroup(group: Group) {
+    const name = (editingGroup[group.id] ?? "").trim();
+    if (!name || name === group.name) return;
+    void change(() => api.renameGroup(vault.id, group.id, name), ["groups", "members"]);
+  }
+
+  function deleteGroup(group: Group) {
+    if (!window.confirm(`Gruppe „${group.name}“ löschen? Ihre Mitglieder verlieren die Rechte daraus, ihre Freigaben fallen weg.`)) return;
+    void change(() => api.deleteGroup(vault.id, group.id), ["groups", "members"]);
   }
 
   async function copyConfig() {
@@ -136,6 +170,21 @@
 <InvitePeople {vault} />
 
 <section>
+  <h3>Mitglieder</h3>
+  <table>
+    <tbody>
+      {#each members as member (member.subject)}
+        <tr>
+          <td class="label">{member.subject}{member.subject === me ? " (du)" : ""}</td>
+          <td class="permissions">{permissionsLabel(member.permissions)}{member.groups.length ? ` · ${member.groups.map(g => g.name).join(", ")}` : ""}</td>
+          <td class="actions"><button class="link" onclick={() => removeFromVault(member.subject)}>{member.subject === me ? "Vault verlassen" : "entfernen"}</button></td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+</section>
+
+<section>
   <h3>Plugin-Verbindung</h3>
   <p class="hint">Für die gehostete Instanz reicht der Reiter „In Obsidian“ – ein Klick verbindet das Plugin. Diese Konfiguration brauchst du nur für einen eigenen Server (Plugin: Erweitert → Verbindungsdaten einfügen).</p>
   <button class="secondary" onclick={copyConfig}>{configCopied ? "Kopiert" : "Konfiguration kopieren"}</button>
@@ -150,8 +199,14 @@
       <tbody>
         {#each roles as role (role.id)}
           <tr>
-            <td class="label">{role.name}</td>
-            <td class="permissions">{role.permissions.join(", ")}</td>
+            <td class="label"><input aria-label={`Name der Rolle ${role.name}`} value={editingRole[role.id] ?? role.name}
+              oninput={(e) => (editingRole = { ...editingRole, [role.id]: e.currentTarget.value })} onchange={() => renameRole(role)} /></td>
+            <td class="permissions">
+              {#each ALL_PERMISSIONS as permission}
+                <label class="inline"><input type="checkbox" checked={role.permissions.includes(permission)} onchange={() => toggleRolePermission(role, permission)} />{permission}</label>
+              {/each}
+            </td>
+            <td class="actions"><button class="link" onclick={() => deleteRole(role)}>löschen</button></td>
           </tr>
         {/each}
       </tbody>
@@ -175,7 +230,12 @@
   <h3>Gruppen</h3>
   {#each groups as group (group.id)}
     <div class="group">
-      <h4>{group.name}</h4>
+      <div class="group-head">
+        <input aria-label={`Name der Gruppe ${group.name}`} value={editingGroup[group.id] ?? group.name}
+          oninput={(e) => (editingGroup = { ...editingGroup, [group.id]: e.currentTarget.value })} onchange={() => renameGroup(group)} />
+        <button class="link" onclick={() => deleteGroup(group)}>Gruppe löschen</button>
+      </div>
+      <h4 class="visually-hidden">{group.name}</h4>
 
       <ul class="members">
         {#each group.memberSubjects as subject}
@@ -216,31 +276,8 @@
 </section>
 
 <section>
-  <h3>Ordner-ACLs</h3>
-  {#if pathRules.length === 0}
-    <p class="hint">Keine Regeln - ohne Regel ist ein Pfad standardmäßig erlaubt.</p>
-  {:else}
-    <table>
-      <tbody>
-        {#each pathRules as rule}
-          <tr>
-            <td class="mono">{rule.pathPrefix}</td>
-            <td>{rule.scopeSubject ?? "jeder"}</td>
-            <td class="effect" class:deny={rule.effect === "DENY"}>{rule.effect}</td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  {/if}
-  <form class="row-form" onsubmit={(e) => { e.preventDefault(); createPathRule(); }}>
-    <input type="text" placeholder="Pfad-Präfix" bind:value={newPathRule.pathPrefix} />
-    <input type="text" placeholder="Actor (leer = jeder)" bind:value={newPathRule.scopeSubject} />
-    <select bind:value={newPathRule.effect}>
-      <option value="DENY">DENY</option>
-      <option value="ALLOW">ALLOW</option>
-    </select>
-    <button class="secondary" type="submit">Regel anlegen</button>
-  </form>
+  <h3>Freigaben</h3>
+  <p class="hint">Wer welche Notiz oder welchen Ordner sehen und bearbeiten darf, legst du jetzt direkt dort fest: im Reiter „Notizen“ über „Freigabe“ – oder in Obsidian per Rechtsklick → „Freigabe…“.</p>
 </section>
 
 <style>
@@ -264,6 +301,12 @@
   .error {
     color: var(--rust);
   }
+
+  .actions { text-align: right; white-space: nowrap; }
+  .inline { display: inline-flex; align-items: center; gap: .25rem; margin-right: .6rem; font-size: .8rem; }
+  .group-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .5rem; }
+  .group-head input { font-weight: 600; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
   section {
     background: var(--surface);
@@ -310,15 +353,7 @@
     text-align: right;
   }
 
-  .effect {
-    text-align: right;
-    font-weight: 600;
-    color: var(--forest);
-  }
 
-  .effect.deny {
-    color: var(--rust);
-  }
 
   form {
     display: flex;
@@ -339,19 +374,8 @@
     border-radius: var(--radius);
   }
 
-  select {
-    background: var(--surface-raised);
-    border: 1px solid var(--line);
-    color: var(--ink);
-    padding: 0.5rem 0.7rem;
-    border-radius: var(--radius);
-  }
 
   input:focus,
-  select:focus {
-    outline: none;
-    border-color: var(--forest);
-  }
 
   fieldset {
     display: flex;

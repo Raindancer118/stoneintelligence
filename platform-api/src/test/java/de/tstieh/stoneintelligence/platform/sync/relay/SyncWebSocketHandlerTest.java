@@ -30,7 +30,8 @@ class SyncWebSocketHandlerTest {
     private final de.tstieh.stoneintelligence.platform.identity.FakeAccessGrantRepository grants =
         new de.tstieh.stoneintelligence.platform.identity.FakeAccessGrantRepository(notes);
     private final SyncWebSocketHandler handler =
-        new SyncWebSocketHandler(relay, notes, new VaultAccessGuard(authorization, grants), announcements);
+        new SyncWebSocketHandler(relay, notes, new VaultAccessGuard(authorization, grants), announcements,
+            new de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker(notes));
 
     private VaultId newReaderOnlyNote(String actor, String path) {
         var vaultId = VaultId.newId();
@@ -147,6 +148,30 @@ class SyncWebSocketHandlerTest {
         send(writer, SyncFrame.TYPE_DOC_UPDATE, note.id(), "update after deletion".getBytes());
 
         assertThat(snapshotStore.listSince(note.id(), 0)).isEmpty();
+    }
+
+    // Anforderungen.md: Oeffnen und Bearbeiten werden unterschieden.
+    @Test
+    void should_recordWhoOpened_andWhoEdited() {
+        var vaultId = VaultId.newId();
+        var note = notes.create(vaultId, "shared.md", NoteLevel.of(1), "creator");
+        var reader = authorization.createRole(vaultId, "reader", Set.of(Permission.READ));
+        var writer = authorization.createRole(vaultId, "writer", Set.of(Permission.READ, Permission.WRITE));
+        var readers = authorization.createGroup(vaultId, "readers");
+        var writers = authorization.createGroup(vaultId, "writers");
+        authorization.assignRole(readers.id(), reader.id());
+        authorization.assignRole(writers.id(), writer.id());
+        authorization.addMember(readers.id(), "ben");
+        authorization.addMember(writers.id(), "anna");
+
+        send(connect(vaultId, "ben"), SyncFrame.TYPE_JOIN, note.id(), new byte[0]);
+        var anna = connect(vaultId, "anna");
+        send(anna, SyncFrame.TYPE_JOIN, note.id(), new byte[0]);
+        send(anna, SyncFrame.TYPE_DOC_UPDATE, note.id(), "edit".getBytes());
+
+        var activity = notes.activity(vaultId, note.id()).orElseThrow();
+        assertThat(activity.lastEditedBy()).isEqualTo("anna");
+        assertThat(activity.lastOpenedBy()).isIn("ben", "anna");
     }
 
     // ADR 0011: aendern sich Freigaben, gelten sie sofort auch fuer offene Verbindungen.

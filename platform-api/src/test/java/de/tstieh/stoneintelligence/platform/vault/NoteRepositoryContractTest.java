@@ -31,6 +31,35 @@ public abstract class NoteRepositoryContractTest {
     protected abstract VaultId newVault();
 
     @Nested
+    class Activity {
+
+        @Test
+        void should_tellOpeningApartFromEditing_scopedToTheVault() {
+            var repository = repository();
+            var vaultId = newVault();
+            var note = repository.create(vaultId, "plan.md", NoteLevel.of(1), "tom");
+            var opened = java.time.Instant.parse("2026-09-26T10:00:00Z");
+            var edited = java.time.Instant.parse("2026-09-26T11:00:00Z");
+
+            assertThat(repository.activity(vaultId, note.id())).get()
+                .satisfies(activity -> assertThat(activity.lastEditedBy()).isNull());
+
+            repository.markOpened(vaultId, note.id(), "ben", opened);
+            repository.markEdited(vaultId, note.id(), "anna", edited);
+            repository.markOpened(newVault(), note.id(), "eve", edited);
+
+            assertThat(repository.activity(vaultId, note.id())).get().satisfies(activity -> {
+                assertThat(activity.createdBy()).isEqualTo("tom");
+                assertThat(activity.lastOpenedBy()).isEqualTo("ben");
+                assertThat(activity.lastOpenedAt()).isEqualTo(opened);
+                assertThat(activity.lastEditedBy()).isEqualTo("anna");
+                assertThat(activity.lastEditedAt()).isEqualTo(edited);
+            });
+            assertThat(repository.activity(newVault(), note.id())).isEmpty();
+        }
+    }
+
+    @Nested
     class CreateAndFind {
 
         @Test

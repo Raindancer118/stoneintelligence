@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
  * kann, waehrend die zugehoerige Aenderung erfolgreich war.
  */
 @Service
-public class AuditService implements AuditRecorder {
+public class AuditService implements AuditRecorder, AuditReader {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -66,6 +66,21 @@ public class AuditService implements AuditRecorder {
             .update();
     }
 
+    @Override
+    public List<AuditEvent> listRecent(VaultId vaultId, int limit) {
+        return jdbcClient.sql("""
+                SELECT * FROM platform.audit_events
+                WHERE vault_id = :vaultId
+                ORDER BY occurred_at DESC, id
+                LIMIT :limit
+                """)
+            .param("vaultId", vaultId.value())
+            .param("limit", limit)
+            .query(MAPPER)
+            .list();
+    }
+
+    @Override
     public List<AuditEvent> listForNote(VaultId vaultId, NoteId noteId) {
         return jdbcClient.sql("""
                 SELECT * FROM platform.audit_events

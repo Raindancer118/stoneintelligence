@@ -140,7 +140,7 @@
             {:else if section === "notes"}
               {#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
             {:else}
-              {#await import("./lib/components/VaultDetail.svelte")}<p role="status">Verwaltung wird geladen…</p>{:then module}<div class="management"><module.default vault={selected} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
+              {#await import("./lib/components/VaultDetail.svelte")}<p role="status">Verwaltung wird geladen…</p>{:then module}<div class="management"><module.default vault={selected} me={preferredUsername(user)} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
             {/if}
           {/key}
         {:else}<section class="first-vault"><h1>Willkommen in deinem Arbeitsplatz.</h1><p>Lege links deinen ersten Vault an. Ein Vault bündelt deine Notizen und legt fest, mit wem du sie teilst.</p><p class="hint">Du kannst anschließend neue Notizen schreiben oder deinen Obsidian-Vault über die Verwaltung verbinden.</p></section>{/if}

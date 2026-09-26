@@ -86,4 +86,17 @@ class AuditServiceIT {
 
         assertThat(auditService.listForNote(vaultId, noteId)).isEmpty();
     }
+
+    @Test
+    void should_listTheMostRecentEventsOfAVault_newestFirst() {
+        var vaultId = VaultId.newId();
+        for (int i = 0; i < 5; i++) {
+            auditService.record(vaultId, null, "tom", "EVENT_" + i, Map.of());
+        }
+        auditService.record(VaultId.newId(), null, "eve", "OTHER", Map.of());
+
+        var recent = auditService.listRecent(vaultId, 3);
+
+        assertThat(recent).extracting(AuditEvent::action).hasSize(3).doesNotContain("OTHER", "EVENT_0", "EVENT_1");
+    }
 }

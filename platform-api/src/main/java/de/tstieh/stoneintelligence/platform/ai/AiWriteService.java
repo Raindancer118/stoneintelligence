@@ -296,6 +296,7 @@ public class AiWriteService {
             var saved = relay.saveIfCurrent(note.id(), revision, update.get());
             if (saved.isPresent()) {
                 audit.record(note.vaultId(), note.id(), actor, "note.content-updated", Map.of("revision", saved.get().serverSequence()));
+                notes.markEdited(note.vaultId(), note.id(), actor, clock.get());
                 announcements.announceNoteUpdated(note.vaultId(), note.id(), () -> Optional.of(note.path()));
                 return before;
             }

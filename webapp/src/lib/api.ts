@@ -21,11 +21,6 @@ export interface Group {
   roleIds: string[];
 }
 
-export interface PathRule {
-  pathPrefix: string;
-  scopeSubject: string | null;
-  effect: "ALLOW" | "DENY";
-}
 
 export interface Note {
   id: string; vaultId: string; path: string; noteLevel: number; createdBy: string; createdAt: string;
@@ -223,11 +218,14 @@ export const api = {
   removeFolderGrant: (vaultId: string, path: string, scopeType: ScopeType, subject: string | null) =>
     request<void>(`/api/v1/vaults/${vaultId}/folders/access/grants?${new URLSearchParams({ path })}&${scopeQuery(scopeType, subject)}`, { method: "DELETE" }),
   listMembers: (vaultId: string) => request<VaultMember[]>(`/api/v1/vaults/${vaultId}/members`),
-
-  listPathRules: (vaultId: string) => request<PathRule[]>(`/api/v1/vaults/${vaultId}/path-rules`),
-  createPathRule: (vaultId: string, pathPrefix: string, scopeSubject: string | null, effect: "ALLOW" | "DENY") =>
-    request<PathRule>(`/api/v1/vaults/${vaultId}/path-rules`, {
-      method: "POST",
-      body: JSON.stringify({ pathPrefix, scopeSubject, effect }),
-    }),
+  removeFromVault: (vaultId: string, subject: string) =>
+    request<void>(`/api/v1/vaults/${vaultId}/members/${encodeURIComponent(subject)}`, { method: "DELETE" }),
+  updateRole: (vaultId: string, roleId: string, name: string | null, permissions: string[] | null) =>
+    request<void>(`/api/v1/vaults/${vaultId}/roles/${roleId}`, { method: "PATCH", body: JSON.stringify({ name, permissions }) }),
+  deleteRole: (vaultId: string, roleId: string) => request<void>(`/api/v1/vaults/${vaultId}/roles/${roleId}`, { method: "DELETE" }),
+  renameGroup: (vaultId: string, groupId: string, name: string) =>
+    request<void>(`/api/v1/vaults/${vaultId}/groups/${groupId}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  deleteGroup: (vaultId: string, groupId: string) => request<void>(`/api/v1/vaults/${vaultId}/groups/${groupId}`, { method: "DELETE" }),
+  renameVault: (vaultId: string, name: string) =>
+    request<Vault>(`/api/v1/vaults/${vaultId}`, { method: "PATCH", body: JSON.stringify({ name }) }),
 };
