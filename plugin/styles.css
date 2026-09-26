@@ -298,3 +298,26 @@
   border-left: 3px solid var(--interactive-accent);
   padding-left: 0.75em;
 }
+
+/* Rechte je Eintrag (ADR 0011): Kennzeichen im Dateibaum, Hinweis im gesperrten Editor */
+[data-stoneintelligence-access]::after {
+  margin-inline-start: var(--size-4-1);
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+[data-stoneintelligence-access="readonly"]::after {
+  content: "🔒";
+}
+
+[data-stoneintelligence-access="shared"]::after {
+  content: "👥";
+}
+
+.stoneintelligence-readonly-panel {
+  padding: var(--size-4-1) var(--size-4-3);
+  background-color: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  border-bottom: var(--border-width) solid var(--background-modifier-border);
+}

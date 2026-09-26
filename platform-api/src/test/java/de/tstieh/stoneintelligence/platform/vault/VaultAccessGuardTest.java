@@ -85,4 +85,22 @@ class VaultAccessGuardTest {
         assertThat(guard.readableNotes(vaultId, "guest", List.of(shared, hidden))).containsExactly(shared);
         assertThat(guard.readablePaths(vaultId, "guest", List.of("shared.md", "hidden.md"), p -> p)).containsExactly("shared.md");
     }
+
+    @Test
+    void should_nameWhatSomeoneMayDoWithEachNote_andShowGrantsOnlyToManagers() {
+        member("tom", Permission.READ, Permission.WRITE, Permission.MANAGE);
+        member("ben", Permission.READ);
+        var plain = notes.create(vaultId, "plain.md", NoteLevel.of(1), "tom");
+        var shared = notes.create(vaultId, "Team/shared.md", NoteLevel.of(1), "tom");
+        grants.put(vaultId, GrantTarget.folder("Team"), GrantScope.user("ben"), Set.of(Permission.READ, Permission.WRITE), "tom");
+
+        var forBen = guard.entryAccess(vaultId, "ben", List.of(plain, shared));
+        var forTom = guard.entryAccess(vaultId, "tom", List.of(plain, shared));
+
+        assertThat(forBen.get(plain.id()).permissions()).containsExactly(Permission.READ);
+        assertThat(forBen.get(shared.id()).permissions()).containsExactlyInAnyOrder(Permission.READ, Permission.WRITE);
+        assertThat(forBen.get(shared.id()).shared()).isNull();
+        assertThat(forTom.get(shared.id()).shared()).isTrue();
+        assertThat(forTom.get(plain.id()).shared()).isFalse();
+    }
 }

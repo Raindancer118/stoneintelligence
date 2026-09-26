@@ -189,4 +189,17 @@ class AccessResolverTest {
 
         assertThat(AccessResolver.resolve(EDITOR, grants, "A/B/c.md").source()).isEqualTo(decisive);
     }
+
+    @Test
+    void should_tellWhetherAnyGrantTouchesAPath_regardlessOfWhomItConcerns() {
+        var grants = List.of(
+            folder("Team", GrantScope.user("ben"), Set.of()),
+            entry(PLAN, "Other/plan.md", GrantScope.everyone(), Set.of(READ)));
+
+        assertThat(AccessResolver.touchedByGrant(grants, "Team/deep/a.md")).isTrue();
+        assertThat(AccessResolver.touchedByGrant(grants, "Team/")).isTrue();
+        assertThat(AccessResolver.touchedByGrant(grants, "Other/plan.md")).isTrue();
+        assertThat(AccessResolver.touchedByGrant(grants, "Other/else.md")).isFalse();
+        assertThat(AccessResolver.touchedByGrant(List.of(folder("", GrantScope.everyone(), null)), "x.md")).isTrue();
+    }
 }

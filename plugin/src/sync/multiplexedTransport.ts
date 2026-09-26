@@ -26,11 +26,15 @@ const TYPE_SUBSCRIBE_FOLDER_EVENTS = 11;
 const TYPE_SUBSCRIBE_FILE_EVENTS = 13;
 /** Ordner unter diesem Pfad angelegt/geloescht/verschoben - Anlass, die Ordnerliste zu holen. */
 export const VAULT_FOLDERS_CHANGED = 12;
+/** Client->Server: "ich verstehe VAULT_ACCESS_CHANGED" (ADR 0011). */
+const TYPE_SUBSCRIBE_ACCESS_EVENTS = 14;
+/** Rechte im Vault haben sich geaendert - ohne Pfad; Anlass, Liste und Rechte neu zu holen. */
+export const VAULT_ACCESS_CHANGED = 15;
 const NIL_NOTE_ID = "00000000-0000-0000-0000-000000000000";
 const TYPE_VAULT_NOTE_CREATED = VAULT_NOTE_CREATED;
 const TYPE_VAULT_NOTE_DELETED = VAULT_NOTE_DELETED;
 const TYPE_VAULT_NOTE_RENAMED = VAULT_NOTE_RENAMED;
-const VAULT_EVENT_TYPES = new Set([TYPE_VAULT_NOTE_CREATED, TYPE_VAULT_NOTE_DELETED, TYPE_VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED, VAULT_FOLDERS_CHANGED]);
+const VAULT_EVENT_TYPES = new Set([TYPE_VAULT_NOTE_CREATED, TYPE_VAULT_NOTE_DELETED, TYPE_VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED, VAULT_FOLDERS_CHANGED, VAULT_ACCESS_CHANGED]);
 
 export type VaultEventHandler = (messageType: number, noteId: string, path: string) => void;
 /** Muss zu {@code SyncClient.CLOSE_CODE_NOTE_DELETED} passen - SyncClient reagiert bereits darauf, bleibt unveraendert. */
@@ -108,6 +112,8 @@ export interface MultiplexedTransportOptions {
   subscribeFolderEvents?: boolean;
   /** Datei-Ankuendigungen abonnieren (nach jedem Connect erneut). */
   subscribeFileEvents?: boolean;
+  /** Rechte-Ankuendigungen abonnieren (nach jedem Connect erneut). */
+  subscribeAccessEvents?: boolean;
   /** Nach JEDEM erfolgreichen (Re-)Connect - Anlass, verpasste Vault-Ereignisse per Abgleich nachzuholen. */
   onConnected?: () => void;
   sleep?: (ms: number) => Promise<void>;
@@ -170,6 +176,7 @@ export class MultiplexedTransport {
   private readonly subscribeContentUpdates: boolean;
   private readonly subscribeFolderEvents: boolean;
   private readonly subscribeFileEvents: boolean;
+  private readonly subscribeAccessEvents: boolean;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly onVaultEvent: VaultEventHandler | null;
 
@@ -187,6 +194,7 @@ export class MultiplexedTransport {
     this.subscribeContentUpdates = options.subscribeContentUpdates ?? false;
     this.subscribeFolderEvents = options.subscribeFolderEvents ?? false;
     this.subscribeFileEvents = options.subscribeFileEvents ?? false;
+    this.subscribeAccessEvents = options.subscribeAccessEvents ?? false;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.onVaultEvent = options.onVaultEvent ?? null;
   }
@@ -274,6 +282,9 @@ export class MultiplexedTransport {
         }
         if (this.subscribeFileEvents) {
           this.sendFramed(TYPE_SUBSCRIBE_FILE_EVENTS, NIL_NOTE_ID, new Uint8Array(0));
+        }
+        if (this.subscribeAccessEvents) {
+          this.sendFramed(TYPE_SUBSCRIBE_ACCESS_EVENTS, NIL_NOTE_ID, new Uint8Array(0));
         }
         if (this.everConnected) {
           // RECONNECT (nicht der allererste Connect): der Server kennt keine alten Joins einer

@@ -562,6 +562,35 @@ describe("MultiplexedTransport", () => {
     });
   });
 
+  describe("Rechte-Ankuendigungen (ADR 0011)", () => {
+    it("should_subscribeToAccessChanges_afterConnecting", async () => {
+      const socket = new FakeRealSocket();
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => socket, {
+        sleep: vi.fn(), subscribeAccessEvents: true,
+      });
+      transport.start();
+      await waitUntilConnecting(socket);
+      socket.open();
+
+      expect(socket.sent.some((frameBytes) => frameBytes[0] === 14)).toBe(true);
+    });
+
+    it("should_reportAnAccessChange_asAVaultEventWithoutPath", async () => {
+      const socket = new FakeRealSocket();
+      const events: Array<[number, string, string]> = [];
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => socket, {
+        sleep: vi.fn(), onVaultEvent: (type, noteId, path) => events.push([type, noteId, path]),
+      });
+      transport.start();
+      await waitUntilConnecting(socket);
+      socket.open();
+
+      socket.deliver(vaultFrame(15, "00000000-0000-0000-0000-000000000000", ""));
+
+      expect(events).toEqual([[15, "00000000-0000-0000-0000-000000000000", ""]]);
+    });
+  });
+
   describe("Ordner-Ankuendigungen", () => {
     it("should_subscribeToFolderAnnouncements_afterConnecting", async () => {
       const socket = new FakeRealSocket();

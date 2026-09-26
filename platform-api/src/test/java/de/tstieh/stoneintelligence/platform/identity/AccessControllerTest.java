@@ -233,4 +233,19 @@ class AccessControllerTest {
                 .isInstanceOf(ForbiddenException.class);
         }
     }
+
+    @Test
+    void should_listOnlyTheGrantsSomeoneMayManage() {
+        folders.ensure(vaultId, "Team/Intern", "tom");
+        controller.putFolderGrant(vault(), "Team", user("ben", READ, MANAGE), as("tom"));
+        controller.putNoteGrant(vault(), planId(), user("cleo"), as("tom"));
+        var outside = notes.create(vaultId, "outside.md", NoteLevel.of(1), "tom");
+        controller.putNoteGrant(vault(), outside.id().value().toString(), user("cleo"), as("tom"));
+
+        assertThat(controller.listGrants(vault(), as("tom"))).hasSize(3);
+        assertThat(controller.listGrants(vault(), as("ben"))).extracting(grant -> grant.target().path())
+            .containsExactlyInAnyOrder("Team", "Team/plan.md");
+        assertThat(controller.listGrants(vault(), as("cleo"))).isEmpty();
+        assertThatThrownBy(() -> controller.listGrants(vault(), as("mallory"))).isInstanceOf(ForbiddenException.class);
+    }
 }

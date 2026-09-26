@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { conflictCopyPath, type ContentSyncPorts, hasUnsyncedLocalEdits, syncNoteContent } from "../src/sync/noteContentSync";
+import { conflictCopyPath, type ContentSyncPorts, hasUnsyncedLocalEdits, revertReadOnlyEdit, syncNoteContent } from "../src/sync/noteContentSync";
 
 /**
  * Simuliert Server + Datei-System eines Geraets. `connect` verhaelt sich wie der echte Ablauf
@@ -219,5 +219,34 @@ describe("offline outcome", () => {
 
     world.files.set("a.md", "Basis geaendert");
     expect(await syncNoteContent(world, "n1", "a.md")).toEqual({ outcome: "offline", pendingLocalChanges: true });
+  });
+});
+
+describe("revertReadOnlyEdit (ADR 0011)", () => {
+  function syncedWorld(text: string): FakeWorld {
+    const world = new FakeWorld(text);
+    world.files.set("a.md", text);
+    world.states.set("n1", Y.encodeStateAsUpdate(world.server));
+    return world;
+  }
+
+  it("should_keepAnEditOfAReadOnlyNote_asACopy_andRestoreTheNote", async () => {
+    const world = syncedWorld("Original");
+    world.files.set("a.md", "Original, von mir geändert");
+
+    const copy = await revertReadOnlyEdit(world, "n1", "a.md");
+
+    expect(copy).toBe("a (Konflikt).md");
+    expect(world.files.get("a (Konflikt).md")).toBe("Original, von mir geändert");
+    expect(world.files.get("a.md")).toBe("Original");
+  });
+
+  it("should_leaveAnUnchangedNote_andOneWithoutKnownState_alone", async () => {
+    const world = syncedWorld("Original");
+    expect(await revertReadOnlyEdit(world, "n1", "a.md")).toBeNull();
+
+    world.files.set("b.md", "irgendwas");
+    expect(await revertReadOnlyEdit(world, "unbekannt", "b.md")).toBeNull();
+    expect(world.files.get("b.md")).toBe("irgendwas");
   });
 });

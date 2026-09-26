@@ -73,6 +73,12 @@ export interface AiChange { noteId: string; path: string; kind: "CREATED" | "UPD
 export interface AiChangeSetDetail { changeSet: AiChangeSet; changes: AiChange[]; }
 export interface AiRevertReport { reverted: number; conflicts: { path: string; reason: string }[]; }
 
+export type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
+import type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
+export interface VaultMember { subject: string; groups: { id: string; name: string }[]; permissions: Permission[]; }
+/** `permissions === null` heisst "wie im Vault", eine leere Liste "nichts". */
+export interface GrantChange { scopeType: ScopeType; subject: string | null; permissions: Permission[] | null; }
+
 export class ApiError extends Error {
   constructor(public status: number, detail?: string) {
     super(detail ?? ({ 401: "Deine Anmeldung ist abgelaufen. Bitte melde dich erneut an.",
@@ -92,6 +98,10 @@ async function problemDetail(response: Response): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+function scopeQuery(scopeType: ScopeType, subject: string | null): URLSearchParams {
+  return new URLSearchParams(subject === null ? { scopeType } : { scopeType, subject });
 }
 
 /** Ohne Login - die Einladungsseite muss auch fuer Personen ohne Konto funktionieren. */
@@ -199,6 +209,20 @@ export const api = {
     request<AiChangeSetDetail>(`/api/v1/vaults/${vaultId}/ai/change-sets/${changeSetId}`),
   revertChangeSet: (vaultId: string, changeSetId: string) =>
     request<AiRevertReport>(`/api/v1/vaults/${vaultId}/ai/change-sets/${changeSetId}/revert`, { method: "POST" }),
+
+  // Rechte je Ordner und Eintrag (ADR 0011)
+  noteAccess: (vaultId: string, noteId: string) => request<AccessReport>(`/api/v1/vaults/${vaultId}/notes/${noteId}/access`),
+  folderAccess: (vaultId: string, path: string) =>
+    request<AccessReport>(`/api/v1/vaults/${vaultId}/folders/access?${new URLSearchParams({ path })}`),
+  putNoteGrant: (vaultId: string, noteId: string, change: GrantChange) =>
+    request<Grant>(`/api/v1/vaults/${vaultId}/notes/${noteId}/access/grants`, { method: "PUT", body: JSON.stringify(change) }),
+  putFolderGrant: (vaultId: string, path: string, change: GrantChange) =>
+    request<Grant>(`/api/v1/vaults/${vaultId}/folders/access/grants?${new URLSearchParams({ path })}`, { method: "PUT", body: JSON.stringify(change) }),
+  removeNoteGrant: (vaultId: string, noteId: string, scopeType: ScopeType, subject: string | null) =>
+    request<void>(`/api/v1/vaults/${vaultId}/notes/${noteId}/access/grants?${scopeQuery(scopeType, subject)}`, { method: "DELETE" }),
+  removeFolderGrant: (vaultId: string, path: string, scopeType: ScopeType, subject: string | null) =>
+    request<void>(`/api/v1/vaults/${vaultId}/folders/access/grants?${new URLSearchParams({ path })}&${scopeQuery(scopeType, subject)}`, { method: "DELETE" }),
+  listMembers: (vaultId: string) => request<VaultMember[]>(`/api/v1/vaults/${vaultId}/members`),
 
   listPathRules: (vaultId: string) => request<PathRule[]>(`/api/v1/vaults/${vaultId}/path-rules`),
   createPathRule: (vaultId: string, pathPrefix: string, scopeSubject: string | null, effect: "ALLOW" | "DENY") =>
