@@ -11,8 +11,11 @@ import de.tstieh.stoneintelligence.domain.id.VaultId;
 public record LinkingSettings(VaultId vaultId, boolean enabled, Mode mode, boolean linkHumanNotes, Integer maxLinksPerNote,
                               String service, String requestedBy, Instant lastRunAt, Instant updatedAt) {
 
-    /** {@code AI}: Kandidaten prueft eine KI (Stufe 3); {@code SEMANTIC}: nur Stufen 1 und 2, nichts verlaesst den Server. */
-    public enum Mode { AI, SEMANTIC }
+    /**
+     * {@code LITERAL}: nur woertliche Nennungen (Stufe 1); {@code SEMANTIC}: dazu aehnliche Inhalte
+     * (Stufe 2, lokal - nichts verlaesst den Server); {@code AI}: dazu KI-Pruefung (Stufe 3, folgt).
+     */
+    public enum Mode { LITERAL, SEMANTIC, AI }
 
     public LinkingSettings {
         if (maxLinksPerNote != null && maxLinksPerNote < 1) {
@@ -21,6 +24,6 @@ public record LinkingSettings(VaultId vaultId, boolean enabled, Mode mode, boole
     }
 
     public static LinkingSettings defaults(VaultId vaultId, String requestedBy, Instant now) {
-        return new LinkingSettings(vaultId, false, Mode.AI, true, null, null, requestedBy, null, now);
+        return new LinkingSettings(vaultId, false, Mode.LITERAL, true, null, null, requestedBy, null, now);
     }
 }

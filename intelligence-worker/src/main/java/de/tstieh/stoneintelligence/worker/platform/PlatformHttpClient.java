@@ -120,6 +120,31 @@ public final class PlatformHttpClient implements PlatformApi {
     }
 
     @Override
+    public String linkingMode(String vaultId) {
+        return parse(send(request("/internal/ai/vaults/" + vaultId + "/linking").GET()), new TypeReference<LinkingSettingsRef>() { }).mode();
+    }
+
+    @Override
+    public List<EmbeddingState> embeddingStates(String vaultId, UUID changeSetId) {
+        return parse(send(request("/internal/ai/vaults/" + vaultId + "/change-sets/" + changeSetId + "/embeddings").GET()),
+            new TypeReference<List<EmbeddingState>>() { });
+    }
+
+    @Override
+    public void storeEmbeddings(String vaultId, UUID changeSetId, String noteId, String model, String contentHash,
+                                List<EmbeddedChunk> chunks) {
+        send(request(notesPath(vaultId, changeSetId) + "/" + noteId + "/embeddings")
+            .PUT(HttpRequest.BodyPublishers.ofString(write(Map.of("model", model, "contentHash", contentHash, "chunks", chunks))))
+            .header("Content-Type", "application/json"));
+    }
+
+    @Override
+    public List<SimilarChunk> similar(String vaultId, UUID changeSetId, String noteId, int limit) {
+        return parse(send(request(notesPath(vaultId, changeSetId) + "/" + noteId + "/similar?limit=" + limit).GET()),
+            new TypeReference<List<SimilarChunk>>() { });
+    }
+
+    @Override
     public int link(String vaultId, UUID changeSetId, String noteId, List<ProposedLink> links) {
         return parse(post(notesPath(vaultId, changeSetId) + "/" + noteId + "/links", Map.of("links", links)),
             new TypeReference<LinksApplied>() { }).applied().size();
@@ -199,5 +224,6 @@ public final class PlatformHttpClient implements PlatformApi {
     record NoteRef(String noteId, String path) { }
     record ServiceRef(String id) { }
     record AppliedLink(String placement, String markup) { }
+    record LinkingSettingsRef(String mode) { }
     record LinksApplied(List<AppliedLink> applied) { }
 }

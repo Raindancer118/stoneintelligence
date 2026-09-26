@@ -15,7 +15,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class JdbcLinkingSettingsRepositoryIT extends LinkingSettingsRepositoryContractTest {
 
     @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine")
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(de.tstieh.stoneintelligence.platform.TestImages.POSTGRES)
         .withDatabaseName("stoneintelligence").withUsername("stoneintelligence").withPassword("test");
 
     private static JdbcClient jdbcClient;

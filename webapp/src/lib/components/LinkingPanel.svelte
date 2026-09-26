@@ -27,7 +27,7 @@
     const next = { ...settings, ...change };
     busy = true; error = ""; message = "";
     try {
-      settings = await api.updateLinking(vault.id, { enabled: next.enabled, linkHumanNotes: next.linkHumanNotes, maxLinksPerNote: next.maxLinksPerNote, service: next.service });
+      settings = await api.updateLinking(vault.id, { enabled: next.enabled, linkHumanNotes: next.linkHumanNotes, maxLinksPerNote: next.maxLinksPerNote, service: next.service, mode: next.mode ?? null });
       message = settings.enabled ? "Die Verlinkung läuft jetzt jede Nacht um 2 Uhr." : "Die nächtliche Verlinkung ist aus.";
     } catch (e) { error = explain(e); }
     finally { busy = false; }
@@ -51,6 +51,12 @@
   <section class="block linking" aria-label="Verlinkung">
     <h3>Verlinkung</h3>
     <p class="hint">Nennt eine Notiz den Titel oder einen Alias einer anderen, wird die Stelle zum Link – nur eingefügtes Markup, der Text bleibt, wie er ist. Das geschieht auf dem Server, ohne externe KI; jeder Lauf lässt sich unten unter „Änderungen der KI“ rückgängig machen.</p>
+    <label class="mode">Was verlinkt wird
+      <select value={settings.mode === "SEMANTIC" ? "SEMANTIC" : "LITERAL"} disabled={!manage || busy} onchange={e => save({ mode: e.currentTarget.value as "LITERAL" | "SEMANTIC" })}>
+        <option value="LITERAL">Nur wörtliche Nennungen</option>
+        <option value="SEMANTIC">Auch ähnliche Inhalte (unter „Verwandt“)</option>
+      </select>
+    </label>
     <label class="toggle"><input type="checkbox" checked={settings.enabled} disabled={!manage || busy} onchange={e => save({ enabled: e.currentTarget.checked })} /> Jede Nacht um 2 Uhr verlinken{settings.enabled && settings.requestedBy ? ` (mit den Rechten von ${settings.requestedBy})` : ""}</label>
     <label class="toggle"><input type="checkbox" checked={settings.linkHumanNotes} disabled={!manage || busy} onchange={e => save({ linkHumanNotes: e.currentTarget.checked })} /> Auch in Notizen von Menschen</label>
     <form class="max" onsubmit={e => { e.preventDefault(); saveMax(); }}>
@@ -68,6 +74,7 @@
 {#if error}<p class="feedback error" role="alert">{error}</p>{/if}
 
 <style>
+  .mode { display: flex; flex-direction: column; gap: .3rem; font-size: .82rem; font-weight: 500; margin: .6rem 0; max-width: 24rem; }
   .linking .toggle { display: flex; align-items: center; gap: .5rem; margin: .5rem 0; }
   .linking .toggle input { min-height: auto; }
   .max { display: flex; flex-wrap: wrap; align-items: end; gap: .6rem; margin: .8rem 0; } .max label { width: 100%; font-size: .82rem; font-weight: 500; } .max input { width: 8rem; }

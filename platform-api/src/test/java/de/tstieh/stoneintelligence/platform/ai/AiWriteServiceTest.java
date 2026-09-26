@@ -139,6 +139,20 @@ class AiWriteServiceTest {
             assertThat(service.readText(vaultId, source, EXTERN)).isEqualTo("Pflanzen brauchen Licht.\nUnd Wasser.\n");
         }
 
+        // Wer einen gesetzten Link von Hand entfernt, bekommt ihn nicht in der naechsten Nacht zurueck.
+        @Test
+        void should_neverLinkTheSamePairTwice_evenAfterSomeoneRemovedTheLink() {
+            var target = humanNote("Licht.md", "# Licht\n");
+            var source = humanNote("Pflanzen.md", "Pflanzen brauchen Licht.\n");
+            service.linkNote(vaultId, newChangeSet().id(), source, List.of(link(target, "Licht")), linking(true, null));
+            humanEdit(source, "Pflanzen brauchen Licht.\n");
+
+            var again = service.linkNote(vaultId, newChangeSet().id(), source, List.of(link(target, "Licht")), linking(true, null));
+
+            assertThat(again).isEmpty();
+            assertThat(service.readText(vaultId, source, EXTERN)).isEqualTo("Pflanzen brauchen Licht.\n");
+        }
+
         @Test
         void should_notRecordAnything_whenTheNoteAlreadyLinksThere() {
             var changeSet = newChangeSet();

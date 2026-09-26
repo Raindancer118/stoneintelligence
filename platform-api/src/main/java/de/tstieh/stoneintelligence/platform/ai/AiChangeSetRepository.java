@@ -25,4 +25,11 @@ public interface AiChangeSetRepository {
 
     /** Loescht Change-Sets (samt Textkopien), die vor {@code cutoff} angelegt wurden; liefert die Anzahl. */
     int purgeCreatedBefore(Instant cutoff);
+
+    /** Ziele, auf die {@code source} schon einmal verlinkt wurde (ADR 0012) - die werden nie erneut gesetzt. */
+    java.util.Set<de.tstieh.stoneintelligence.domain.id.NoteId> linkedTargets(de.tstieh.stoneintelligence.domain.id.VaultId vaultId,
+                                                                             de.tstieh.stoneintelligence.domain.id.NoteId source);
+
+    void rememberLink(de.tstieh.stoneintelligence.domain.id.VaultId vaultId, de.tstieh.stoneintelligence.domain.id.NoteId source,
+                      de.tstieh.stoneintelligence.domain.id.NoteId target, java.time.Instant at);
 }

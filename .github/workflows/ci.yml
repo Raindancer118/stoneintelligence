@@ -26,6 +26,24 @@ jobs:
           server-username: MAVEN_REGISTRY_USERNAME
           server-password: MAVEN_REGISTRY_PASSWORD
 
+      # Das lokale Embedding-Modell (ADR 0012) - dieselbe gepinnte Fassung wie im Worker-Image,
+      # damit die Embedding-Tests gegen das echte Modell laufen statt uebersprungen zu werden.
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/stoneintelligence/multilingual-e5-small
+          key: multilingual-e5-small-761b726
+
+      - name: Download embedding model
+        run: |
+          dir=~/.cache/stoneintelligence/multilingual-e5-small
+          base=https://huggingface.co/Xenova/multilingual-e5-small/resolve/761b726dd34fb83930e26aab4e9ac3899aa1fa78
+          mkdir -p "$dir"
+          [ -f "$dir/model_quantized.onnx" ] || curl -sSfL -o "$dir/model_quantized.onnx" "$base/onnx/model_quantized.onnx"
+          [ -f "$dir/tokenizer.json" ] || curl -sSfL -o "$dir/tokenizer.json" "$base/tokenizer.json"
+          echo "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193  $dir/model_quantized.onnx" | sha256sum -c -
+          echo "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39  $dir/tokenizer.json" | sha256sum -c -
+
       - name: Build and unit-test all modules
         run: ./mvnw -B -ntp verify
         env:

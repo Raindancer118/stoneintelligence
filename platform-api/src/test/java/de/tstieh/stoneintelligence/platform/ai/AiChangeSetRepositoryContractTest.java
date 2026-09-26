@@ -18,6 +18,9 @@ public abstract class AiChangeSetRepositoryContractTest {
     /** Liefert einen existierenden Vault (Postgres braucht die Fremdschluessel-Zeile). */
     protected abstract VaultId existingVault();
 
+    /** Eine Notiz, die es im Vault wirklich gibt (die Jdbc-Variante hat Fremdschluessel darauf). */
+    protected abstract de.tstieh.stoneintelligence.domain.id.NoteId existingNote(VaultId vaultId, String path);
+
     private AiChangeSetRepository changeSets;
     private VaultId vaultId;
     private final Instant now = Instant.parse("2026-09-23T10:00:00Z");
@@ -70,6 +73,19 @@ public abstract class AiChangeSetRepositoryContractTest {
             assertThat(stored.kind()).isEqualTo(AiChange.Kind.LINKED);
             assertThat(stored.links()).containsExactly(inline, related);
         });
+    }
+
+    @Test
+    void should_rememberWhichPairsWereLinkedOnce_perSourceAndVault() {
+        var source = existingNote(vaultId, "Quelle.md");
+        var target = existingNote(vaultId, "Ziel.md");
+        var other = existingNote(vaultId, "Anders.md");
+
+        changeSets.rememberLink(vaultId, source, target, now);
+        changeSets.rememberLink(vaultId, source, target, now.plusSeconds(1));
+
+        assertThat(changeSets.linkedTargets(vaultId, source)).containsExactly(target);
+        assertThat(changeSets.linkedTargets(vaultId, other)).isEmpty();
     }
 
     @Test

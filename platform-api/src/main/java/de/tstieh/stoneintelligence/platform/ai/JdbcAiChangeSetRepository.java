@@ -147,4 +147,28 @@ public class JdbcAiChangeSetRepository implements AiChangeSetRepository {
             .param("cutoff", Timestamp.from(cutoff))
             .update();
     }
+
+    @Override
+    public java.util.Set<NoteId> linkedTargets(VaultId vaultId, NoteId source) {
+        return java.util.Set.copyOf(jdbcClient.sql("""
+                SELECT target_note_id FROM platform.link_pairs WHERE vault_id = :vaultId AND source_note_id = :source
+                """)
+            .param("vaultId", vaultId.value())
+            .param("source", source.value())
+            .query((rs, row) -> NoteId.of((UUID) rs.getObject("target_note_id")))
+            .list());
+    }
+
+    @Override
+    public void rememberLink(VaultId vaultId, NoteId source, NoteId target, Instant at) {
+        jdbcClient.sql("""
+                INSERT INTO platform.link_pairs (vault_id, source_note_id, target_note_id, linked_at)
+                VALUES (:vaultId, :source, :target, :at) ON CONFLICT DO NOTHING
+                """)
+            .param("vaultId", vaultId.value())
+            .param("source", source.value())
+            .param("target", target.value())
+            .param("at", Timestamp.from(at))
+            .update();
+    }
 }

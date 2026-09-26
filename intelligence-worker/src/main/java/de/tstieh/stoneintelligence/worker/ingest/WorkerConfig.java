@@ -39,7 +39,10 @@ public class WorkerConfig {
     @Bean
     public WorkerLoop workerLoop(PlatformApi platform, GatewayLlmFactory llms, CapacityReporter capacity) {
         var processor = new JobProcessor(platform, llms, ServiceModels.from(System.getenv()), LocalDate::now,
-            JobProcessor.resumeRootFrom(System.getenv()));
+            JobProcessor.resumeRootFrom(System.getenv()),
+            new de.tstieh.stoneintelligence.worker.embed.LazyEmbedder(
+                de.tstieh.stoneintelligence.worker.embed.LocalEmbedder.modelDir(System.getenv())),
+            LinkingRun.Thresholds.from(System.getenv()));
         return new WorkerLoop(platform, processor, capacity);
     }
 }

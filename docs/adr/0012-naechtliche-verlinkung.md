@@ -157,3 +157,22 @@ Obsidian und im Web.
 
 Es folgen: Embeddings (lokal, pgvector) mit Stufe 2 und „Ähnliche Notizen", danach Stufe 3 (KI-Prüfung,
 Beziehungstypen, `link_decisions`) samt Datenschutzhinweis.
+
+## Nachtrag: Stufe 2 und „Ähnliche Notizen" (27.09.2026, 0.29.0)
+
+- **Lokale Embeddings:** Modell `multilingual-e5-small` (Xenova-ONNX, quantisiert, gepinnt auf `761b726`,
+  per SHA-256 geprüft) im Worker-Image. Die Texte werden mit ONNX Runtime und den HF-Tokenizern (DJL)
+  verarbeitet und verlassen den Server nicht. Jeder Abschnitt einer Notiz trägt ihren Titel vorn
+  (`NoteChunker`).
+- **Speicher:** `platform.note_embeddings` (pgvector, HNSW, Kosinus) mit Modell und Quelltext-Hash. Neu
+  berechnet wird nur Geändertes. Die ITs laufen jetzt auf `pgvector/pgvector:pg17`, wie im Betrieb.
+- **Modi:** `LITERAL` (neuer Standard, nur Stufe 1) und `SEMANTIC` (Stufe 1 und 2). `AI` wird
+  abgelehnt, bis Stufe 3 existiert.
+- **Schwelle für Stufe 2:** 0,86, Beinahe-Duplikate ab 0,97 werden nicht verlinkt. Gemessen an
+  Beispielnotizen lag Ähnliches bei 0,83 bis 0,90 und Fremdes bei 0,75 bis 0,80.
+  `LinkingCalibrationTest` hält die Schwelle am echten Modell fest.
+- **Einmal verlinkt, nie wieder** (`platform.link_pairs`): Entfernt jemand einen Link von Hand oder
+  macht einen Lauf rückgängig, setzt die nächste Nacht ihn nicht erneut. Deshalb kann jeder Lauf alle
+  Notizen prüfen; einen gesonderten vollen Abgleich am Sonntag braucht es nicht.
+- **„Ähnliche Notizen"** (`GET …/notes/{id}/similar`): in Obsidian über das Datei-Kontextmenü und einen
+  Befehl, im Web in der Notizansicht. Es zeigt nur Notizen, die man lesen darf.

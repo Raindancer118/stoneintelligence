@@ -22,6 +22,11 @@ class FakePlatform implements PlatformApi {
     }
 
     final Map<String, byte[]> files = new LinkedHashMap<>();
+    /** Verlinkungsmodus des Vaults (ADR 0012). */
+    String linkingMode = "LITERAL";
+    /** Gespeicherte Vektoren je Notiz, wie der Server sie haelt. */
+    final Map<String, de.tstieh.stoneintelligence.worker.platform.EmbeddingState> embeddingStates = new LinkedHashMap<>();
+    final Map<String, List<de.tstieh.stoneintelligence.worker.platform.EmbeddedChunk>> embeddings = new LinkedHashMap<>();
 
     final Map<String, Stored> notes = new LinkedHashMap<>();
     final List<ClaimedJob> queue = new ArrayList<>();
@@ -151,5 +156,51 @@ class FakePlatform implements PlatformApi {
         notes.put(noteId, new Stored(noteId, note.path(), note.level(), note.createdBy(), text));
         events.add("link " + note.path() + " " + applied);
         return applied;
+    }
+
+    @Override
+    public String linkingMode(String vaultId) {
+        return linkingMode;
+    }
+
+    @Override
+    public List<de.tstieh.stoneintelligence.worker.platform.EmbeddingState> embeddingStates(String vaultId, UUID changeSetId) {
+        return List.copyOf(embeddingStates.values());
+    }
+
+    @Override
+    public void storeEmbeddings(String vaultId, UUID changeSetId, String noteId, String model, String contentHash,
+                                List<de.tstieh.stoneintelligence.worker.platform.EmbeddedChunk> chunks) {
+        embeddingStates.put(noteId, new de.tstieh.stoneintelligence.worker.platform.EmbeddingState(noteId, model, contentHash));
+        embeddings.put(noteId, List.copyOf(chunks));
+        events.add("embed " + notes.get(noteId).path());
+    }
+
+    /** Wie der Server: je anderer Notiz ihr aehnlichster Abschnitt, beste zuerst. */
+    @Override
+    public List<de.tstieh.stoneintelligence.worker.platform.SimilarChunk> similar(String vaultId, UUID changeSetId, String noteId, int limit) {
+        var result = new ArrayList<de.tstieh.stoneintelligence.worker.platform.SimilarChunk>();
+        for (var entry : embeddings.entrySet()) {
+            if (entry.getKey().equals(noteId)) {
+                continue;
+            }
+            de.tstieh.stoneintelligence.worker.platform.SimilarChunk best = null;
+            for (var mine : embeddings.getOrDefault(noteId, List.of())) {
+                for (var theirs : entry.getValue()) {
+                    var similarity = 0.0;
+                    for (var d = 0; d < mine.vector().length; d++) {
+                        similarity += mine.vector()[d] * theirs.vector()[d];
+                    }
+                    if (best == null || similarity > best.similarity()) {
+                        best = new de.tstieh.stoneintelligence.worker.platform.SimilarChunk(entry.getKey(), theirs.index(), theirs.heading(), similarity);
+                    }
+                }
+            }
+            if (best != null) {
+                result.add(best);
+            }
+        }
+        result.sort(java.util.Comparator.comparingDouble(de.tstieh.stoneintelligence.worker.platform.SimilarChunk::similarity).reversed());
+        return result.subList(0, Math.min(limit, result.size()));
     }
 }

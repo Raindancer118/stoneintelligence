@@ -42,6 +42,16 @@
       <groupId>de.tstieh</groupId>
       <artifactId>stoneai-core</artifactId>
     </dependency>
+    <dependency>
+      <groupId>com.microsoft.onnxruntime</groupId>
+      <artifactId>onnxruntime</artifactId>
+      <version>${onnxruntime.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>ai.djl.huggingface</groupId>
+      <artifactId>tokenizers</artifactId>
+      <version>${djl-tokenizers.version}</version>
+    </dependency>
 
     <dependency>
       <groupId>org.springframework.boot</groupId>

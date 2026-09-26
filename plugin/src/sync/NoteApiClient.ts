@@ -37,8 +37,11 @@ export interface AiJob {
   finishedAt: string | null; availableAt: string | null; waitingForCapacity: boolean;
 }
 /** Naechtliche Verlinkung eines Vaults (ADR 0012); `maxLinksPerNote === null` = unbegrenzt. */
+export type LinkingMode = "LITERAL" | "SEMANTIC" | "AI";
+/** Eine aehnliche Notiz (ADR 0012): ihr passendster Abschnitt und wie aehnlich (0..1). */
+export interface SimilarNote { noteId: string; path: string; heading: string | null; similarity: number; }
 export interface LinkingSettings {
-  enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null;
+  enabled: boolean; mode?: LinkingMode; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null;
   requestedBy: string | null; lastRunAt: string | null;
 }
 /** Wie viel Kontingent ein KI-Dienst laut letzter Worker-Meldung hat; `exhausted === null` = unbekannt. */
@@ -488,8 +491,13 @@ export class NoteApiClient {
     return this.json<LinkingSettings>(`/api/v1/vaults/${vaultId}/linking`, "failed to read linking");
   }
 
-  async updateLinking(vaultId: string, change: { enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null }): Promise<LinkingSettings> {
+  async updateLinking(vaultId: string, change: { enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null; mode?: LinkingMode | null }): Promise<LinkingSettings> {
     return this.send<LinkingSettings>("PUT", `/api/v1/vaults/${vaultId}/linking`, "failed to change linking", change);
+  }
+
+  /** Notizen mit aehnlichem Inhalt - nur solche, die ich lesen darf; leer, solange noch kein Lauf indiziert hat. */
+  async similarNotes(vaultId: string, noteId: string, limit = 10): Promise<SimilarNote[]> {
+    return this.json<SimilarNote[]>(`/api/v1/vaults/${vaultId}/notes/${noteId}/similar?limit=${limit}`, "failed to find similar notes");
   }
 
   /** "Jetzt verlinken" - im eigenen Namen, braucht Schreibrecht im Vault. */

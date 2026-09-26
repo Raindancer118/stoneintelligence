@@ -125,6 +125,43 @@ public class AiInternalController {
         return new LinksApplied(applied.stream().map(link -> new AppliedLink(link.placement().name(), link.markup())).toList());
     }
 
+    /** Einstellungen des Vaults fuer den Lauf - der Worker richtet sich nach dem Modus. */
+    @GetMapping("/vaults/{vaultId}/linking")
+    public LinkingController.LinkingResponse linkingSettings(@PathVariable String vaultId) {
+        return LinkingController.LinkingResponse.from(linking.internalSettings(VaultId.of(vaultId)));
+    }
+
+    /** Was schon indiziert ist (Modell, Quelltext-Hash je Notiz) - der Worker rechnet nur Geaendertes neu. */
+    @GetMapping("/vaults/{vaultId}/change-sets/{changeSetId}/embeddings")
+    public List<EmbeddingState> embeddingStates(@PathVariable String vaultId, @PathVariable UUID changeSetId) {
+        return linking.embeddingStates(VaultId.of(vaultId), changeSetId).stream()
+            .map(state -> new EmbeddingState(state.noteId().value().toString(), state.model(), state.contentHash()))
+            .toList();
+    }
+
+    @PutMapping("/vaults/{vaultId}/change-sets/{changeSetId}/notes/{noteId}/embeddings")
+    public NoteRef storeEmbeddings(@PathVariable String vaultId, @PathVariable UUID changeSetId, @PathVariable String noteId,
+                                   @RequestBody StoreEmbeddingsRequest request) {
+        var chunks = request.chunks() == null ? List.<NoteEmbeddingRepository.Chunk>of() : request.chunks().stream()
+            .map(chunk -> new NoteEmbeddingRepository.Chunk(chunk.index(), chunk.heading(), chunk.vector()))
+            .toList();
+        linking.storeEmbeddings(VaultId.of(vaultId), changeSetId, NoteId.of(noteId), request.model(), request.contentHash(), chunks);
+        return new NoteRef(noteId, null);
+    }
+
+    @GetMapping("/vaults/{vaultId}/change-sets/{changeSetId}/notes/{noteId}/similar")
+    public List<SimilarChunk> similar(@PathVariable String vaultId, @PathVariable UUID changeSetId, @PathVariable String noteId,
+                                      @org.springframework.web.bind.annotation.RequestParam(defaultValue = "10") int limit) {
+        return linking.similarForRun(VaultId.of(vaultId), changeSetId, NoteId.of(noteId), Math.min(Math.max(limit, 1), 50)).stream()
+            .map(similar -> new SimilarChunk(similar.noteId().value().toString(), similar.chunk(), similar.heading(), similar.similarity()))
+            .toList();
+    }
+
+    public record EmbeddingState(String noteId, String model, String contentHash) { }
+    public record EmbeddedChunk(int index, String heading, float[] vector) { }
+    public record StoreEmbeddingsRequest(String model, String contentHash, List<EmbeddedChunk> chunks) { }
+    public record SimilarChunk(String noteId, int chunk, String heading, double similarity) { }
+
     public record LinkNoteRequest(List<ProposedLink> links) { }
     public record ProposedLink(String target, String anchor, boolean allowRelated) { }
     public record AppliedLink(String placement, String markup) { }

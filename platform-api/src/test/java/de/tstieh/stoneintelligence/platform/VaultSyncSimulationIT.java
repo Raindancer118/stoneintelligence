@@ -51,7 +51,7 @@ class VaultSyncSimulationIT {
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES =
-        new PostgreSQLContainer<>("postgres:17-alpine")
+        new PostgreSQLContainer<>(de.tstieh.stoneintelligence.platform.TestImages.POSTGRES)
             .withDatabaseName("stoneintelligence")
             .withUsername("stoneintelligence")
             .withPassword("test");

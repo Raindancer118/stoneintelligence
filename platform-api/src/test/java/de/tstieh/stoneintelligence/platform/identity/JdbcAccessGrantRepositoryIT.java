@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class JdbcAccessGrantRepositoryIT extends AccessGrantRepositoryContractTest {
 
     @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine")
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(de.tstieh.stoneintelligence.platform.TestImages.POSTGRES)
         .withDatabaseName("stoneintelligence").withUsername("stoneintelligence").withPassword("test");
 
     private static JdbcClient jdbcClient;
@@ -66,7 +66,7 @@ class JdbcAccessGrantRepositoryIT extends AccessGrantRepositoryContractTest {
     // Bestehende Pfadregeln duerfen beim Update weder verloren gehen noch ihre Bedeutung aendern.
     @Test
     void should_turnExistingPathRulesIntoGrants_whenMigrating() {
-        var fresh = new PostgreSQLContainer<>("postgres:17-alpine");
+        var fresh = new PostgreSQLContainer<>(de.tstieh.stoneintelligence.platform.TestImages.POSTGRES);
         fresh.start();
         try {
             var client = JdbcClient.create(new SimpleDriverDataSource(

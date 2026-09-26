@@ -21,7 +21,17 @@ describe("linking panel", () => {
     await fireEvent.click(await screen.findByLabelText(/Jede Nacht um 2 Uhr verlinken/));
 
     await screen.findByText("Die Verlinkung läuft jetzt jede Nacht um 2 Uhr.");
-    expect(api.updateLinking).toHaveBeenCalledWith("vault", { enabled: true, linkHumanNotes: true, maxLinksPerNote: null, service: null });
+    expect(api.updateLinking).toHaveBeenCalledWith("vault", { enabled: true, linkHumanNotes: true, maxLinksPerNote: null, service: null, mode: null });
+  });
+
+  it("switches to similar content as well", async () => {
+    vi.mocked(api.updateLinking).mockResolvedValue({ ...off, mode: "SEMANTIC" });
+    render(LinkingPanel, { vault, permissions: ["READ", "WRITE", "MANAGE"] });
+
+    await fireEvent.change(await screen.findByLabelText("Was verlinkt wird"), { target: { value: "SEMANTIC" } });
+
+    await screen.findByText(/nächtliche Verlinkung ist aus/);
+    expect(api.updateLinking).toHaveBeenCalledWith("vault", expect.objectContaining({ mode: "SEMANTIC" }));
   });
 
   it("refuses a nonsense maximum before asking the server", async () => {

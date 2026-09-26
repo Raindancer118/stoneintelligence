@@ -43,11 +43,25 @@ public class LinkingController {
             refused.getMessage());
     }
 
-    public record LinkingResponse(boolean enabled, boolean linkHumanNotes, Integer maxLinksPerNote, String service,
+    /** "Aehnliche Notizen" (ADR 0012): nach Bedeutung, nur unter denen, die man lesen darf. */
+    @GetMapping("/api/v1/vaults/{vaultId}/notes/{noteId}/similar")
+    public java.util.List<SimilarResponse> similar(@PathVariable String vaultId, @PathVariable String noteId,
+                                                   @org.springframework.web.bind.annotation.RequestParam(defaultValue = "10") int limit,
+                                                   Authentication auth) {
+        return linking.similarNotes(VaultId.of(vaultId), auth.getName(), de.tstieh.stoneintelligence.domain.id.NoteId.of(noteId),
+                Math.min(Math.max(limit, 1), 50)).stream()
+            .map(note -> new SimilarResponse(note.noteId().value().toString(), note.path(), note.heading(), note.similarity()))
+            .toList();
+    }
+
+    public record SimilarResponse(String noteId, String path, String heading, double similarity) {
+    }
+
+    public record LinkingResponse(boolean enabled, String mode, boolean linkHumanNotes, Integer maxLinksPerNote, String service,
                                   String requestedBy, Instant lastRunAt) {
         static LinkingResponse from(LinkingSettings settings) {
-            return new LinkingResponse(settings.enabled(), settings.linkHumanNotes(), settings.maxLinksPerNote(), settings.service(),
-                settings.requestedBy(), settings.lastRunAt());
+            return new LinkingResponse(settings.enabled(), settings.mode().name(), settings.linkHumanNotes(), settings.maxLinksPerNote(),
+                settings.service(), settings.requestedBy(), settings.lastRunAt());
         }
     }
 }
