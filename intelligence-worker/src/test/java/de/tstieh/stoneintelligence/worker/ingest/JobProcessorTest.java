@@ -320,4 +320,18 @@ class JobProcessorTest {
             assertThat(left).isEmpty();
         }
     }
+
+    // ADR 0012: ein Verlinkungslauf braucht weder Dokument noch Sprachmodell.
+    @Test
+    void should_runALinkingJob_withoutDocumentOrModel() {
+        platform.human("Licht.md", "# Licht\n", 1);
+        platform.human("Pflanzen.md", "Pflanzen brauchen Licht.\n", 1);
+        var job = new ClaimedJob(UUID.randomUUID(), "vault-1", "gemini", "tom", "Verlinkung", "text/plain", 0, 1, UUID.randomUUID(), 1,
+            "LINKING");
+
+        processor(answering("sollte nie gefragt werden")).process(job);
+
+        assertThat(platform.events).contains("link Pflanzen.md 1");
+        assertThat(platform.events).last().isEqualTo("complete");
+    }
 }

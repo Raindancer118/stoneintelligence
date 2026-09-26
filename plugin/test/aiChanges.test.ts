@@ -15,6 +15,15 @@ describe("aiChanges", () => {
       .toBe("1 Notiz · AI Gateway · rückgängig gemacht");
   });
 
+  // ADR 0012: ein Verlinkungslauf schreibt keine Notizen, er setzt Links in vorhandene.
+  it("summarises a linking run as links in notes", () => {
+    const linking: AiChangeSetView = {
+      changeSet: { id: "l", service: "lokal", agent: "ki:Lokal", requestedBy: "tom", label: "Verlinkung", createdAt: "2026-09-27T02:00:00Z", revertedAt: null },
+      changes: ["Pflanzen.md", "Licht.md"].map((path) => ({ noteId: path, path, kind: "LINKED" as const, at: "2026-09-27T02:00:00Z" })),
+    };
+    expect(aiChangeSummary(linking)).toBe("Links in 2 Notizen · Lokal");
+  });
+
   // Wer in einer KI-Notiz steht und „rückgängig“ will, meint den Lauf, der sie geschrieben hat.
   it("puts the runs that touched the open note first", () => {
     const sets = [set("a", "Alt.pdf", ["Notizen/X.md"]), set("b", "Brief.pdf", ["Notizen/Unfall.md"])];

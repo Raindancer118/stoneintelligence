@@ -4,6 +4,7 @@
     api, type AiChangeSet, type AiChangeSetDetail, type AiJob, type AiQuota, type AiRevertReport, type AiService,
     type AiServiceCapacity, type Vault,
   } from "../api";
+  import LinkingPanel from "./LinkingPanel.svelte";
 
   let { vault }: { vault: Vault } = $props();
 
@@ -294,6 +295,8 @@
       </form>
     {/if}
 
+    <LinkingPanel {vault} {permissions} onStarted={() => void load()} />
+
     <section class="block">
       <h3>Verarbeitung</h3>
       {#if jobs.length === 0}
@@ -354,7 +357,7 @@
                   {:else}
                     <ul class="changes">
                       {#each details[set.id].changes as change (change.noteId + change.at)}
-                        <li><span class="kind">{change.kind === "FILE_CREATED" ? "Original" : change.kind === "CREATED" ? "Neu" : "Ergänzt"}</span> {change.path}</li>
+                        <li><span class="kind">{change.kind === "FILE_CREATED" ? "Original" : change.kind === "CREATED" ? "Neu" : change.kind === "LINKED" ? "Verlinkt" : "Ergänzt"}</span> {change.path}</li>
                       {/each}
                     </ul>
                   {/if}

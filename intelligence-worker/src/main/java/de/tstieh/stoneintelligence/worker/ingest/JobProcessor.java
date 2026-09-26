@@ -97,6 +97,11 @@ final class JobProcessor {
         var keepAnswers = false;
         ResumableLlmClient.purgeOlderThan(resumeRoot, RESUME_KEEP);
         try {
+            if (job.isLinking()) {
+                heartbeat.scheduleAtFixedRate(() -> beat(job, cancelled), HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+                new LinkingRun(platform).run(job);
+                return;
+            }
             var model = models.forService(job.service());
             if (waitedForCapacity(job, model)) {
                 keepAnswers = true;

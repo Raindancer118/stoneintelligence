@@ -139,11 +139,11 @@ public class AiController {
 
     public record JobResponse(UUID id, String service, String requestedBy, String fileName, long size, int level, String status,
                               String progress, Integer percent, String error, UUID changeSetId, Instant createdAt,
-                              Instant finishedAt, Instant availableAt, boolean waitingForCapacity) {
+                              Instant finishedAt, Instant availableAt, boolean waitingForCapacity, String kind) {
         static JobResponse from(AiJob job) {
             return new JobResponse(job.id(), job.service(), job.requestedBy(), job.fileName(), job.size(), job.level(),
                 job.status().name(), job.progress(), job.percent(), job.error(), job.changeSetId(), job.createdAt(), job.finishedAt(),
-                job.status() == AiJob.Status.PENDING ? job.availableAt() : null, job.waitingForCapacity());
+                job.status() == AiJob.Status.PENDING ? job.availableAt() : null, job.waitingForCapacity(), job.kind().name());
         }
     }
 

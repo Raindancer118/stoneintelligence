@@ -35,9 +35,11 @@ public class AiInternalController {
     private final NoteRepository notes;
     private final AiJobService jobs;
     private final AiCapacityBoard capacity;
+    private final LinkingService linking;
 
     public AiInternalController(@Lazy AiWriteService ai, AiServiceDirectory services, VaultAccessGuard access, NoteRepository notes,
-                                AiJobService jobs, AiCapacityBoard capacity) {
+                                AiJobService jobs, AiCapacityBoard capacity, LinkingService linking) {
+        this.linking = linking;
         this.jobs = jobs;
         this.capacity = capacity;
         this.ai = ai;
@@ -109,6 +111,25 @@ public class AiInternalController {
         return new NoteRef(noteId, note.path());
     }
 
+    /** Links in einer Notiz setzen (ADR 0012) - der Server findet die Stelle im aktuellen Text selbst. */
+    @PostMapping("/vaults/{vaultId}/change-sets/{changeSetId}/notes/{noteId}/links")
+    public LinksApplied linkNote(@PathVariable String vaultId, @PathVariable UUID changeSetId, @PathVariable String noteId,
+                                 @RequestBody LinkNoteRequest request) {
+        if (request.links() == null || request.links().size() > 200) {
+            throw new AiWriteRefusedException("1 bis 200 Links je Notiz");
+        }
+        var requests = request.links().stream()
+            .map(link -> new AiWriteService.LinkRequest(NoteId.of(link.target()), String.valueOf(link.anchor()), link.allowRelated()))
+            .toList();
+        var applied = linking.link(VaultId.of(vaultId), changeSetId, NoteId.of(noteId), requests);
+        return new LinksApplied(applied.stream().map(link -> new AppliedLink(link.placement().name(), link.markup())).toList());
+    }
+
+    public record LinkNoteRequest(List<ProposedLink> links) { }
+    public record ProposedLink(String target, String anchor, boolean allowRelated) { }
+    public record AppliedLink(String placement, String markup) { }
+    public record LinksApplied(List<AppliedLink> applied) { }
+
     @GetMapping("/vaults/{vaultId}/change-sets/{changeSetId}/notes/{noteId}")
     public NoteText readNote(@PathVariable String vaultId, @PathVariable UUID changeSetId, @PathVariable String noteId) {
         var vId = VaultId.of(vaultId);
@@ -167,6 +188,7 @@ public class AiInternalController {
 
     @PostMapping("/jobs/{jobId}/complete")
     public JobAck complete(@PathVariable UUID jobId) {
+        linking.finished(jobId);
         jobs.complete(jobId);
         return new JobAck(jobId);
     }
@@ -221,10 +243,10 @@ public class AiInternalController {
 
     /** Was der Worker fuer einen Job braucht - das Dokument holt er gesondert. */
     public record ClaimedJob(UUID jobId, String vaultId, String service, String requestedBy, String fileName, String contentType,
-                             long size, int level, UUID changeSetId, int attempt) {
+                             long size, int level, UUID changeSetId, int attempt, String kind) {
         static ClaimedJob from(AiJob job) {
             return new ClaimedJob(job.id(), job.vaultId().value().toString(), job.service(), job.requestedBy(), job.fileName(),
-                job.contentType(), job.size(), job.level(), job.changeSetId(), job.attempts());
+                job.contentType(), job.size(), job.level(), job.changeSetId(), job.attempts(), job.kind().name());
         }
     }
     public record NoteText(String noteId, String path, String text) { }

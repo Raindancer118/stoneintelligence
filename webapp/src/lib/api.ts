@@ -63,7 +63,12 @@ export interface AiServiceCapacity {
 export interface AiChangeSet {
   id: string; service: string; agent: string; requestedBy: string; label: string; createdAt: string; revertedAt: string | null;
 }
-export interface AiChange { noteId: string; path: string; kind: "CREATED" | "UPDATED" | "FILE_CREATED"; at: string; }
+export interface AiChange { noteId: string; path: string; kind: "CREATED" | "UPDATED" | "FILE_CREATED" | "LINKED"; at: string; }
+/** Naechtliche Verlinkung (ADR 0012); `maxLinksPerNote === null` = unbegrenzt. */
+export interface LinkingSettings {
+  enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null;
+  requestedBy: string | null; lastRunAt: string | null;
+}
 export interface AiChangeSetDetail { changeSet: AiChangeSet; changes: AiChange[]; }
 export interface AiRevertReport { reverted: number; conflicts: { path: string; reason: string }[]; }
 
@@ -220,6 +225,10 @@ export const api = {
     request<void>(`/api/v1/vaults/${vaultId}/notes/${noteId}/access/grants?${scopeQuery(scopeType, subject)}`, { method: "DELETE" }),
   removeFolderGrant: (vaultId: string, path: string, scopeType: ScopeType, subject: string | null) =>
     request<void>(`/api/v1/vaults/${vaultId}/folders/access/grants?${new URLSearchParams({ path })}&${scopeQuery(scopeType, subject)}`, { method: "DELETE" }),
+  linkingSettings: (vaultId: string) => request<LinkingSettings>(`/api/v1/vaults/${vaultId}/linking`),
+  updateLinking: (vaultId: string, change: { enabled: boolean; linkHumanNotes: boolean; maxLinksPerNote: number | null; service: string | null }) =>
+    request<LinkingSettings>(`/api/v1/vaults/${vaultId}/linking`, { method: "PUT", body: JSON.stringify(change) }),
+  runLinking: (vaultId: string) => request<AiJob>(`/api/v1/vaults/${vaultId}/linking/run`, { method: "POST" }),
   listMembers: (vaultId: string) => request<VaultMember[]>(`/api/v1/vaults/${vaultId}/members`),
   removeFromVault: (vaultId: string, subject: string) =>
     request<void>(`/api/v1/vaults/${vaultId}/members/${encodeURIComponent(subject)}`, { method: "DELETE" }),

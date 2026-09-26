@@ -67,6 +67,99 @@ class AiWriteServiceTest {
         relay.saveIfCurrent(noteId, history.size(), yjs.change(history.stream().map(r -> r.payload()).toList(), text).orElseThrow());
     }
 
+    private static LinkingSettings linking(boolean humans, Integer max) {
+        return new LinkingSettings(VaultId.newId(), true, LinkingSettings.Mode.SEMANTIC, humans, max, null, "tom", null, Instant.now());
+    }
+
+    private static AiWriteService.LinkRequest link(NoteId target, String anchor) {
+        return new AiWriteService.LinkRequest(target, anchor, false);
+    }
+
+    // ADR 0012: Links sind reines Einfuegen - in KI- und (standardmaessig) auch in Menschen-Notizen.
+    @Nested
+    class Verlinken {
+
+        @Test
+        void should_linkAMentionInAHumanNote_andRecordOnlyTheMarkup() {
+            var changeSet = newChangeSet();
+            var target = humanNote("Biologie/Photosynthese.md", "# Photosynthese\n");
+            var source = humanNote("Pflanzen.md", "Pflanzen betreiben Photosynthese am Tag.\n");
+
+            var applied = service.linkNote(vaultId, changeSet.id(), source, List.of(link(target, "Photosynthese")), linking(true, null));
+
+            assertThat(applied).hasSize(1);
+            assertThat(service.readText(vaultId, source, EXTERN)).isEqualTo("Pflanzen betreiben [[Photosynthese]] am Tag.\n");
+            assertThat(changeSets.changes(changeSet.id())).singleElement().satisfies(change -> {
+                assertThat(change.kind()).isEqualTo(AiChange.Kind.LINKED);
+                assertThat(change.textBefore()).isEmpty();
+                assertThat(change.textAfter()).isEmpty();
+                assertThat(change.links()).extracting(de.tstieh.stoneintelligence.domain.link.LinkText.Insertion::markup)
+                    .containsExactly("[[Photosynthese]]");
+            });
+        }
+
+        @Test
+        void should_leaveHumanNotesAlone_whenTheVaultSaysSo() {
+            var changeSet = newChangeSet();
+            var target = humanNote("Licht.md", "# Licht\n");
+            var source = humanNote("Pflanzen.md", "Pflanzen brauchen Licht.\n");
+
+            assertThat(service.linkNote(vaultId, changeSet.id(), source, List.of(link(target, "Licht")), linking(false, null))).isEmpty();
+            assertThat(service.readText(vaultId, source, EXTERN)).isEqualTo("Pflanzen brauchen Licht.\n");
+            assertThat(changeSets.changes(changeSet.id())).isEmpty();
+        }
+
+        @Test
+        void should_useThePath_whenTwoNotesShareAName_andRespectTheMaximum() {
+            var changeSet = newChangeSet();
+            var physics = humanNote("Physik/Licht.md", "# Licht\n");
+            humanNote("Kunst/Licht.md", "# Licht\n");
+            var photon = humanNote("Photon.md", "# Photon\n");
+            var source = humanNote("Text.md", "Licht besteht aus Photon und Welle.\n");
+
+            var applied = service.linkNote(vaultId, changeSet.id(), source, List.of(link(physics, "Licht"), link(photon, "Photon")),
+                linking(true, 1));
+
+            assertThat(applied).hasSize(1);
+            assertThat(service.readText(vaultId, source, EXTERN)).isEqualTo("[[Physik/Licht|Licht]] besteht aus Photon und Welle.\n");
+        }
+
+        @Test
+        void should_undoOnlyTheLinks_andKeepWhatSomeoneWroteSince() {
+            var changeSet = newChangeSet();
+            var target = humanNote("Licht.md", "# Licht\n");
+            var source = humanNote("Pflanzen.md", "Pflanzen brauchen Licht.\n");
+            service.linkNote(vaultId, changeSet.id(), source, List.of(link(target, "Licht")), linking(true, null));
+            humanEdit(source, "Pflanzen brauchen [[Licht]].\nUnd Wasser.\n");
+
+            var report = service.revert(vaultId, changeSet.id(), "tom");
+
+            assertThat(report.reverted()).isEqualTo(1);
+            assertThat(report.conflicts()).isEmpty();
+            assertThat(service.readText(vaultId, source, EXTERN)).isEqualTo("Pflanzen brauchen Licht.\nUnd Wasser.\n");
+        }
+
+        @Test
+        void should_notRecordAnything_whenTheNoteAlreadyLinksThere() {
+            var changeSet = newChangeSet();
+            var target = humanNote("Licht.md", "# Licht\n");
+            var source = humanNote("Pflanzen.md", "Siehe [[Licht]]. Licht ist wichtig.\n");
+
+            assertThat(service.linkNote(vaultId, changeSet.id(), source, List.of(link(target, "Licht")), linking(true, null))).isEmpty();
+            assertThat(changeSets.changes(changeSet.id())).isEmpty();
+        }
+
+        @Test
+        void should_refuseTargetsTheServiceMayNotSee() {
+            var changeSet = newChangeSet();
+            var secret = notes.create(vaultId, "Intern.md", NoteLevel.of(2), "tom");
+            var source = humanNote("Text.md", "Etwas Intern.\n");
+
+            assertThatThrownBy(() -> service.linkNote(vaultId, changeSet.id(), source, List.of(link(secret.id(), "Intern")), linking(true, null)))
+                .isInstanceOf(AiWriteRefusedException.class);
+        }
+    }
+
     @Nested
     class Schreiben {
 

@@ -32,10 +32,43 @@ public class JdbcAiChangeSetRepository implements AiChangeSetRepository {
             instant(rs, "reverted_at"));
     }
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** Nur was Rueckgaengig braucht - der Text nach dem Einfuegen gehoert nicht in die Datenbank. */
+    private record StoredLink(String placement, String markup, String anchor, boolean createdSection, String sectionPrefix) {
+    }
+
     private static AiChange mapChange(ResultSet rs, int rowNum) throws SQLException {
         return new AiChange(UUID.fromString(rs.getString("id")), UUID.fromString(rs.getString("change_set_id")),
             NoteId.of(rs.getString("note_id")), rs.getString("path"), AiChange.Kind.valueOf(rs.getString("kind")),
-            rs.getString("text_before"), rs.getString("text_after"), instant(rs, "at"));
+            rs.getString("text_before"), rs.getString("text_after"), instant(rs, "at"), linksOf(rs.getString("details")));
+    }
+
+    private static List<de.tstieh.stoneintelligence.domain.link.LinkText.Insertion> linksOf(String details) {
+        if (details == null) {
+            return List.of();
+        }
+        try {
+            return java.util.Arrays.stream(JSON.readValue(details, StoredLink[].class))
+                .map(link -> new de.tstieh.stoneintelligence.domain.link.LinkText.Insertion(null,
+                    de.tstieh.stoneintelligence.domain.link.LinkText.Placement.valueOf(link.placement()), link.markup(), link.anchor(),
+                    link.createdSection(), link.sectionPrefix() == null ? "" : link.sectionPrefix()))
+                .toList();
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("corrupt link details", e);
+        }
+    }
+
+    private static String detailsOf(AiChange change) {
+        if (change.links().isEmpty()) {
+            return null;
+        }
+        try {
+            return JSON.writeValueAsString(change.links().stream().map(link -> new StoredLink(link.placement().name(), link.markup(),
+                link.anchor(), link.createdSection(), link.sectionPrefix())).toList());
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Override
@@ -77,9 +110,10 @@ public class JdbcAiChangeSetRepository implements AiChangeSetRepository {
     @Override
     public void addChange(AiChange change) {
         jdbcClient.sql("""
-                INSERT INTO platform.ai_changes (id, change_set_id, note_id, path, kind, text_before, text_after, at)
-                VALUES (:id, :changeSetId, :noteId, :path, :kind, :before, :after, :at)
+                INSERT INTO platform.ai_changes (id, change_set_id, note_id, path, kind, text_before, text_after, at, details)
+                VALUES (:id, :changeSetId, :noteId, :path, :kind, :before, :after, :at, CAST(:details AS jsonb))
                 """)
+            .param("details", detailsOf(change))
             .param("id", change.id())
             .param("changeSetId", change.changeSetId())
             .param("noteId", change.noteId().value())

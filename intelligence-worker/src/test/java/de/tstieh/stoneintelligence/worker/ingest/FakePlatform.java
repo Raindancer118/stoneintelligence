@@ -132,4 +132,24 @@ class FakePlatform implements PlatformApi {
         notes.put(noteId, new Stored(noteId, note.path(), note.level(), note.createdBy(), text));
         events.add("update " + note.path());
     }
+
+    /** Wie der Server: nur Markup einfuegen, an der ersten verlinkbaren Stelle. */
+    @Override
+    public int link(String vaultId, UUID changeSetId, String noteId, List<de.tstieh.stoneintelligence.worker.platform.ProposedLink> links) {
+        var note = notes.get(noteId);
+        var text = note.text();
+        var applied = 0;
+        for (var link : links) {
+            var targetPath = notes.get(link.target()).path();
+            var target = targetPath.substring(targetPath.lastIndexOf('/') + 1).replaceAll("\\.md$", "");
+            var inserted = de.tstieh.stoneintelligence.domain.link.LinkText.insert(text, target, link.anchor(), link.allowRelated());
+            if (inserted.isPresent()) {
+                text = inserted.get().text();
+                applied++;
+            }
+        }
+        notes.put(noteId, new Stored(noteId, note.path(), note.level(), note.createdBy(), text));
+        events.add("link " + note.path() + " " + applied);
+        return applied;
+    }
 }

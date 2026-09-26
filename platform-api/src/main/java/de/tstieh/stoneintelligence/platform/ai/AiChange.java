@@ -9,8 +9,20 @@ import de.tstieh.stoneintelligence.domain.id.NoteId;
  * das konfliktgepruefte Rueckgaengigmachen (ADR 0008).
  */
 public record AiChange(UUID id, UUID changeSetId, NoteId noteId, String path, Kind kind,
-                       String textBefore, String textAfter, Instant at) {
+                       String textBefore, String textAfter, Instant at,
+                       java.util.List<de.tstieh.stoneintelligence.domain.link.LinkText.Insertion> links) {
 
-    /** {@code FILE_CREATED}: eine Datei (das gelesene Original); {@code textAfter} ist ihr SHA-256. */
-    public enum Kind { CREATED, UPDATED, FILE_CREATED }
+    /**
+     * {@code FILE_CREATED}: eine Datei (das gelesene Original); {@code textAfter} ist ihr SHA-256.
+     * {@code LINKED}: gesetzte Links (ADR 0012) - nur {@link #links()} zaehlt, die Texte bleiben leer.
+     */
+    public enum Kind { CREATED, UPDATED, FILE_CREATED, LINKED }
+
+    public AiChange {
+        links = links == null ? java.util.List.of() : java.util.List.copyOf(links);
+    }
+
+    public AiChange(UUID id, UUID changeSetId, NoteId noteId, String path, Kind kind, String textBefore, String textAfter, Instant at) {
+        this(id, changeSetId, noteId, path, kind, textBefore, textAfter, at, java.util.List.of());
+    }
 }

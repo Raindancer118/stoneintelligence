@@ -19,7 +19,7 @@ public class JdbcAiJobRepository implements AiJobRepository {
     /** Alles ausser dem Dokument - das wird nur gezielt geladen. */
     private static final String COLUMNS = """
         id, vault_id, service, requested_by, file_name, content_type, size, level, status, attempts, max_attempts,
-        available_at, lease_until, progress, percent, error, change_set_id, created_at, finished_at, waiting_for_capacity""";
+        available_at, lease_until, progress, percent, error, change_set_id, created_at, finished_at, waiting_for_capacity, kind""";
 
     private final JdbcClient jdbcClient;
 
@@ -40,16 +40,16 @@ public class JdbcAiJobRepository implements AiJobRepository {
             rs.getInt("level"), AiJob.Status.valueOf(rs.getString("status")), rs.getInt("attempts"), rs.getInt("max_attempts"),
             instant(rs, "available_at"), instant(rs, "lease_until"), rs.getString("progress"), percent, rs.getString("error"),
             changeSet == null ? null : UUID.fromString(changeSet), instant(rs, "created_at"), instant(rs, "finished_at"),
-            rs.getBoolean("waiting_for_capacity"));
+            rs.getBoolean("waiting_for_capacity"), AiJob.Kind.valueOf(rs.getString("kind")));
     }
 
     @Override
     public AiJob create(NewAiJob job, Instant at) {
         return jdbcClient.sql("""
                 INSERT INTO platform.ai_jobs (id, vault_id, service, requested_by, file_name, content_type, size, level, content,
-                    status, max_attempts, available_at, created_at)
+                    status, max_attempts, available_at, created_at, kind)
                 VALUES (:id, :vaultId, :service, :requestedBy, :fileName, :contentType, :size, :level, :content,
-                    'PENDING', :maxAttempts, :at, :at)
+                    'PENDING', :maxAttempts, :at, :at, :kind)
                 RETURNING %s
                 """.formatted(COLUMNS))
             .param("id", UUID.randomUUID())
@@ -58,7 +58,8 @@ public class JdbcAiJobRepository implements AiJobRepository {
             .param("requestedBy", job.requestedBy())
             .param("fileName", job.fileName())
             .param("contentType", job.contentType())
-            .param("size", (long) job.content().length)
+            .param("size", job.size())
+            .param("kind", job.kind().name())
             .param("level", job.level())
             .param("content", job.content())
             .param("maxAttempts", job.maxAttempts())
@@ -98,6 +99,18 @@ public class JdbcAiJobRepository implements AiJobRepository {
         return jdbcClient.sql("SELECT count(*) FROM platform.ai_jobs WHERE vault_id = :vaultId AND status IN ('PENDING', 'RUNNING')")
             .param("vaultId", vaultId.value())
             .query(Integer.class)
+            .single();
+    }
+
+    @Override
+    public boolean hasOpen(VaultId vaultId, AiJob.Kind kind) {
+        return jdbcClient.sql("""
+                SELECT EXISTS (SELECT 1 FROM platform.ai_jobs
+                               WHERE vault_id = :vaultId AND kind = :kind AND status IN ('PENDING', 'RUNNING'))
+                """)
+            .param("vaultId", vaultId.value())
+            .param("kind", kind.name())
+            .query(Boolean.class)
             .single();
     }
 

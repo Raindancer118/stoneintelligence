@@ -6,7 +6,8 @@
 export interface AiChangeSet {
   id: string; service: string; agent: string; requestedBy: string; label: string; createdAt: string; revertedAt: string | null;
 }
-export interface AiChange { noteId: string; path: string; kind: "CREATED" | "UPDATED" | "FILE_CREATED"; at: string; }
+/** `LINKED`: gesetzte Links in einer vorhandenen Notiz (ADR 0012, naechtliche Verlinkung). */
+export interface AiChange { noteId: string; path: string; kind: "CREATED" | "UPDATED" | "FILE_CREATED" | "LINKED"; at: string; }
 export interface AiChangeSetView { changeSet: AiChangeSet; changes: AiChange[]; }
 export interface AiRevertReport { reverted: number; conflicts: { path: string; reason: string }[]; }
 
@@ -14,8 +15,9 @@ const plural = (count: number, one: string, many: string): string => `${count} $
 
 export function aiChangeSummary(view: AiChangeSetView): string {
   const files = new Set(view.changes.filter((change) => change.kind === "FILE_CREATED").map((change) => change.path)).size;
-  const notes = new Set(view.changes.filter((change) => change.kind !== "FILE_CREATED").map((change) => change.path)).size;
-  const parts = [plural(notes, "Notiz", "Notizen")];
+  const notes = new Set(view.changes.filter((change) => change.kind === "CREATED" || change.kind === "UPDATED").map((change) => change.path)).size;
+  const linked = new Set(view.changes.filter((change) => change.kind === "LINKED").map((change) => change.path)).size;
+  const parts = [linked > 0 && notes === 0 && files === 0 ? `Links in ${plural(linked, "Notiz", "Notizen")}` : plural(notes, "Notiz", "Notizen")];
   if (files > 0) {
     parts[0] += `, ${plural(files, "Datei", "Dateien")}`;
   }
