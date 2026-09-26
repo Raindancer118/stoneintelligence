@@ -1,5 +1,5 @@
-import type { Compartment } from "@codemirror/state";
-import type { EditorView } from "@codemirror/view";
+import { type Compartment, EditorState } from "@codemirror/state";
+import { EditorView, showPanel } from "@codemirror/view";
 import { yCollab } from "y-codemirror.next";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
@@ -50,4 +50,24 @@ export function bindEditorToText(
 
 export function unbindEditor(view: EditorView, compartment: Compartment): void {
   view.dispatch({ effects: compartment.reconfigure([]) });
+}
+
+/**
+ * Schreibschutz fuer Notizen, die man nur lesen darf (ADR 0011): der Editor nimmt keine Eingaben
+ * an und sagt oben, warum. Der Server verwirft Aenderungen ohnehin - ohne Sperre saehe man seine
+ * Tipperei, die nie irgendwo ankommt.
+ */
+export function applyReadOnly(view: EditorView, compartment: Compartment, readOnly: boolean): void {
+  view.dispatch({
+    effects: compartment.reconfigure(readOnly
+      ? [EditorState.readOnly.of(true), EditorView.editable.of(false), showPanel.of(readOnlyPanel)]
+      : []),
+  });
+}
+
+function readOnlyPanel(): { dom: HTMLElement; top: boolean } {
+  const dom = document.createElement("div");
+  dom.className = "stoneintelligence-readonly-panel";
+  dom.textContent = "Diese Notiz darfst du nur lesen. Wer sie verwaltet, kann dir Bearbeiten freigeben.";
+  return { dom, top: true };
 }

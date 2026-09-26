@@ -80,6 +80,25 @@ public class VaultAccessGuard {
         return paths.stream().filter(path -> mayRead.test(asRulePath.apply(path))).toList();
     }
 
+    /**
+     * Rechte je Eintrag fuer die Liste des Plugins (Schreibschutz, Kennzeichen). {@code shared}
+     * sagt, ob eine Freigabe den Eintrag betrifft - nur fuer Verwaltende, sonst {@code null}.
+     */
+    public java.util.Map<de.tstieh.stoneintelligence.domain.id.NoteId, EntryAccess> entryAccess(VaultId vaultId, String actor, List<Note> notes) {
+        var who = membership(vaultId, actor);
+        var vaultGrants = grants.list(vaultId);
+        var result = new java.util.HashMap<de.tstieh.stoneintelligence.domain.id.NoteId, EntryAccess>();
+        for (var note : notes) {
+            var effective = AccessResolver.resolve(who, vaultGrants, note.path());
+            result.put(note.id(), new EntryAccess(effective.permissions(),
+                effective.allows(Permission.MANAGE) ? AccessResolver.touchedByGrant(vaultGrants, note.path()) : null));
+        }
+        return result;
+    }
+
+    public record EntryAccess(java.util.Set<Permission> permissions, Boolean shared) {
+    }
+
     /** Laedt Mitgliedschaft und Freigaben einmal und prueft dann beliebig viele Pfade. */
     private Predicate<String> reader(VaultId vaultId, String actor) {
         var who = membership(vaultId, actor);

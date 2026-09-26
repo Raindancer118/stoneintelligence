@@ -45,6 +45,28 @@ export function textOfState(state: Uint8Array | null): string | null {
 }
 
 /**
+ * Eine Notiz, die man nur lesen darf, wurde hier trotzdem geaendert (ausserhalb des gesperrten
+ * Editors, z. B. durch ein anderes Programm). Der Server nimmt die Aenderung nicht an - damit sie
+ * nicht verloren geht und die Notiz nicht dauerhaft abweicht, landet sie als Kopie daneben, die
+ * Notiz selbst geht auf den zuletzt abgeglichenen Stand zurueck. Liefert den Pfad der Kopie oder
+ * `null`, wenn nichts zu tun war (unveraendert oder kein bekannter Stand).
+ */
+export async function revertReadOnlyEdit(
+  ports: Pick<ContentSyncPorts, "loadState" | "readFile" | "writeFile" | "writeConflictCopy">,
+  noteId: string,
+  path: string,
+): Promise<string | null> {
+  const lastSynced = textOfState(await ports.loadState(noteId));
+  const current = await ports.readFile(path);
+  if (lastSynced === null || lastSynced === current) {
+    return null;
+  }
+  const copy = await ports.writeConflictCopy(path, current);
+  await ports.writeFile(path, lastSynced);
+  return copy;
+}
+
+/**
  * Gibt es lokale Aenderungen, die den Server nie erreicht haben? Entscheidet, ob eine anderswo
  * ausgefuehrte Loeschung hier greifen darf. Nur ein BELEG zaehlt: offline erfasste Aenderungen
  * (`dirty`) oder ein Inhalt, der vom zuletzt synchronisierten Stand abweicht. Ein geaenderter

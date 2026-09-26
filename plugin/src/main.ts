@@ -14,19 +14,20 @@ import { AuthentikAuthClient, TokenRefreshRejectedError, type StoredTokens } fro
 import { dedupeInFlight } from "./sync/dedupeInFlight";
 import { awaitDesktopRedirectCode, DESKTOP_REDIRECT_URI, openAuthorizationUrlDesktop } from "./sync/desktopAuthRedirect";
 import { awaitCatchupComplete, awaitConnected, connectForCatchup } from "./sync/catchupConnection";
-import { bindEditorToText, unbindEditor } from "./sync/editorBinding";
+import { applyReadOnly, bindEditorToText, unbindEditor } from "./sync/editorBinding";
+import { type Badge, badgeFor, isReadOnly, type Permission } from "./sync/accessPlan";
 import { planEditorBindings } from "./sync/editorBindingPlan";
 import {
   handleMobileRedirectCallback, MOBILE_REDIRECT_ACTION, MOBILE_REDIRECT_URI,
   openAuthorizationUrlMobile, type PendingAuthCallback,
 } from "./sync/mobileAuthRedirect";
 import {
-  MultiplexedTransport, VAULT_FOLDERS_CHANGED, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED,
+  MultiplexedTransport, VAULT_ACCESS_CHANGED, VAULT_FOLDERS_CHANGED, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED,
 } from "./sync/multiplexedTransport";
 import { type FileLimits, HttpError, NoteApiClient, type VaultSummary } from "./sync/NoteApiClient";
 import {
   type ContentSyncPorts, type ContentSyncResult, conflictCopyPath, hasUnsyncedLocalEdits, prepareNoteDoc, resolveFirstContact,
-  syncNoteContent, textOfState,
+  revertReadOnlyEdit, syncNoteContent, textOfState,
 } from "./sync/noteContentSync";
 import { NoteStateStore } from "./sync/NoteStateStore";
 import { OperationJournal } from "./sync/OperationJournal";
@@ -42,6 +43,7 @@ import { type PropertiesInDocument, propertiesDefault } from "./ui/propertiesDis
 import { DeletionConflictModal } from "./ui/DeletionConflictModal";
 import { AiChangesModal } from "./ui/AiChangesModal";
 import { InviteModal } from "./ui/InviteModal";
+import { ShareModal, type ShareTarget } from "./ui/ShareModal";
 import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
 import { presentStatus, type StatusPresentation } from "./ui/statusPresentation";
 import { type Collaborator, type LiveNote, StatusView, VIEW_TYPE_STATUS } from "./ui/StatusView";
@@ -174,6 +176,13 @@ export default class StoneIntelligencePlugin extends Plugin {
   private readonly live = new Map<string, LiveSession>();
   private readonly liveStarting = new Set<string>();
   private readonly liveBindingCompartment = new Compartment();
+  /** Schreibschutz fuer Notizen, die man nur lesen darf (ADR 0011) - getrennt von der Live-Bindung. */
+  private readonly readOnlyCompartment = new Compartment();
+  private readonly readOnlyViews = new WeakMap<EditorView, boolean>();
+  /** Rechte je Eintrag (NoteId) aus der letzten Server-Liste. */
+  private readonly entryAccess = new Map<string, { permissions?: Permission[] | null; shared?: boolean | null }>();
+  /** Ordner mit Freigaben, die ich verwalten darf (fuer das "geteilt"-Kennzeichen). */
+  private sharedFolders = new Set<string>();
   private liveBindGeneration = 0;
   private editorViewPending = false;
   private bindingRetries = 0;
@@ -274,16 +283,22 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.registerCommands();
     this.registerFileMenu();
 
-    this.registerEditorExtension([this.liveBindingCompartment.of([])]);
+    this.registerEditorExtension([this.liveBindingCompartment.of([]), this.readOnlyCompartment.of([])]);
     // `file-open` allein feuert zu frueh (Ziel-View existiert teils noch nicht), `active-leaf-change`
     // deckt Pane-/Tab-Wechsel ab, `layout-change` Oeffnen/Schliessen/Teilen - alle drei muenden in
     // denselben idempotenten Abgleich.
-    this.registerEvent(this.app.workspace.on("file-open", () => void this.syncOpenEditorBindings()));
+    this.registerEvent(this.app.workspace.on("file-open", () => {
+      void this.syncOpenEditorBindings();
+      this.applyAccessMarkers();
+    }));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
       void this.syncOpenEditorBindings();
       this.updatePresenceBar();
     }));
-    this.registerEvent(this.app.workspace.on("layout-change", () => void this.syncOpenEditorBindings()));
+    this.registerEvent(this.app.workspace.on("layout-change", () => {
+      void this.syncOpenEditorBindings();
+      this.applyAccessMarkers();
+    }));
 
     this.registerEvent(this.app.vault.on("create", (file) => this.handleLocalCreate(file)));
     this.registerEvent(this.app.vault.on("modify", (file) => void this.handleLocalModify(file)));
@@ -918,6 +933,30 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
+      id: "stoneintelligence-share-active",
+      name: "Freigabe der aktuellen Datei",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        const target = file && this.isReady() ? this.shareTargetFor(file) : null;
+        if (checking || !target) {
+          return target !== null;
+        }
+        this.openShare([target]);
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "stoneintelligence-share-vault",
+      name: "Freigaben für den ganzen Vault",
+      checkCallback: (checking) => {
+        if (checking) {
+          return this.isReady();
+        }
+        this.openShare([{ kind: "folder", path: "" }]);
+        return true;
+      },
+    });
+    this.addCommand({
       id: "stoneintelligence-ai-changes",
       name: "KI-Änderungen anzeigen und rückgängig machen",
       checkCallback: (checking) => {
@@ -955,7 +994,15 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   private registerFileMenu(): void {
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
-      if (!(file instanceof TFile) || file.extension !== "md" || !this.isReady()) {
+      if (!this.isReady()) {
+        return;
+      }
+      const target = this.shareTargetFor(file);
+      if (target) {
+        menu.addItem((item) => item.setTitle("StoneIntelligence: Freigabe…").setIcon("users")
+          .onClick(() => this.openShare([target])));
+      }
+      if (!(file instanceof TFile) || file.extension !== "md") {
         return;
       }
       const blocked = this.vaultState().blockedPaths[file.path];
@@ -972,6 +1019,125 @@ export default class StoneIntelligencePlugin extends Plugin {
           }),
       );
     }));
+    // Mehrfachauswahl im Dateibaum: dieselbe Freigabe fuer alle ausgewaehlten Eintraege.
+    this.registerEvent(this.app.workspace.on("files-menu", (menu, files) => {
+      if (!this.isReady()) {
+        return;
+      }
+      const targets = files.map((file) => this.shareTargetFor(file)).filter((target): target is ShareTarget => target !== null);
+      if (targets.length > 0) {
+        menu.addItem((item) => item.setTitle(`StoneIntelligence: Freigabe für ${targets.length} Einträge…`).setIcon("users")
+          .onClick(() => this.openShare(targets)));
+      }
+    }));
+    this.registerEvent(this.app.workspace.on("editor-menu", (menu, _editor, info) => {
+      const target = this.isReady() && info.file ? this.shareTargetFor(info.file) : null;
+      if (target) {
+        menu.addItem((item) => item.setTitle("StoneIntelligence: Freigabe…").setIcon("users")
+          .onClick(() => this.openShare([target])));
+      }
+    }));
+  }
+
+  /** Ordner immer (der Wurzelordner = der ganze Vault), Dateien nur, wenn sie synchronisiert sind. */
+  private shareTargetFor(file: TAbstractFile): ShareTarget | null {
+    if (file instanceof TFolder) {
+      const path = file.isRoot() ? "" : file.path;
+      return path === "" || this.isTrackableFolder(path) ? { kind: "folder", path } : null;
+    }
+    const state = this.vaultState();
+    const noteId = state.noteIds[file.path] ?? state.fileIds?.[file.path];
+    return noteId ? { kind: "entry", noteId, path: file.path } : null;
+  }
+
+  private openShare(targets: ShareTarget[]): void {
+    new ShareModal(this.app, this.noteApiClient, this.settings.vaultId, targets, () => {
+      this.requestPass();
+      void this.refreshSharedFolders();
+    }).open();
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Rechte je Eintrag (ADR 0011): Schreibschutz im Editor, Kennzeichen im Dateibaum
+
+  private rememberAccess(entries: Array<{ id: string; permissions?: Permission[] | null; shared?: boolean | null }>): void {
+    this.entryAccess.clear();
+    for (const entry of entries) {
+      this.entryAccess.set(entry.id, { permissions: entry.permissions, shared: entry.shared });
+    }
+    this.applyAccessMarkers();
+  }
+
+  private async refreshSharedFolders(): Promise<void> {
+    try {
+      const grants = await this.noteApiClient.listGrants(this.settings.vaultId);
+      this.sharedFolders = new Set(grants.filter((grant) => grant.target.kind === "folder").map((grant) => grant.target.path));
+    } catch (error) {
+      // Aeltere Server kennen den Endpunkt nicht - dann eben ohne Ordner-Kennzeichen.
+      this.sharedFolders = new Set();
+      console.debug("StoneIntelligence: Freigaben nicht abrufbar", error);
+    }
+    this.applyAccessMarkers();
+  }
+
+  private applyAccessMarkers(): void {
+    if (!this.isReady()) {
+      return;
+    }
+    const state = this.vaultState();
+    for (const { file, view } of this.openMarkdownEditors()) {
+      const noteId = state.noteIds[file.path];
+      const readOnly = noteId ? isReadOnly(this.entryAccess.get(noteId)?.permissions) : false;
+      if (this.readOnlyViews.get(view) !== readOnly) {
+        try {
+          applyReadOnly(view, this.readOnlyCompartment, readOnly);
+          this.readOnlyViews.set(view, readOnly);
+        } catch (error) {
+          console.debug("StoneIntelligence: Schreibschutz nicht anwendbar", file.path, error);
+        }
+      }
+    }
+    this.decorateFileExplorer();
+  }
+
+  /**
+   * Kennzeichen im Dateibaum. Obsidian bietet dafuer keine API; der Dateibaum fuehrt seine Eintraege
+   * aber in `view.fileItems` (von vielen Plugins so genutzt). Fehlt das, gibt es eben keine Kennzeichen.
+   */
+  private decorateFileExplorer(): void {
+    const state = this.vaultState();
+    const badges = new Map<string, Badge>();
+    for (const [path, id] of [...Object.entries(state.noteIds), ...Object.entries(state.fileIds ?? {})]) {
+      const access = this.entryAccess.get(id);
+      const badge = access ? badgeFor(access) : null;
+      if (badge) {
+        badges.set(path, badge);
+      }
+    }
+    for (const folder of this.sharedFolders) {
+      if (folder !== "") {
+        badges.set(folder, "shared");
+      }
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType("file-explorer")) {
+      const items = (leaf.view as unknown as { fileItems?: Record<string, { selfEl?: HTMLElement }> }).fileItems;
+      if (!items) {
+        continue;
+      }
+      for (const [path, item] of Object.entries(items)) {
+        const badge = badges.get(path);
+        if (!item.selfEl) {
+          continue;
+        }
+        if (badge) {
+          item.selfEl.setAttribute("data-stoneintelligence-access", badge);
+          item.selfEl.setAttribute("aria-description", badge === "readonly" ? "Nur lesbar" : "Mit Freigaben");
+        } else if (item.selfEl.hasAttribute("data-stoneintelligence-access")) {
+          item.selfEl.removeAttribute("data-stoneintelligence-access");
+          item.selfEl.removeAttribute("aria-description");
+        }
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -993,10 +1159,14 @@ export default class StoneIntelligencePlugin extends Plugin {
             void this.syncOpenEditorBindings();
           }
         },
-        onConnected: () => this.requestPass(),
+        onConnected: () => {
+          this.requestPass();
+          void this.refreshSharedFolders();
+        },
         subscribeContentUpdates: true,
         subscribeFolderEvents: true,
         subscribeFileEvents: true,
+        subscribeAccessEvents: true,
       });
     }
     return this.transport;
@@ -1045,6 +1215,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     const limits = await this.currentFileLimits();
     try {
       const entries = limits ? await this.noteApiClient.listAllEntries(vaultId) : await this.noteApiClient.listAllNotes(vaultId);
+      this.rememberAccess(entries);
       serverNotes = entries.filter((entry) => entry.kind !== "FILE");
       serverFiles = entries.filter((entry) => entry.kind === "FILE")
         .map((entry) => ({ id: entry.id, path: entry.path, revision: entry.revision ?? 0, sha256: entry.sha256 ?? null }));
@@ -1477,6 +1648,13 @@ export default class StoneIntelligencePlugin extends Plugin {
       if (this.live.has(path) || this.liveStarting.has(path) || this.pathForNoteId(noteId) !== path) {
         return null;
       }
+      if (isReadOnly(this.entryAccess.get(noteId)?.permissions) && (reason === "local" || reason === "sync")) {
+        const copy = await revertReadOnlyEdit(this.contentPorts(), noteId, path);
+        if (copy) {
+          this.activity.log("conflict", path, `Nur lesbar – deine Änderung liegt in „${copy}“`);
+          new Notice(`StoneIntelligence: „${basename(path)}“ darfst du nur lesen. Deine Änderung liegt in „${basename(copy)}“.`);
+        }
+      }
       const result = await syncNoteContent(this.contentPorts(), noteId, path);
       if (result.outcome === "offline") {
         if (result.pendingLocalChanges) {
@@ -1609,10 +1787,9 @@ export default class StoneIntelligencePlugin extends Plugin {
     if (status === "deleted") {
       await this.applyRemoteDeletion(noteId, path, await this.hasUnsyncedEdits(noteId, path));
     } else if (status === "forbidden") {
-      this.detachLive(path);
-      this.unmapNote(noteId);
-      this.vaultState().blockedPaths[path] = "Kein Zugriff mehr auf diese Notiz.";
-      this.activity.reportProblem(path, "Kein Zugriff mehr auf diese Notiz. Die lokale Datei bleibt unverändert.");
+      // ADR 0011: wer das Leserecht verliert, verliert die Notiz wie bei einer Loeschung anderswo -
+      // eigene, nie uebertragene Aenderungen fuehren zur bekannten Rueckfrage statt verloren zu gehen.
+      await this.applyRemoteDeletion(noteId, path, await this.hasUnsyncedEdits(noteId, path), "Kein Zugriff mehr, im Papierkorb");
     }
   }
 
@@ -1621,7 +1798,8 @@ export default class StoneIntelligencePlugin extends Plugin {
    * aber NUR, wenn die Datei hier seit dem letzten Abgleich unveraendert ist. Sonst bleibt sie
    * und wird als neue Notiz wieder hochgeladen; eine Loeschung darf keine ungesicherte Arbeit fressen.
    */
-  private async applyRemoteDeletion(noteId: string, path: string, locallyChanged: boolean): Promise<void> {
+  private async applyRemoteDeletion(noteId: string, path: string, locallyChanged: boolean,
+                                    reason = "Auf einem anderen Gerät gelöscht, im Papierkorb"): Promise<void> {
     this.detachLive(path);
     this.unmapNote(noteId);
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -1640,7 +1818,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     } finally {
       this.serverDrivenPaths.delete(path);
     }
-    this.activity.log("deleted", path, "Auf einem anderen Gerät gelöscht, im Papierkorb");
+    this.activity.log("deleted", path, reason);
   }
 
   /** Offene Loeschentscheidungen (z. B. von vor einem Neustart) erneut stellen. */
@@ -1803,6 +1981,14 @@ export default class StoneIntelligencePlugin extends Plugin {
   // Vault-Ankuendigungen anderer Geraete (kommen ueber die Dauerverbindung sofort an)
 
   private async handleVaultEvent(messageType: number, noteId: string, path: string): Promise<void> {
+    if (messageType === VAULT_ACCESS_CHANGED) {
+      // Ohne Pfad (verriete sonst Fremdes): Liste, Rechte und Kennzeichen komplett neu holen.
+      if (this.isReady()) {
+        this.requestPass();
+        void this.refreshSharedFolders();
+      }
+      return;
+    }
     if (!this.isReady() || isExcluded(path, this.settings.excludedFolders)) {
       return;
     }

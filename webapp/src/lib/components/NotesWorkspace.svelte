@@ -5,6 +5,7 @@
   import NoteEditor from "./NoteEditor.svelte";
   import FileViewer from "./FileViewer.svelte";
   import { fileKindLabel } from "../fileKinds";
+  import SharePanel from "./SharePanel.svelte";
   let { vault, onDirtyChange, onPermissions = () => {} }: { vault: Vault; onDirtyChange: (dirty: boolean) => void; onPermissions?: (permissions: string[]) => void } = $props();
   let notes = $state<Note[]>([]);
   let permissions = $state<string[]>([]);
@@ -21,6 +22,7 @@
   let newPath = $state("");
   let showCreate = $state(false);
   let dirty = $state(false);
+  let sharing = $state<{ kind: "entry"; noteId: string; path: string } | { kind: "folder"; path: string } | null>(null);
   let alive = true;
   const folders = $derived([...new Set(notes.map(n => n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : ""))].filter(Boolean).sort());
   const visible = $derived(notes.filter(n => (!folder || n.path.startsWith(`${folder}/`)) && n.path.toLocaleLowerCase().includes(search.toLocaleLowerCase().trim()))
@@ -28,7 +30,7 @@
 
   function setDirty(value: boolean) { dirty = value; onDirtyChange(value || creating); }
   function mayLeave() { return !dirty || window.confirm("Ungespeicherte Änderungen verwerfen? Du kannst die Notiz vorher speichern oder als Markdown exportieren."); }
-  function select(note: Note | null) { if (selected?.id === note?.id || !mayLeave()) return; selected = note; setDirty(false); }
+  function select(note: Note | null) { if (selected?.id === note?.id || !mayLeave()) return; selected = note; sharing = null; setDirty(false); }
 
   async function load(reset = false) {
     loading = true; error = "";
@@ -82,6 +84,7 @@
     <label for="note-search">Notizen finden</label><input id="note-search" type="search" bind:value={search} placeholder="Titel oder Pfad suchen" />
     {#if !complete}<p class="hint search-scope">Die Suche durchsucht die geladenen Notizen.</p>{/if}
     <div class="filters"><label>Ordner<select bind:value={folder}><option value="">Alle Ordner</option>{#each folders as path}<option value={path}>{path}</option>{/each}</select></label><label>Sortierung<select bind:value={sort}><option value="path">Name A–Z</option><option value="recent">Neu angelegt</option></select></label></div>
+    <button class="quiet share-folder" onclick={() => sharing = { kind: "folder", path: folder }}>{folder ? `Ordner „${folder.split("/").pop()}“ freigeben` : "Freigaben für den ganzen Vault"}</button>
     <div class="note-rows" aria-busy={loading}>
       {#each visible as note (note.id)}<button class="note-row" class:active={selected?.id === note.id} aria-current={selected?.id === note.id ? "true" : undefined} onclick={() => select(note)}><span class="note-name">{note.kind === "FILE" ? note.path.split("/").pop() : note.path.split("/").pop()?.replace(/\.md$/i, "")}</span>{#if note.kind === "FILE"}<span class="file-kind">{fileKindLabel(note.path)}</span>{/if}<span class="note-path">{note.path.includes("/") ? note.path.slice(0, note.path.lastIndexOf("/")) : "Ohne Ordner"}</span>{#if note.noteLevel === 101}<span class="locked">Verschlüsselt</span>{/if}</button>{/each}
       {#if !visible.length && !loading}<p class="list-empty">{search || folder ? "Keine passenden Notizen." : complete ? "Noch keine Notizen vorhanden." : "Auf dieser Seite sind keine sichtbaren Notizen."}</p>{/if}
@@ -90,7 +93,8 @@
     {#if !complete}<button class="secondary load-more" disabled={loading} onclick={() => load()}>Weitere Notizen laden</button>{/if}
   </section>
   <section class="note-content" aria-label="Ausgewählte Notiz">
-    {#if selected}<button class="quiet back-to-list" onclick={() => select(null)}>Zur Notizliste</button>{#key selected.id}{#if selected.kind === "FILE"}<FileViewer note={selected} {permissions} onChanged={changed} onDeleted={deleted} />{:else}<NoteEditor note={selected} {permissions} onChanged={changed} onDeleted={deleted} onDirtyChange={setDirty} />{/if}{/key}
+    {#if sharing}{#key JSON.stringify(sharing)}<SharePanel {vault} target={sharing} onClose={() => sharing = null} />{/key}{/if}
+    {#if selected}<div class="note-actions"><button class="quiet back-to-list" onclick={() => select(null)}>Zur Notizliste</button><button class="quiet" onclick={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null}>Freigabe</button></div>{#key selected.id}{#if selected.kind === "FILE"}<FileViewer note={selected} {permissions} onChanged={changed} onDeleted={deleted} />{:else}<NoteEditor note={selected} {permissions} onChanged={changed} onDeleted={deleted} onDirtyChange={setDirty} />{/if}{/key}
     {:else}<div class="welcome-document"><svg viewBox="0 0 64 72" width="64" height="72" fill="none" aria-hidden="true"><path d="M10 3h29l15 15v51H10z" stroke="currentColor" stroke-width="2"/><path d="M39 3v16h15M20 32h24M20 42h24M20 52h15" stroke="currentColor" stroke-width="2"/></svg><h3>Dein Wissen, direkt im Browser.</h3><p>Wähle eine Notiz aus der Liste, um sie zu lesen{permissions.includes("WRITE") ? " oder zu bearbeiten" : ""}.</p>{#if permissions.includes("CREATE")}<button class="primary" onclick={() => showCreate = true}>Erste Gedanken festhalten</button>{/if}<p class="hint">Mit Obsidian verbunden. Gespeicherte Änderungen stehen auch deinen anderen Geräten zur Verfügung.</p></div>{/if}
   </section>
 </div>
@@ -108,7 +112,7 @@
   .note-content { min-width: 0; } .welcome-document { min-height: 32rem; display: flex; flex-direction: column; justify-content: center; align-items: start; padding: 3rem clamp(1.5rem, 5vw, 5rem); background: var(--surface); border-radius: 8px; }
   .welcome-document svg { color: var(--forest); margin-bottom: 2rem; } .welcome-document h3 { font-size: 1.7rem; max-width: 25ch; } .welcome-document p { max-width: 46ch; color: var(--ink-dim); } .welcome-document .hint { margin-top: 2.5rem; max-width: 50ch; }
   .create-form { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; background: var(--surface-raised); padding: 1.25rem; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 1.5rem; } .create-form > div { flex: 1; min-width: min(20rem, 100%); } .create-form input { width: 100%; } .create-form .hint { margin: .4rem 0 0; }
-  .search-scope { margin-bottom: 0; } .back-to-list { display: none; margin-bottom: .75rem; }
+  .search-scope { margin-bottom: 0; } .share-folder { width: 100%; margin-bottom: .75rem; } .note-actions { display: flex; justify-content: space-between; margin-bottom: .75rem; } .note-actions .back-to-list { margin-bottom: 0; } .back-to-list { display: none; margin-bottom: .75rem; }
   @media (max-width: 950px) { .notes-layout { grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr); gap: 1rem; } }
   @media (max-width: 700px) { .workspace-tools.note-open { display: none; } .notes-layout { display: block; } .has-selection .note-index { display: none; } .note-index { position: static; } .note-rows { max-height: none; } .back-to-list { display: inline-block; } .welcome-document { display: none; } .tool-actions { width: 100%; } .tool-actions button { flex: 1; } }
 </style>

@@ -75,6 +75,20 @@ public class AccessController {
         return report(vId, folderOf(vId, path), auth.getName());
     }
 
+    /** Alle Freigaben, die der Aufrufer verwalten darf - fuer die "geteilt"-Kennzeichen im Dateibaum. */
+    @GetMapping("/api/v1/vaults/{vaultId}/access/grants")
+    public List<GrantResponse> listGrants(@PathVariable String vaultId, Authentication auth) {
+        var vId = VaultId.of(vaultId);
+        access.requireMember(vId, auth.getName());
+        var who = authorization.membership(vId, auth.getName());
+        var all = grants.list(vId);
+        var groupNames = groupNames(vId);
+        return all.stream()
+            .filter(grant -> AccessResolver.resolve(who, all, rulePathOf(grant.target())).allows(Permission.MANAGE))
+            .map(grant -> GrantResponse.from(grant, groupNames))
+            .toList();
+    }
+
     @PutMapping("/api/v1/vaults/{vaultId}/notes/{noteId}/access/grants")
     @Transactional
     public GrantResponse putNoteGrant(@PathVariable String vaultId, @PathVariable String noteId,

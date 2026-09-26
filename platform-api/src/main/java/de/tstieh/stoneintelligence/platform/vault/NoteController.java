@@ -129,11 +129,12 @@ public class NoteController {
         var readable = access.readableNotes(vId, authentication.getName(), page.notes());
         var revisions = snapshots.latestRevisions(readable.stream().filter(note -> !note.isFile()).map(Note::id).toList());
         var files = fileVersions.current(readable.stream().filter(Note::isFile).map(Note::id).toList());
+        var entryAccess = access.entryAccess(vId, authentication.getName(), readable);
         return new ReconciliationResponse(
             page.epochId(), page.complete(), page.nextCursor().orElse(null),
-            readable.stream().map(note -> note.isFile()
+            readable.stream().map(note -> (note.isFile()
                 ? ListedNoteResponse.fromFile(note, files.get(note.id()))
-                : ListedNoteResponse.from(note, revisions.getOrDefault(note.id(), 0L))).toList());
+                : ListedNoteResponse.from(note, revisions.getOrDefault(note.id(), 0L))).with(entryAccess.get(note.id()))).toList());
     }
 
     /** {@code note} (Standard, auch fuer aeltere Clients) oder {@code note,file} - ADR 0009 Punkt 5. */
@@ -252,19 +253,28 @@ public class NoteController {
 
     /** Wie {@link NoteResponse}, plus {@code revision}: hoechste gespeicherte Update-Sequenz (0 = noch kein Inhalt). */
     /** Fuer Dateien ist {@code revision} die Fassung (0 = noch kein Inhalt), dazu Hash und Groesse. */
+    /** {@code permissions}/{@code shared}: was der Aufrufer hier darf und ob eine Freigabe greift (ADR 0011). */
     public record ListedNoteResponse(String id, String vaultId, String path, int noteLevel, String createdBy,
-                                     Instant createdAt, long revision, NoteKind kind, String sha256, Long size) {
+                                     Instant createdAt, long revision, NoteKind kind, String sha256, Long size,
+                                     java.util.Set<de.tstieh.stoneintelligence.platform.identity.Permission> permissions,
+                                     Boolean shared) {
         static ListedNoteResponse from(Note note, long revision) {
             return new ListedNoteResponse(
                 note.id().value().toString(), note.vaultId().value().toString(),
-                note.path(), note.level().value(), note.createdBy(), note.createdAt(), revision, note.kind(), null, null);
+                note.path(), note.level().value(), note.createdBy(), note.createdAt(), revision, note.kind(), null, null,
+                null, null);
+        }
+
+        ListedNoteResponse with(VaultAccessGuard.EntryAccess entry) {
+            return new ListedNoteResponse(id, vaultId, path, noteLevel, createdBy, createdAt, revision, kind, sha256, size,
+                entry.permissions(), entry.shared());
         }
 
         static ListedNoteResponse fromFile(Note note, de.tstieh.stoneintelligence.platform.files.FileVersion version) {
             return new ListedNoteResponse(
                 note.id().value().toString(), note.vaultId().value().toString(), note.path(), note.level().value(),
                 note.createdBy(), note.createdAt(), version == null ? 0 : version.revision(), note.kind(),
-                version == null ? null : version.sha256(), version == null ? null : version.size());
+                version == null ? null : version.sha256(), version == null ? null : version.size(), null, null);
         }
     }
 

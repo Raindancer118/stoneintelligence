@@ -408,3 +408,37 @@ describe("NoteApiClient", () => {
     });
   });
 });
+
+describe("NoteApiClient access (ADR 0011)", () => {
+  const client = (fakeFetch: ReturnType<typeof vi.fn>) =>
+    new NoteApiClient("https://platform.example", vi.fn().mockResolvedValue("t"), fakeFetch as unknown as typeof fetch);
+
+  it("should_putAFolderGrant_withThePathInTheQuery", async () => {
+    const fakeFetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ id: "g1" }) });
+
+    const grant = await client(fakeFetch).putFolderGrant("v1", "Team/Intern", { scopeType: "USER", subject: "ben", permissions: ["READ"] });
+
+    expect(grant.id).toBe("g1");
+    expect(fakeFetch).toHaveBeenCalledWith(
+      "https://platform.example/api/v1/vaults/v1/folders/access/grants?path=Team%2FIntern",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ scopeType: "USER", subject: "ben", permissions: ["READ"] }) }),
+    );
+  });
+
+  it("should_removeAGrantForEveryone_withoutASubject", async () => {
+    const fakeFetch = vi.fn().mockResolvedValue({ ok: true, text: async () => "" });
+
+    await client(fakeFetch).removeNoteGrant("v1", "n1", "EVERYONE", null);
+
+    expect(fakeFetch).toHaveBeenCalledWith(
+      "https://platform.example/api/v1/vaults/v1/notes/n1/access/grants?scopeType=EVERYONE",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("should_reportTheStatus_whenARefusalComesBack", async () => {
+    const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status: 409 });
+
+    await expect(client(fakeFetch).removeFolderGrant("v1", "", "USER", "tom")).rejects.toMatchObject({ status: 409 });
+  });
+});

@@ -4,7 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
-import { bindEditorToText } from "../src/sync/editorBinding";
+import { applyReadOnly, bindEditorToText } from "../src/sync/editorBinding";
 
 function editorWith(content: string, compartment: Compartment): EditorView {
   const parent = document.createElement("div");
@@ -80,5 +80,22 @@ describe("bindEditorToText", () => {
     first.getText("content").insert(1, " geaendert");
 
     expect(view.state.doc.toString()).toBe("B");
+  });
+});
+
+describe("applyReadOnly (ADR 0011)", () => {
+  it("should_blockEditing_andSayWhy_untilWriteAccessIsBack", () => {
+    const compartment = new Compartment();
+    const view = editorWith("Nur lesen", compartment);
+
+    applyReadOnly(view, compartment, true);
+
+    expect(view.state.readOnly).toBe(true);
+    expect(view.dom.querySelector(".stoneintelligence-readonly-panel")?.textContent).toContain("nur lesen");
+
+    applyReadOnly(view, compartment, false);
+
+    expect(view.state.readOnly).toBe(false);
+    expect(view.dom.querySelector(".stoneintelligence-readonly-panel")).toBeNull();
   });
 });

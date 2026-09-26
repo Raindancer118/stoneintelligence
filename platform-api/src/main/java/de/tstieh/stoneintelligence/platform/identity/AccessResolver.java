@@ -66,6 +66,16 @@ public final class AccessResolver {
         return new EffectiveAccess(permissions, decisive.isEmpty() ? null : decisive.getFirst());
     }
 
+    /**
+     * Ob irgendeine Freigabe an diesem Pfad greift, egal fuer wen - Grundlage des "geteilt"-
+     * Kennzeichens, das nur Verwaltende sehen.
+     */
+    public static boolean touchedByGrant(List<AccessGrant> grants, String path) {
+        var isFolder = path.endsWith("/");
+        var segments = segments(path);
+        return grants.stream().anyMatch(grant -> levelOf(grant.target(), segments, isFolder) >= 0);
+    }
+
     /** {@code -1}, wenn die Freigabe fuer diesen Pfad nicht gilt; sonst ihre Spezifitaet. */
     private static int levelOf(GrantTarget target, List<String> pathSegments, boolean isFolder) {
         return switch (target) {

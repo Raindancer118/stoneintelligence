@@ -1,4 +1,5 @@
 import type { AiChangeSet, AiChangeSetView, AiRevertReport } from "../ui/aiChanges";
+import type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
 import { obsidianFetch } from "./obsidianFetch";
 import { withRateLimitRetry } from "./retryFetch";
 
@@ -16,7 +17,17 @@ export interface NoteListItem {
   /** Nur bei Dateien mit Inhalt. */
   sha256?: string | null;
   size?: number | null;
+  /** Was ich hier darf (ADR 0011) - fehlt bei Servern vor 0.24. */
+  permissions?: Permission[] | null;
+  /** Ob eine Freigabe diesen Eintrag betrifft - nur fuer Verwaltende gesetzt. */
+  shared?: boolean | null;
 }
+
+export interface GroupRef { id: string; name: string; }
+export interface VaultMember { subject: string; groups: GroupRef[]; permissions: Permission[]; }
+export interface VaultGroup { id: string; name: string; memberSubjects: string[]; roleIds: string[]; }
+/** `permissions === null` heisst "wie im Vault", eine leere Liste "nichts". */
+export interface GrantChange { scopeType: ScopeType; subject: string | null; permissions: Permission[] | null; }
 
 export interface FileLimits { maxFileBytes: number; vaultQuotaBytes: number; }
 export interface UploadedFile { revision: number; sha256: string; size: number; }
@@ -333,6 +344,62 @@ export class NoteApiClient {
     return this.json<AiRevertReport>(`/api/v1/vaults/${vaultId}/ai/change-sets/${changeSetId}/revert`, "failed to undo AI change", {});
   }
 
+  /** Wer hier was darf und woher (Verwaltende sehen alle, sonst nur die eigenen Rechte). */
+  async noteAccess(vaultId: string, noteId: string): Promise<AccessReport> {
+    return this.json<AccessReport>(`/api/v1/vaults/${vaultId}/notes/${noteId}/access`, "failed to read access");
+  }
+
+  /** `path` = Ordnerpfad, `""` = der ganze Vault. */
+  async folderAccess(vaultId: string, path: string): Promise<AccessReport> {
+    return this.json<AccessReport>(`/api/v1/vaults/${vaultId}/folders/access?${new URLSearchParams({ path })}`, "failed to read access");
+  }
+
+  async putNoteGrant(vaultId: string, noteId: string, change: GrantChange): Promise<Grant> {
+    return this.send<Grant>("PUT", `/api/v1/vaults/${vaultId}/notes/${noteId}/access/grants`, "failed to share", change);
+  }
+
+  async putFolderGrant(vaultId: string, path: string, change: GrantChange): Promise<Grant> {
+    return this.send<Grant>("PUT", `/api/v1/vaults/${vaultId}/folders/access/grants?${new URLSearchParams({ path })}`, "failed to share", change);
+  }
+
+  async removeNoteGrant(vaultId: string, noteId: string, scopeType: ScopeType, subject: string | null): Promise<void> {
+    await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/notes/${noteId}/access/grants?${scopeQuery(scopeType, subject)}`, "failed to remove share");
+  }
+
+  async removeFolderGrant(vaultId: string, path: string, scopeType: ScopeType, subject: string | null): Promise<void> {
+    await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/folders/access/grants?${new URLSearchParams({ path })}&${scopeQuery(scopeType, subject)}`, "failed to remove share");
+  }
+
+  /** Alle Freigaben, die ich verwalten darf - fuer die Kennzeichen im Dateibaum. */
+  async listGrants(vaultId: string): Promise<Grant[]> {
+    return this.json<Grant[]>(`/api/v1/vaults/${vaultId}/access/grants`, "failed to list shares");
+  }
+
+  async listMembers(vaultId: string): Promise<VaultMember[]> {
+    return this.json<VaultMember[]>(`/api/v1/vaults/${vaultId}/members`, "failed to list members");
+  }
+
+  async listGroups(vaultId: string): Promise<VaultGroup[]> {
+    return this.json<VaultGroup[]>(`/api/v1/vaults/${vaultId}/groups`, "failed to list groups");
+  }
+
+  /** Wie {@link json}, aber mit beliebiger Methode; leere Antworten (204/200 ohne Inhalt) ergeben `undefined`. */
+  private async send<T>(method: string, path: string, action: string, body?: object): Promise<T> {
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method,
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        Authorization: `Bearer ${await this.getAccessToken()}`,
+      },
+    });
+    if (!response.ok) {
+      throw new HttpError(response.status, action, await problemDetail(response));
+    }
+    const text = typeof response.text === "function" ? await response.text() : "";
+    return (text ? JSON.parse(text) : undefined) as T;
+  }
+
   private async json<T>(path: string, action: string, body?: object): Promise<T> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
@@ -346,6 +413,10 @@ export class NoteApiClient {
     }
     return (await response.json()) as T;
   }
+}
+
+function scopeQuery(scopeType: ScopeType, subject: string | null): URLSearchParams {
+  return new URLSearchParams(subject === null ? { scopeType } : { scopeType, subject });
 }
 
 async function problemDetail(response: Response): Promise<string | undefined> {
