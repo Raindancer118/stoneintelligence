@@ -13,7 +13,6 @@ import de.tstieh.stoneintelligence.platform.identity.AccessResolver;
 import de.tstieh.stoneintelligence.platform.identity.Permission;
 import de.tstieh.stoneintelligence.platform.vault.Note;
 import de.tstieh.stoneintelligence.platform.vault.NoteActivity;
-import de.tstieh.stoneintelligence.platform.vault.NoteNotFoundException;
 import de.tstieh.stoneintelligence.platform.vault.NoteRepository;
 import de.tstieh.stoneintelligence.platform.vault.VaultAccessGuard;
 import org.springframework.security.core.Authentication;
@@ -50,15 +49,17 @@ public class HistoryController {
         var vId = VaultId.of(vaultId);
         var nId = NoteId.of(noteId);
         access.requireMember(vId, auth.getName());
-        var note = notes.findById(vId, nId).orElseThrow(() -> new NoteNotFoundException(vId, nId));
-        access.require(vId, auth.getName(), Permission.READ, note.path());
-        var activity = notes.activity(vId, nId).orElseThrow(() -> new NoteNotFoundException(vId, nId));
+        var note = notes.findById(vId, nId);
+        note.ifPresent(existing -> access.require(vId, auth.getName(), Permission.READ, existing.path()));
+        var all = audit.listForNote(vId, nId);
+        // Geloescht: der letzte bekannte Ort aus dem Protokoll entscheidet, wer den Verlauf sieht.
+        var place = note.map(Note::path).orElseGet(() -> lastKnownPath(all));
         var visible = visibility(vId, auth.getName());
-        var events = audit.listForNote(vId, nId).stream()
-            .map(event -> visible.apply(event, note.path()))
+        var events = all.stream()
+            .map(event -> visible.apply(event, place))
             .flatMap(Optional::stream)
             .toList();
-        return new NoteHistory(activity, events);
+        return new NoteHistory(note.isPresent() ? notes.activity(vId, nId).orElse(null) : null, events);
     }
 
     /** {@code path} = Ordner (leer = ganzer Vault); neueste Ereignisse zuerst. */
@@ -112,6 +113,17 @@ public class HistoryController {
         };
     }
 
+    private static String lastKnownPath(List<AuditEvent> events) {
+        String last = null;
+        for (var event : events) {
+            var paths = pathsOf(event);
+            if (!paths.isEmpty() && !event.action().startsWith("ACCESS_")) {
+                last = paths.getLast();
+            }
+        }
+        return last;
+    }
+
     private static List<String> pathsOf(AuditEvent event) {
         return Stream.of("path", "from", "to").map(event.payload()::get)
             .filter(String.class::isInstance).map(String.class::cast).distinct().toList();
@@ -121,6 +133,7 @@ public class HistoryController {
         return path.equals(folder) || path.startsWith(folder + "/");
     }
 
+    /** {@code activity == null}: der Eintrag ist geloescht, es bleibt sein Protokoll. */
     public record NoteHistory(NoteActivity activity, List<EventResponse> events) {
     }
 

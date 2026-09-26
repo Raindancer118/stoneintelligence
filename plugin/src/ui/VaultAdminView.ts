@@ -1,8 +1,9 @@
 import { ItemView, Notice, Setting, type WorkspaceLeaf } from "obsidian";
 import { explainAccessError, type Permission, permissionsLabel } from "../sync/accessPlan";
+import { canCancel, jobStatusText } from "../sync/aiJobText";
 import { describeEvent, formatDate } from "../sync/historyText";
 import {
-  type HistoryEvent, HttpError, type NoteApiClient, type PendingInvitation, type VaultGroup, type VaultMember, type VaultRole,
+  type AiJob, type HistoryEvent, HttpError, type NoteApiClient, type PendingInvitation, type VaultGroup, type VaultMember, type VaultRole,
 } from "../sync/NoteApiClient";
 import { confirmAction } from "./ConfirmModal";
 
@@ -17,12 +18,13 @@ export interface VaultAdminHost {
   vaultRenamed(name: string): void;
 }
 
-type Tab = "members" | "groups" | "roles" | "invitations" | "log";
+export type Tab = "members" | "groups" | "roles" | "invitations" | "ai" | "log";
 const TABS: { id: Tab; label: string }[] = [
   { id: "members", label: "Mitglieder" },
   { id: "groups", label: "Gruppen" },
   { id: "roles", label: "Rollen" },
   { id: "invitations", label: "Einladungen" },
+  { id: "ai", label: "KI" },
   { id: "log", label: "Protokoll" },
 ];
 const ALL: Permission[] = ["READ", "WRITE", "CREATE", "DELETE", "MANAGE"];
@@ -40,6 +42,8 @@ export class VaultAdminView extends ItemView {
   private roles: VaultRole[] = [];
   private invitations: PendingInvitation[] = [];
   private log: HistoryEvent[] = [];
+  private jobs: AiJob[] = [];
+  private jobTimer: number | null = null;
   private manage = false;
   private busy = false;
   private error = "";
@@ -67,7 +71,14 @@ export class VaultAdminView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    window.clearTimeout(this.jobTimer ?? undefined);
     this.contentEl.empty();
+  }
+
+  /** Von aussen, z. B. nach "Mit KI einlesen". */
+  async showTab(tab: Tab): Promise<void> {
+    this.tab = tab;
+    await this.reload();
   }
 
   /** Von aussen, z. B. nach einer Rechte-Ankuendigung. */
@@ -89,6 +100,7 @@ export class VaultAdminView extends ItemView {
       this.manage = permissions.includes("MANAGE");
       this.invitations = this.manage ? await api.listInvitations(vaultId) : [];
       this.log = await api.vaultLog(vaultId, "", 100);
+      this.jobs = await api.listAiJobs(vaultId).catch(() => []);
       this.error = "";
     } catch (error) {
       this.error = describe(error);
@@ -164,10 +176,14 @@ export class VaultAdminView extends ItemView {
       case "invitations":
         this.renderInvitations(body);
         break;
+      case "ai":
+        this.renderJobs(body);
+        break;
       case "log":
         this.renderLog(body);
         break;
     }
+    this.scheduleJobRefresh();
   }
 
   private renderMembers(root: HTMLElement): void {
@@ -301,6 +317,35 @@ export class VaultAdminView extends ItemView {
         .setDesc(`${invitation.access === "READ" ? "lesen" : "bearbeiten"} · gültig bis ${formatDate(invitation.expiresAt)}`)
         .addButton((button) => button.setButtonText("Zurückziehen").setDisabled(this.busy)
           .onClick(() => void this.run((api, vaultId) => api.revokeInvitation(vaultId, invitation.id), `Einladung an ${invitation.email} zurückgezogen.`)));
+    }
+  }
+
+  private renderJobs(root: HTMLElement): void {
+    root.createEl("p", {
+      cls: "setting-item-description",
+      text: "PDFs und Textdateien liest du per Rechtsklick → „Mit KI einlesen…“ ein. Was die KI geschrieben hat, lässt sich unter „KI-Änderungen“ rückgängig machen.",
+    });
+    if (this.jobs.length === 0) {
+      root.createEl("p", { cls: "setting-item-description", text: "Noch keine KI-Aufträge." });
+    }
+    for (const job of this.jobs) {
+      const row = new Setting(root).setName(job.fileName).setDesc(`${jobStatusText(job)} · ${job.requestedBy} · ${formatDate(job.createdAt)}`);
+      if (canCancel(job)) {
+        row.addButton((button) => button.setButtonText("Abbrechen").setDisabled(this.busy).onClick(async () => {
+          const running = job.status === "RUNNING";
+          if (!running || await confirmAction(this.app, "Laufendes Einlesen abbrechen?", "Was die KI schon geschrieben hat, wird rückgängig gemacht.", "Abbrechen")) {
+            await this.run((api, vaultId) => api.cancelAiJob(vaultId, job.id), `„${job.fileName}“ abgebrochen.`);
+          }
+        }));
+      }
+    }
+  }
+
+  /** Solange etwas laeuft und der KI-Reiter offen ist, alle paar Sekunden den Fortschritt holen. */
+  private scheduleJobRefresh(): void {
+    window.clearTimeout(this.jobTimer ?? undefined);
+    if (this.tab === "ai" && this.jobs.some(canCancel)) {
+      this.jobTimer = window.setTimeout(() => void this.reload(), 5000);
     }
   }
 

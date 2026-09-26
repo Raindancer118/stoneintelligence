@@ -29,8 +29,8 @@ import org.springframework.web.bind.annotation.RestController;
  * wird protokolliert und den verbundenen Geraeten angekuendigt, damit offene Verbindungen sofort
  * nach den neuen Rechten laufen.
  *
- * <p>Die Pfadregel-Endpunkte bleiben fuer aeltere Clients bestehen und arbeiten jetzt auf den
- * Freigaben (V14): DENY = nichts erlaubt, ALLOW = wie im Vault.
+ * <p>Die frueheren Pfadregel-Endpunkte sind entfallen (0.27.0) - Ordner und Eintraege gibt man
+ * ueber {@link AccessController} frei.
  */
 @RestController
 public class AuthorizationController {
@@ -229,38 +229,6 @@ public class AuthorizationController {
         changed(vId, authentication, "MEMBER_REMOVED", Map.of("subject", subject));
     }
 
-    @GetMapping("/api/v1/vaults/{vaultId}/path-rules")
-    public List<PathRuleResponse> listPathRules(@PathVariable String vaultId, Authentication authentication) {
-        var vId = VaultId.of(vaultId);
-        access.requireMember(vId, authentication.getName());
-        return grants.list(vId).stream()
-            .filter(grant -> !(grant.scope() instanceof GrantScope.Group))
-            .filter(grant -> grant.inheritsVault() || grant.permissions().isEmpty())
-            .map(PathRuleResponse::from)
-            .toList();
-    }
-
-    /** Aeltere Clients: ein Praefix, das genau einen Eintrag trifft, wird dessen Freigabe, sonst die eines Ordners. */
-    @PostMapping("/api/v1/vaults/{vaultId}/path-rules")
-    @Transactional
-    public PathRuleResponse createPathRule(
-        @PathVariable String vaultId, @RequestBody CreatePathRuleRequest request, Authentication authentication
-    ) {
-        var vId = VaultId.of(vaultId);
-        access.require(vId, authentication.getName(), Permission.MANAGE);
-        var scope = request.scopeSubject() == null || request.scopeSubject().isBlank()
-            ? GrantScope.everyone()
-            : GrantScope.user(request.scopeSubject());
-        var path = AccessResolver.normalize(request.pathPrefix());
-        GrantTarget target = notes.findByPath(vId, path).stream().findFirst()
-            .<GrantTarget>map(note -> GrantTarget.entry(note.id(), note.path()))
-            .orElse(GrantTarget.folder(path));
-        var permissions = RuleEffect.valueOf(request.effect()) == RuleEffect.DENY ? Set.<Permission>of() : null;
-        var grant = grants.put(vId, target, scope, permissions, authentication.getName());
-        changed(vId, authentication, "ACCESS_GRANTED", Map.of("path", path, "scopeType", scope.type()));
-        return PathRuleResponse.from(grant);
-    }
-
     private void requireGroupAccess(VaultId vaultId, UUID groupId, Authentication authentication) {
         access.require(vaultId, authentication.getName(), Permission.MANAGE);
         if (!authorization.groupBelongsToVault(groupId, vaultId)) {
@@ -301,9 +269,6 @@ public class AuthorizationController {
     public record MemberRequest(String subject) {
     }
 
-    public record CreatePathRuleRequest(String pathPrefix, String scopeSubject, String effect) {
-    }
-
     public record GroupRef(String id, String name) {
     }
 
@@ -321,17 +286,6 @@ public class AuthorizationController {
             return new GroupResponse(
                 group.id().toString(), group.name(), group.memberSubjects(),
                 roleIds.stream().map(UUID::toString).collect(java.util.stream.Collectors.toUnmodifiableSet()));
-        }
-    }
-
-    public record PathRuleResponse(String pathPrefix, String scopeSubject, String effect) {
-        static PathRuleResponse from(AccessGrant grant) {
-            var path = switch (grant.target()) {
-                case GrantTarget.Folder folder -> folder.path();
-                case GrantTarget.Entry entry -> entry.path();
-            };
-            var scopeSubject = grant.scope() instanceof GrantScope.User user ? user.subject() : null;
-            return new PathRuleResponse(path, scopeSubject, grant.inheritsVault() ? "ALLOW" : "DENY");
         }
     }
 }

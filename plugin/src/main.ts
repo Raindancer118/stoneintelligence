@@ -45,7 +45,9 @@ import { AiChangesModal } from "./ui/AiChangesModal";
 import { InviteModal } from "./ui/InviteModal";
 import { ShareModal, type ShareTarget } from "./ui/ShareModal";
 import { HistoryModal } from "./ui/HistoryModal";
-import { VaultAdminView, VIEW_TYPE_VAULT_ADMIN } from "./ui/VaultAdminView";
+import { type Tab as VaultAdminTab, VaultAdminView, VIEW_TYPE_VAULT_ADMIN } from "./ui/VaultAdminView";
+import { AiReadModal, type AiReadTarget } from "./ui/AiReadModal";
+import { canReadWithAi } from "./sync/aiJobText";
 import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
 import { presentStatus, type StatusPresentation } from "./ui/statusPresentation";
 import { type Collaborator, type LiveNote, StatusView, VIEW_TYPE_STATUS } from "./ui/StatusView";
@@ -182,7 +184,7 @@ export default class StoneIntelligencePlugin extends Plugin {
   private readonly readOnlyCompartment = new Compartment();
   private readonly readOnlyViews = new WeakMap<EditorView, boolean>();
   /** Rechte je Eintrag (NoteId) aus der letzten Server-Liste. */
-  private readonly entryAccess = new Map<string, { permissions?: Permission[] | null; shared?: boolean | null }>();
+  private readonly entryAccess = new Map<string, { permissions?: Permission[] | null; shared?: boolean | null; level?: number }>();
   /** Ordner mit Freigaben, die ich verwalten darf (fuer das "geteilt"-Kennzeichen). */
   private sharedFolders = new Set<string>();
   private liveBindGeneration = 0;
@@ -1050,6 +1052,11 @@ export default class StoneIntelligencePlugin extends Plugin {
         menu.addItem((item) => item.setTitle("StoneIntelligence: Verlauf und Protokoll…").setIcon("history")
           .onClick(() => this.openHistory(target)));
       }
+      const aiTarget = this.aiTargetFor(file);
+      if (aiTarget) {
+        menu.addItem((item) => item.setTitle("StoneIntelligence: Mit KI einlesen…").setIcon("sparkles")
+          .onClick(() => this.openAiRead([aiTarget])));
+      }
       if (!(file instanceof TFile) || file.extension !== "md") {
         return;
       }
@@ -1077,6 +1084,11 @@ export default class StoneIntelligencePlugin extends Plugin {
         menu.addItem((item) => item.setTitle(`StoneIntelligence: Freigabe für ${targets.length} Einträge…`).setIcon("users")
           .onClick(() => this.openShare(targets)));
       }
+      const aiTargets = files.map((file) => this.aiTargetFor(file)).filter((target): target is AiReadTarget => target !== null);
+      if (aiTargets.length > 0) {
+        menu.addItem((item) => item.setTitle(`StoneIntelligence: ${aiTargets.length} Dateien mit KI einlesen…`).setIcon("sparkles")
+          .onClick(() => this.openAiRead(aiTargets)));
+      }
     }));
     this.registerEvent(this.app.workspace.on("editor-menu", (menu, _editor, info) => {
       const target = this.isReady() && info.file ? this.shareTargetFor(info.file) : null;
@@ -1098,11 +1110,25 @@ export default class StoneIntelligencePlugin extends Plugin {
     return noteId ? { kind: "entry", noteId, path: file.path } : null;
   }
 
+  /** Nur synchronisierte PDFs/Textdateien, die ich lesen darf - das Level kommt aus der Server-Liste. */
+  private aiTargetFor(file: TAbstractFile): AiReadTarget | null {
+    if (!(file instanceof TFile) || !canReadWithAi(file.path)) {
+      return null;
+    }
+    const fileId = this.vaultState().fileIds?.[file.path];
+    const level = fileId ? this.entryAccess.get(fileId)?.level : undefined;
+    return fileId && level !== undefined ? { fileId, path: file.path, level } : null;
+  }
+
+  private openAiRead(targets: AiReadTarget[]): void {
+    new AiReadModal(this.app, this.noteApiClient, this.settings.vaultId, targets, () => void this.activateVaultAdminView("ai")).open();
+  }
+
   private openHistory(target: ShareTarget): void {
     new HistoryModal(this.app, this.noteApiClient, this.settings.vaultId, target).open();
   }
 
-  async activateVaultAdminView(): Promise<void> {
+  async activateVaultAdminView(tab?: VaultAdminTab): Promise<void> {
     const { workspace } = this.app;
     let leaf = workspace.getLeavesOfType(VIEW_TYPE_VAULT_ADMIN)[0];
     if (!leaf) {
@@ -1110,6 +1136,9 @@ export default class StoneIntelligencePlugin extends Plugin {
       await leaf.setViewState({ type: VIEW_TYPE_VAULT_ADMIN, active: true });
     }
     void workspace.revealLeaf(leaf);
+    if (tab && leaf.view instanceof VaultAdminView) {
+      await leaf.view.showTab(tab);
+    }
   }
 
   /** Offene Verwaltungsansichten nach Rechte-Aenderungen neu laden. */
@@ -1131,10 +1160,10 @@ export default class StoneIntelligencePlugin extends Plugin {
   // ---------------------------------------------------------------------------------------------
   // Rechte je Eintrag (ADR 0011): Schreibschutz im Editor, Kennzeichen im Dateibaum
 
-  private rememberAccess(entries: Array<{ id: string; permissions?: Permission[] | null; shared?: boolean | null }>): void {
+  private rememberAccess(entries: Array<{ id: string; permissions?: Permission[] | null; shared?: boolean | null; noteLevel?: number }>): void {
     this.entryAccess.clear();
     for (const entry of entries) {
-      this.entryAccess.set(entry.id, { permissions: entry.permissions, shared: entry.shared });
+      this.entryAccess.set(entry.id, { permissions: entry.permissions, shared: entry.shared, level: entry.noteLevel });
     }
     this.applyAccessMarkers();
   }

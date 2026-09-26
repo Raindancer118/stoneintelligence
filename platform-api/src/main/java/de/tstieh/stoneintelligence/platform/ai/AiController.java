@@ -25,9 +25,11 @@ public class AiController {
     private final VaultAccessGuard access;
     private final AiJobService jobs;
     private final AiCapacityBoard capacity;
+    private final VaultFileJobs fileJobs;
 
     public AiController(@Lazy AiWriteService ai, AiServiceDirectory services, VaultAccessGuard access, AiJobService jobs,
-                        AiCapacityBoard capacity) {
+                        AiCapacityBoard capacity, VaultFileJobs fileJobs) {
+        this.fileJobs = fileJobs;
         this.jobs = jobs;
         this.capacity = capacity;
         this.ai = ai;
@@ -94,6 +96,20 @@ public class AiController {
             uploads.add(new AiJobService.Upload(file.getOriginalFilename(), file.getContentType(), file.getBytes()));
         }
         return jobs.upload(vId, auth.getName(), service, level, uploads).stream().map(JobResponse::from).toList();
+    }
+
+    /** Dateien, die schon im Vault liegen, einlesen lassen (Obsidian: "Mit KI einlesen"). */
+    @PostMapping(path = "/api/v1/vaults/{vaultId}/ai/jobs/from-files", consumes = org.springframework.http.MediaType.APPLICATION_JSON_VALUE)
+    public List<JobResponse> fromFiles(@PathVariable String vaultId,
+                                       @org.springframework.web.bind.annotation.RequestBody FromFilesRequest request,
+                                       Authentication auth) {
+        var vId = VaultId.of(vaultId);
+        var ids = request.fileIds() == null ? List.<de.tstieh.stoneintelligence.domain.id.NoteId>of()
+            : request.fileIds().stream().map(de.tstieh.stoneintelligence.domain.id.NoteId::of).toList();
+        return fileJobs.start(vId, auth.getName(), request.service(), ids).stream().map(JobResponse::from).toList();
+    }
+
+    public record FromFilesRequest(String service, List<String> fileIds) {
     }
 
     @GetMapping("/api/v1/vaults/{vaultId}/ai/jobs")

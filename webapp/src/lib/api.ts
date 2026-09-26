@@ -29,7 +29,6 @@ export interface Note {
 }
 export interface NotePage { epochId: string; complete: boolean; nextCursor: string | null; notes: Note[]; }
 export interface NoteContent { revision: number; updates: string[]; }
-export interface AuditEvent { actor: string; action: string; payload: Record<string, unknown>; occurredAt: string; }
 export interface PersonSuggestion { username: string; name: string; maskedEmail: string; alreadyMember: boolean; }
 export type InviteAccess = "EDIT" | "READ";
 export interface InviteResult { status: "ADDED" | "INVITED" | "ALREADY_MEMBER"; displayName: string; }
@@ -69,6 +68,8 @@ export interface AiChangeSetDetail { changeSet: AiChangeSet; changes: AiChange[]
 export interface AiRevertReport { reverted: number; conflicts: { path: string; reason: string }[]; }
 
 export type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
+export type { HistoryEvent, NoteActivity, NoteHistory } from "./historyText";
+import type { HistoryEvent, NoteHistory } from "./historyText";
 import type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
 export interface VaultMember { subject: string; groups: { id: string; name: string }[]; permissions: Permission[]; }
 /** `permissions === null` heisst "wie im Vault", eine leere Liste "nichts". */
@@ -149,7 +150,9 @@ export const api = {
   noteContent: (vaultId: string, noteId: string) => request<NoteContent>(`/api/v1/vaults/${vaultId}/notes/${noteId}/content`),
   saveContent: (vaultId: string, noteId: string, expectedRevision: number, update: string) => request<{ revision: number }>(
     `/api/v1/vaults/${vaultId}/notes/${noteId}/content`, { method: "POST", body: JSON.stringify({ expectedRevision, update }) }),
-  noteAudit: (vaultId: string, noteId: string) => request<AuditEvent[]>(`/api/v1/vaults/${vaultId}/notes/${noteId}/audit`),
+  noteHistory: (vaultId: string, noteId: string) => request<NoteHistory>(`/api/v1/vaults/${vaultId}/notes/${noteId}/history`),
+  vaultLog: (vaultId: string, path = "", limit = 100) =>
+    request<HistoryEvent[]>(`/api/v1/vaults/${vaultId}/audit?${new URLSearchParams({ path, limit: String(limit) })}`),
   listVaults: () => request<Vault[]>("/api/v1/vaults"),
   createVault: (name: string) => request<Vault>("/api/v1/vaults", { method: "POST", body: JSON.stringify({ name }) }),
 

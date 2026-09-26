@@ -127,6 +127,22 @@ class PlatformApiEndToEndIT {
         return json.readValue(response.body(), responseType);
     }
 
+    /** Freigabe setzen (ADR 0011) - Ordner muss existieren; {@code permissions == null} = wie im Vault. */
+    private void putFolderGrant(String vaultPath, Map<String, String> headers, String folder, String subject,
+                                List<String> permissions) throws Exception {
+        var body = new java.util.HashMap<String, Object>();
+        body.put("scopeType", "USER");
+        body.put("subject", subject);
+        body.put("permissions", permissions);
+        var builder = HttpRequest.newBuilder(URI.create(baseUrl() + vaultPath + "/folders/access/grants?path="
+                + java.net.URLEncoder.encode(folder, java.nio.charset.StandardCharsets.UTF_8)))
+            .header("Content-Type", "application/json")
+            .PUT(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)));
+        headers.forEach(builder::header);
+        var response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).as("grant on '%s'", folder).isEqualTo(200);
+    }
+
     private HttpResponse<String> patch(String path, Map<String, String> headers, Object body) throws Exception {
         var builder = HttpRequest.newBuilder(URI.create(baseUrl() + path))
             .header("Content-Type", "application/json")
@@ -303,7 +319,8 @@ class PlatformApiEndToEndIT {
         }
         var note = post(base + "/notes", auth, Map.of("path", "visible.md", "noteLevel", 1), Map.class);
         assertThat(postRaw(base + "/notes", auth, Map.of("path", "visible.md", "noteLevel", 1)).statusCode()).isEqualTo(409);
-        post(base + "/path-rules", auth, Map.of("pathPrefix", "private/", "scopeSubject", "path-editor", "effect", "DENY"), Map.class);
+        assertThat(postRaw(base + "/folders", auth, Map.of("path", "private")).statusCode()).isEqualTo(200);
+        putFolderGrant(base, auth, "private", "path-editor", List.of());
         assertThat(patch(base + "/notes/" + note.get("id"), auth, Map.of("path", "private/hidden.md")).statusCode()).isEqualTo(403);
     }
 
@@ -355,14 +372,13 @@ class PlatformApiEndToEndIT {
         var vault = post("/api/v1/vaults", auth, Map.of("name", "Path rules"), Map.class);
         var base = "/api/v1/vaults/" + vault.get("id");
         var note = post(base + "/notes", auth, Map.of("path", "private/secret.md", "noteLevel", 1), Map.class);
-        post(base + "/path-rules", auth,
-            Map.of("pathPrefix", "private/", "scopeSubject", "path-reader", "effect", "DENY"), Map.class);
+        putFolderGrant(base, auth, "private", "path-reader", List.of());
 
         var list = json.readTree(get(base + "/notes", auth).body());
         assertThat(list.get("notes").size()).isZero();
         assertThat(list.get("complete").asBoolean()).isTrue();
         assertThat(get(base + "/notes/" + note.get("id"), auth).statusCode()).isEqualTo(403);
-        assertThat(get(base + "/notes/" + note.get("id") + "/audit", auth).statusCode()).isEqualTo(403);
+        assertThat(get(base + "/notes/" + note.get("id") + "/history", auth).statusCode()).isEqualTo(403);
         assertThat(get(base + "/notes/" + note.get("id") + "/content", auth).statusCode()).isEqualTo(403);
     }
 
@@ -436,7 +452,8 @@ class PlatformApiEndToEndIT {
         }
         assertThat(postRaw(base + "/folders/rename", auth, Map.of("from", "Projekt", "to", "Projekt/In")).statusCode()).isEqualTo(400);
         assertThat(postRaw(base + "/folders", bearerAuth("mallory"), Map.of("path", "X")).statusCode()).isEqualTo(403);
-        post(base + "/path-rules", auth, Map.of("pathPrefix", "Geheim/", "scopeSubject", "folder-editor", "effect", "DENY"), Map.class);
+        assertThat(postRaw(base + "/folders", auth, Map.of("path", "Geheim")).statusCode()).isEqualTo(200);
+        putFolderGrant(base, auth, "Geheim", "folder-editor", List.of());
         assertThat(postRaw(base + "/folders", auth, Map.of("path", "Geheim/X")).statusCode()).isEqualTo(403);
 
         // Aeltere Plugins behandeln unbekannte Nachrichtentypen als Yjs-Update - nie zustellen.
@@ -567,9 +584,9 @@ class PlatformApiEndToEndIT {
         assertThat(getAfterDelete.statusCode()).isEqualTo(404);
 
         // 11) Audit-Trail zeigt create + rename + delete, jeweils mit dem richtigen Actor.
-        var auditResponse = get("/api/v1/vaults/" + vaultId + "/notes/" + noteId + "/audit", actorHeader);
+        var auditResponse = get("/api/v1/vaults/" + vaultId + "/notes/" + noteId + "/history", actorHeader);
         assertThat(auditResponse.statusCode()).isEqualTo(200);
-        List<Map<String, Object>> auditEvents = json.readValue(auditResponse.body(), List.class);
+        List<Map<String, Object>> auditEvents = (List<Map<String, Object>>) json.readValue(auditResponse.body(), Map.class).get("events");
         assertThat(auditEvents).extracting(event -> event.get("action"))
             .containsExactly("note.created", "note.renamed", "note.deleted");
         assertThat(auditEvents).allSatisfy(event -> assertThat(event.get("actor")).isEqualTo("tom"));

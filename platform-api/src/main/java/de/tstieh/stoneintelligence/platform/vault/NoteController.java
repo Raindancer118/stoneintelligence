@@ -74,24 +74,6 @@ public class NoteController {
         return NoteResponse.from(note);
     }
 
-    @GetMapping("/api/v1/vaults/{vaultId}/notes/{noteId}/audit")
-    public List<AuditEventResponse> auditTrail(
-        @PathVariable String vaultId, @PathVariable String noteId, Authentication authentication
-    ) {
-        var vId = VaultId.of(vaultId);
-        access.requireMember(vId, authentication.getName());
-        notes.findById(vId, NoteId.of(noteId)).ifPresent(note ->
-            access.require(vId, authentication.getName(), Permission.READ, note.path()));
-        var events = audit.listForNote(vId, NoteId.of(noteId));
-        // Auch nach Loeschung bleibt der Verlauf abrufbar, aber nie fuer gesperrte historische Pfade.
-        var historicalPaths = events.stream().flatMap(event -> java.util.stream.Stream.of("path", "from", "to")
-            .map(event.payload()::get).filter(String.class::isInstance).map(String.class::cast)).distinct().toList();
-        access.requireReadablePaths(vId, authentication.getName(), historicalPaths);
-        return events.stream()
-            .map(AuditEventResponse::from)
-            .toList();
-    }
-
     @GetMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
     public ResponseEntity<NoteResponse> get(
         @PathVariable String vaultId, @PathVariable String noteId, Authentication authentication
@@ -279,11 +261,5 @@ public class NoteController {
     }
 
     public record ReconciliationResponse(java.util.UUID epochId, boolean complete, String nextCursor, List<ListedNoteResponse> notes) {
-    }
-
-    public record AuditEventResponse(String actor, String action, java.util.Map<String, Object> payload, Instant occurredAt) {
-        static AuditEventResponse from(de.tstieh.stoneintelligence.platform.audit.AuditEvent event) {
-            return new AuditEventResponse(event.actor(), event.action(), event.payload(), event.occurredAt());
-        }
     }
 }

@@ -50,7 +50,7 @@ export class HistoryModal extends Modal {
   private renderNote(history: NoteHistory): void {
     this.contentEl.empty();
     const summary = this.contentEl.createEl("ul", { cls: "stoneintelligence-history-summary" });
-    for (const line of activityLines(history.activity)) {
+    for (const line of history.activity ? activityLines(history.activity) : ["Gelöscht – es bleibt das Protokoll."]) {
       summary.createEl("li", { text: line });
     }
     // Neueste zuerst - der Server liefert die Ereignisse eines Eintrags chronologisch.

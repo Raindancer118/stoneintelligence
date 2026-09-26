@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, ApiError, type Group, type Role, type Vault, type VaultMember } from "../api";
   import { explainAccessError, permissionsLabel } from "../accessPlan";
+  import { describeEvent, formatDate, type HistoryEvent } from "../historyText";
   import { connectionConfigJson } from "../connectionConfig";
   import InvitePeople from "./InvitePeople.svelte";
 
@@ -12,6 +13,7 @@
   let roles = $state<Role[]>([]);
   let groups = $state<Group[]>([]);
   let members = $state<VaultMember[]>([]);
+  let log = $state<HistoryEvent[] | null>(null);
   let editingRole = $state<Record<string, string>>({});
   let editingGroup = $state<Record<string, string>>({});
   let error = $state<string | null>(null);
@@ -35,6 +37,11 @@
   }
 
   onMount(refresh);
+
+  async function loadLog() {
+    try { log = await api.vaultLog(vault.id, "", 50); }
+    catch (e) { error = e instanceof ApiError ? explainAccessError(e.status) : (e as Error).message; }
+  }
 
   function togglePermission(permission: string) {
     const next = new Set(newRolePermissions);
@@ -276,6 +283,17 @@
 </section>
 
 <section>
+  <h3>Protokoll</h3>
+  {#if log === null}
+    <button class="secondary" onclick={loadLog}>Letzte Ereignisse anzeigen</button>
+  {:else if log.length === 0}
+    <p class="hint">Noch nichts, was du sehen darfst.</p>
+  {:else}
+    <ol class="log">{#each log as event}<li><span>{describeEvent(event)}</span><span class="hint">{formatDate(event.occurredAt)}</span></li>{/each}</ol>
+  {/if}
+</section>
+
+<section>
   <h3>Freigaben</h3>
   <p class="hint">Wer welche Notiz oder welchen Ordner sehen und bearbeiten darf, legst du jetzt direkt dort fest: im Reiter „Notizen“ über „Freigabe“ – oder in Obsidian per Rechtsklick → „Freigabe…“.</p>
 </section>
@@ -303,6 +321,7 @@
   }
 
   .actions { text-align: right; white-space: nowrap; }
+  .log { list-style: none; margin: 0; padding: 0; } .log li { display: flex; flex-direction: column; padding: .55rem 0; border-top: 1px solid var(--line); } .log .hint { font-size: .8rem; }
   .inline { display: inline-flex; align-items: center; gap: .25rem; margin-right: .6rem; font-size: .8rem; }
   .group-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .5rem; }
   .group-head input { font-weight: 600; }

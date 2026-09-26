@@ -119,4 +119,20 @@ class HistoryControllerTest {
         assertThatThrownBy(() -> controller.vaultLog(vault(), "", 100, new TestingAuthenticationToken("mallory", null)))
             .isInstanceOf(ForbiddenException.class);
     }
+
+    // Der Audit-Trail je Datei ueberlebt ihre Loeschung - aber nur fuer, wer ihren letzten Ort lesen durfte.
+    @Test
+    void should_keepTheHistoryOfADeletedNote_forWhoCouldReadIt() {
+        notes.delete(vaultId, plan.id(), "op-1", "tom");
+        audit.record(vaultId, plan.id(), "tom", "note.deleted", Map.of("operationId", "op-1"));
+        notes.delete(vaultId, secret.id(), "op-2", "tom");
+
+        var history = controller.noteHistory(vault(), plan.id().value().toString(), new TestingAuthenticationToken("ben", null));
+
+        assertThat(history.activity()).isNull();
+        assertThat(history.events()).extracting(HistoryController.EventResponse::action)
+            .containsExactly("note.created", "note.content-updated", "note.deleted");
+        assertThat(controller.noteHistory(vault(), secret.id().value().toString(), new TestingAuthenticationToken("ben", null)).events())
+            .isEmpty();
+    }
 }
