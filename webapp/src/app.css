@@ -808,7 +808,7 @@ kbd {
   border-radius: 7px;
   min-width: 0;
   overflow: hidden;
-  box-shadow: 0 3px 12px #343b2710;
+  box-shadow: 0 3px 12px #28303a10;
 }
 .document-heading {
   padding: 28px 30px 18px;
@@ -1758,7 +1758,7 @@ kbd {
 .jump-backdrop {
   position: fixed;
   inset: 0;
-  background: #17211899;
+  background: #181b2099;
   z-index: 50;
   display: flex;
   justify-content: center;
@@ -2407,6 +2407,293 @@ kbd {
     min-height: 48px;
   }
 }
+/* ============================================================
+   Bewegung. Nur CSS (plus View Transitions aus lib/motion.ts);
+   "Bewegung reduzieren" schaltet alles ab (Block darunter).
+   ============================================================ */
+:root {
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Leichtes Nachfedern, als linear()-Kurve statt JS-Physik. */
+  --ease-spring: linear(0, 0.22 7%, 0.7 18%, 1.03 30%, 1.08 37%, 1.04 47%, 0.99 60%, 1);
+  --dur-fast: 140ms;
+  --dur: 260ms;
+  --dur-slow: 520ms;
+}
+
+/* Kopfzeile bleibt stehen und bekommt beim Scrollen eine weiche Kante. */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  animation: header-edge linear both;
+  animation-timeline: scroll(root);
+  animation-range: 0 90px;
+}
+@keyframes header-edge {
+  to {
+    box-shadow: 0 10px 28px -18px rgb(20 26 34 / 0.45);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(10px);
+  }
+}
+
+/* Navigation einklappen: Breite gleitet, Beschriftungen blenden aus statt zu springen. */
+.shell {
+  transition: grid-template-columns var(--dur) var(--ease-in-out);
+}
+.main-navigation {
+  overflow: hidden;
+}
+.main-navigation :is(.brand > span, .nav-collapse > span, .area-nav button > span, .nav-caption, .nav-bottom > a > span, .account-name, .account button, .vault-switcher) {
+  white-space: nowrap;
+  transition:
+    opacity var(--dur-fast) ease,
+    display var(--dur-fast) allow-discrete;
+  @starting-style {
+    opacity: 0;
+  }
+}
+.nav-collapsed :is(.brand > span, .nav-collapse > span, .area-nav button > span, .nav-caption, .nav-bottom > a > span, .account-name, .account button, .vault-switcher) {
+  opacity: 0;
+}
+.nav-collapse svg {
+  transition: rotate var(--dur) var(--ease-spring);
+}
+.nav-collapsed .nav-collapse svg {
+  rotate: 180deg;
+}
+
+/* Symbole in der Navigation reagieren auf Überfahren. */
+.area-nav button svg,
+.nav-bottom > a svg {
+  transition:
+    translate var(--dur-fast) var(--ease-out),
+    scale var(--dur-fast) var(--ease-out);
+}
+.area-nav button:hover svg,
+.nav-bottom > a:hover svg {
+  translate: 2px 0;
+}
+.area-nav button:active svg {
+  scale: 0.9;
+}
+
+/* Knöpfe: heben sich leicht, geben beim Drücken nach. */
+button,
+.button {
+  transition:
+    background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    box-shadow var(--dur-fast) ease,
+    translate var(--dur-fast) var(--ease-out),
+    scale var(--dur-fast) var(--ease-out);
+}
+.primary:not(:disabled):hover {
+  translate: 0 -1px;
+  box-shadow: 0 8px 18px -10px rgb(38 41 45 / 0.6);
+}
+button:not(:disabled):active {
+  scale: 0.97;
+  translate: 0 0;
+}
+
+/* Bereichswechsel: View Transition (lib/motion.ts). Die Markierung des aktiven
+   Bereichs wandert zum neuen Eintrag, der Inhalt gleitet. */
+.area-nav button.active {
+  view-transition-name: active-area;
+}
+#workspace {
+  view-transition-name: workspace;
+}
+.note-content {
+  view-transition-name: note-view;
+}
+::view-transition-group(active-area) {
+  animation-duration: var(--dur);
+  animation-timing-function: var(--ease-spring);
+}
+::view-transition-group(workspace),
+::view-transition-group(note-view) {
+  animation-duration: var(--dur);
+  animation-timing-function: var(--ease-out);
+}
+html:active-view-transition-type(area) {
+  &::view-transition-old(workspace) {
+    animation: var(--dur-fast) ease both vt-out;
+  }
+  &::view-transition-new(workspace) {
+    animation: var(--dur) var(--ease-out) both vt-in-up;
+  }
+}
+html:active-view-transition-type(note) {
+  &::view-transition-old(note-view) {
+    animation: var(--dur-fast) ease both vt-out;
+  }
+  &::view-transition-new(note-view) {
+    animation: var(--dur) var(--ease-out) both vt-in-side;
+  }
+}
+@keyframes vt-out {
+  to {
+    opacity: 0;
+    translate: 0 -6px;
+  }
+}
+@keyframes vt-in-up {
+  from {
+    opacity: 0;
+    translate: 0 14px;
+  }
+}
+@keyframes vt-in-side {
+  from {
+    opacity: 0;
+    translate: 18px 0;
+  }
+}
+
+/* Ordnerbaum: Pfeil dreht sich, neue Einträge blenden ein. */
+.folder-toggle .chevron {
+  display: inline-block;
+  transition: rotate var(--dur) var(--ease-spring);
+}
+.folder-toggle[aria-expanded="true"] .chevron {
+  rotate: 90deg;
+}
+.note-row,
+.folder-branch {
+  transition:
+    opacity var(--dur) var(--ease-out),
+    translate var(--dur) var(--ease-out),
+    background-color var(--dur-fast) ease;
+  @starting-style {
+    opacity: 0;
+    translate: -8px 0;
+  }
+}
+
+/* Schnellsprung: Hintergrund blendet mit Unschärfe ein, Dialog federt herein. */
+.jump-backdrop {
+  transition:
+    opacity var(--dur) ease,
+    backdrop-filter var(--dur) ease;
+  backdrop-filter: blur(6px);
+  @starting-style {
+    opacity: 0;
+    backdrop-filter: blur(0);
+  }
+}
+.jump-dialog {
+  transition:
+    opacity var(--dur) ease,
+    scale var(--dur-slow) var(--ease-spring),
+    translate var(--dur-slow) var(--ease-spring);
+  @starting-style {
+    opacity: 0;
+    scale: 0.94;
+    translate: 0 -14px;
+  }
+}
+.jump-result {
+  animation: rise-in var(--dur) var(--ease-out) both;
+}
+.jump-result:nth-child(2) { animation-delay: 25ms; }
+.jump-result:nth-child(3) { animation-delay: 50ms; }
+.jump-result:nth-child(4) { animation-delay: 75ms; }
+.jump-result:nth-child(5) { animation-delay: 100ms; }
+.jump-result:nth-child(n + 6) { animation-delay: 125ms; }
+
+/* Kopf eines Bereichs und Meldungen erscheinen, statt aufzuploppen. */
+.workspace-heading > div,
+.feedback,
+.share-panel,
+.similar {
+  animation: rise-in var(--dur) var(--ease-out) both;
+}
+.feedback.error {
+  animation: rise-in var(--dur) var(--ease-out) both, nudge 360ms var(--ease-out) 120ms;
+}
+.save-state {
+  transition: opacity var(--dur) ease;
+  @starting-style {
+    opacity: 0;
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+@keyframes nudge {
+  25% { translate: -4px 0; }
+  60% { translate: 3px 0; }
+}
+
+/* Laden: das Logo atmet. */
+.boot img {
+  animation: breathe 1.8s var(--ease-in-out) infinite;
+}
+@keyframes breathe {
+  50% {
+    scale: 1.08;
+    filter: drop-shadow(0 8px 16px rgb(38 41 45 / 0.35));
+  }
+}
+
+/* Anmeldeseite: Überschrift steigt auf, Blätter schweben herein, Linien zeichnen sich. */
+.gate-story > :is(.eyebrow, h1, .gate-lead) {
+  animation: rise-in var(--dur-slow) var(--ease-out) both;
+}
+.gate-story > h1 { animation-delay: 80ms; }
+.gate-story > .gate-lead { animation-delay: 160ms; }
+.gate-login {
+  animation: rise-in var(--dur-slow) var(--ease-out) 240ms both;
+}
+.paper {
+  animation:
+    paper-in 900ms var(--ease-spring) 200ms both,
+    drift 9s var(--ease-in-out) 1.2s infinite;
+}
+.paper-back {
+  animation:
+    paper-in 900ms var(--ease-spring) 60ms both,
+    drift 11s var(--ease-in-out) 1.2s infinite reverse;
+}
+.paper i {
+  transform-origin: left;
+  animation: draw 700ms var(--ease-out) both;
+}
+.paper i:nth-of-type(1) { animation-delay: 700ms; }
+.paper i:nth-of-type(2) { animation-delay: 820ms; }
+.paper i:nth-of-type(3) { animation-delay: 940ms; }
+/* Überfahren nutzt scale, weil translate schon vom Schweben belegt ist. */
+.gate-illustration:hover .paper {
+  scale: 1.03;
+}
+.gate-illustration .paper {
+  transition: scale var(--dur-slow) var(--ease-spring);
+}
+@keyframes paper-in {
+  from {
+    opacity: 0;
+    translate: 0 40px;
+    rotate: -8deg;
+  }
+}
+@keyframes drift {
+  50% {
+    translate: 0 -5px;
+  }
+}
+@keyframes draw {
+  from {
+    scale: 0 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *:before,
@@ -2414,6 +2701,11 @@ kbd {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }
 /* Datenschutzerklärung */

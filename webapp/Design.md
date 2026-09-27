@@ -46,6 +46,24 @@ schon während des Ladens. Die Suche (Notizbereich und Schnellsprung) läuft üb
 `GET /api/v1/vaults/{id}/notes/search` auf dem Server, verzögert und nur mit der jeweils letzten
 Anfrage. Inhalte werden nie für eine Suche geladen.
 
+## Bewegung
+
+Alles in `app.css` (Abschnitt „Bewegung"), Bereichs-/Notizwechsel zusätzlich über View Transitions
+aus `src/lib/motion.ts` (Typen `area` und `note`). Keine Animationsbibliothek.
+
+- Tokens: `--ease-out`, `--ease-in-out`, `--ease-spring` (Federkurve als `linear()`), Dauern
+  140/260/520ms.
+- Bereichswechsel: Inhalt gleitet von unten ein, die Markierung des aktiven Bereichs wandert
+  (`view-transition-name: active-area`). Notizwechsel: nur das Dokument gleitet seitlich.
+- Navigation einklappen: Spaltenbreite gleitet, Beschriftungen blenden (`allow-discrete`).
+- Ordnerbaum: Pfeil dreht, Einträge blenden über `@starting-style` ein.
+- Schnellsprung: Hintergrund mit Unschärfe, Dialog federt, Treffer gestaffelt.
+- Kopfzeile sticky, Kante/Unschärfe per Scroll-Timeline. Knöpfe heben sich, geben beim Drücken nach.
+- Anmeldeseite: Überschrift steigt auf, Blätter schweben herein und treiben langsam, Linien
+  zeichnen sich. Laden: Logo atmet.
+- `prefers-reduced-motion`: alle Animationen, Übergänge und View Transitions aus; `motion.ts`
+  startet dann gar keine Transition.
+
 ## Technik
 
 - **Ein Stylesheet:** alle Styles in `src/app.css`, keine `<style>`-Blöcke in Komponenten.
