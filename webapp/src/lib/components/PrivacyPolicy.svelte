@@ -87,14 +87,3 @@
 
   <p class="hint">Stand: 23. September 2026</p>
 </article>
-
-<style>
-  .legal { max-width: 46rem; }
-  h1 { font-size: clamp(2rem, 4.5vw, 2.8rem); letter-spacing: -.03em; margin: 1rem 0 .75rem; }
-  .lead { color: var(--ink-dim); max-width: 62ch; margin-bottom: 2rem; }
-  section { margin-bottom: 1.75rem; }
-  h2 { font-size: 1.1rem; margin: 0 0 .5rem; }
-  p, li { line-height: 1.65; }
-  ul { padding-left: 1.2rem; }
-  li + li { margin-top: .35rem; }
-</style>

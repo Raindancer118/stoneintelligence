@@ -141,6 +141,23 @@ public class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
+    public List<Note> search(VaultId vaultId, String query, java.util.Set<NoteKind> kinds, int limit) {
+        // strpos statt LIKE: Nutzereingaben mit % oder _ bleiben woertlich, ohne Escaping.
+        return jdbcClient.sql("""
+                SELECT * FROM platform.notes
+                WHERE vault_id = :vaultId AND kind IN (:kinds) AND strpos(lower(path), lower(:query)) > 0
+                ORDER BY lower(path), path
+                LIMIT :limit
+                """)
+            .param("vaultId", vaultId.value())
+            .param("kinds", kinds.stream().map(NoteKind::name).toList())
+            .param("query", query)
+            .param("limit", limit)
+            .query(NOTE_WITH_SEQUENCE_MAPPER)
+            .list().stream().map(NoteWithSequence::note).toList();
+    }
+
+    @Override
     @Transactional
     public Tombstone delete(VaultId vaultId, NoteId noteId, String operationId, String deletedBy) {
         var existing = findTombstoneByOperation(vaultId, noteId, operationId);

@@ -23,10 +23,12 @@
   async function reload() {
     report = target.kind === "entry" ? await api.noteAccess(vault.id, target.noteId) : await api.folderAccess(vault.id, target.path);
   }
-  onMount(async () => {
+  async function initialize() {
+    error = "";
     try { [, groups] = await Promise.all([reload(), api.listGroups(vault.id)]); }
     catch (e) { error = explain(e); }
-  });
+  }
+  onMount(() => { void initialize(); });
 
   async function run(action: () => Promise<unknown>, done: string) {
     if (busy) return;
@@ -88,17 +90,5 @@
     {/if}
   {/if}
   {#if message}<p class="feedback" role="status">{message}</p>{/if}
-  {#if error}<p class="feedback error" role="alert">{error}</p>{/if}
+  {#if error}<div class="feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={initialize}>Erneut versuchen</button></div>{/if}
 </section>
-
-<style>
-  .share-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1.1rem 1.25rem; margin-bottom: 1.25rem; }
-  header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; } h3 { font-size: 1.05rem; margin: 0; overflow-wrap: anywhere; }
-  h4 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-dim); margin: 1.25rem 0 .4rem; }
-  .mine { margin: .8rem 0 0; } .rows { list-style: none; margin: 0; padding: 0; }
-  .rows li { display: flex; align-items: center; gap: .75rem; padding: .6rem 0; border-top: 1px solid var(--line); } .rows li > div { flex: 1; min-width: 0; }
-  .name { display: block; font-weight: 500; overflow-wrap: anywhere; } .detail { display: block; font-size: .78rem; color: var(--ink-dim); }
-  .rows select { max-width: 15rem; } .add { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin-top: 1rem; }
-  .add label { font-size: .82rem; font-weight: 500; display: flex; flex-direction: column; gap: .3rem; } .feedback { margin: .8rem 0 0; font-size: .88rem; } .error { color: var(--rust); }
-  @media (max-width: 700px) { .rows li { flex-wrap: wrap; } .rows select { max-width: none; width: 100%; } }
-</style>

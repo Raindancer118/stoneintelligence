@@ -8,7 +8,7 @@ vi.mock("../src/lib/auth", () => ({
   preferredUsername: () => "Tom",
 }));
 vi.mock("../src/lib/api", async (original) => ({ ...(await original<typeof import("../src/lib/api")>()), api: {
-  listVaults: vi.fn(), permissions: vi.fn(), listNotes: vi.fn(), describeInvitation: vi.fn(), acceptInvitation: vi.fn(),
+  listVaults: vi.fn(), permissions: vi.fn(), listNotes: vi.fn(), searchNotes: vi.fn(), describeInvitation: vi.fn(), acceptInvitation: vi.fn(),
   aiServices: vi.fn(), listAiJobs: vi.fn(), listChangeSets: vi.fn(),
 } }));
 beforeEach(() => { vi.resetAllMocks(); window.history.replaceState({}, "", "/"); });
@@ -179,3 +179,39 @@ describe("setup page", () => {
   });
 });
 
+
+describe("new workspace navigation", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(api.listVaults).mockResolvedValue([{ id: "vault", name: "Team", createdAt: "" }]);
+    vi.mocked(api.permissions).mockResolvedValue(["READ"]);
+    vi.mocked(api.listNotes).mockResolvedValue({ epochId: "epoch", notes: [], complete: true, nextCursor: null });
+  });
+  it("remembers collapsed navigation and lets you restore it", async () => {
+    render(App);
+    await fireEvent.click(await screen.findByRole("button", { name: "Navigation einklappen" }));
+    expect(localStorage.getItem("stone.navigation.collapsed")).toBe("true");
+    await fireEvent.click(screen.getByRole("button", { name: "Navigation ausklappen" }));
+    expect(localStorage.getItem("stone.navigation.collapsed")).toBe("false");
+  });
+  it("opens quick jump by keyboard with only permitted areas", async () => {
+    render(App);
+    await screen.findByRole("heading", { name: "Team", level: 1 });
+    await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Schnellsprung" });
+    expect(dialog).toBeTruthy();
+    expect(screen.getByRole("searchbox", { name: "Ziel suchen" })).toBeTruthy();
+    expect(dialog.textContent).not.toContain("Mitglieder & Rechte");
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+  it("provides legal links on invitation screens too", async () => {
+    window.history.replaceState({}, "", "/invite/unknown");
+    vi.mocked(api.describeInvitation).mockRejectedValue(new Error("Unbekannt"));
+    render(App);
+    await screen.findByRole("heading", { name: "Einladung nicht gefunden" });
+    expect(screen.getByRole("link", { name: "Datenschutz" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Impressum" })).toBeTruthy();
+  });
+});

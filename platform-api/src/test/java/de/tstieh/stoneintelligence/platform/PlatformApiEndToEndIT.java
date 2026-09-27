@@ -383,6 +383,29 @@ class PlatformApiEndToEndIT {
     }
 
     @Test
+    void should_searchPathsOnTheServer_withoutRevealingDeniedEntries() throws Exception {
+        var auth = bearerAuth("searcher");
+        var vault = post("/api/v1/vaults", auth, Map.of("name", "Search"), Map.class);
+        var base = "/api/v1/vaults/" + vault.get("id");
+        post(base + "/notes", auth, Map.of("path", "Studium/Grenzwerte.md", "noteLevel", 1), Map.class);
+        post(base + "/notes", auth, Map.of("path", "Projekte/Grenzfall.md", "noteLevel", 1), Map.class);
+        post(base + "/notes", auth, Map.of("path", "private/grenz-geheim.md", "noteLevel", 1), Map.class);
+        post(base + "/notes", auth, Map.of("path", "Inbox.md", "noteLevel", 1), Map.class);
+        putFolderGrant(base, auth, "private", "searcher", List.of());
+
+        var found = json.readTree(get(base + "/notes/search?q=GRENZ", auth).body());
+        assertThat(found.get("notes").findValuesAsText("path")).containsExactly("Projekte/Grenzfall.md", "Studium/Grenzwerte.md");
+        assertThat(found.get("truncated").asBoolean()).isFalse();
+
+        var limited = json.readTree(get(base + "/notes/search?q=grenz&limit=1", auth).body());
+        assertThat(limited.get("notes").findValuesAsText("path")).containsExactly("Projekte/Grenzfall.md");
+        assertThat(limited.get("truncated").asBoolean()).isTrue();
+
+        assertThat(get(base + "/notes/search?q=%20", auth).statusCode()).isEqualTo(400);
+        assertThat(get(base + "/notes/search?q=grenz", bearerAuth("stranger")).statusCode()).isEqualTo(403);
+    }
+
+    @Test
     void should_rejectUnauthenticatedRequest_withoutBearerToken() throws Exception {
         var response = get("/api/v1/vaults/" + UUID.randomUUID() + "/notes/" + UUID.randomUUID(), Map.of());
 
