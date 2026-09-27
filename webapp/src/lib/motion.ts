@@ -5,7 +5,7 @@ type ViewTransition = { finished: Promise<void> };
 type TransitionDocument = Document & { startViewTransition?: (arg: Update | { update: Update; types: string[] }) => ViewTransition };
 
 /** Art des Wechsels - `app.css` animiert Bereiche und Notizen unterschiedlich (`:active-view-transition-type`). */
-export type TransitionKind = "area" | "note";
+export type TransitionKind = "area" | "note" | "tab";
 
 /**
  * Wendet eine Zustandsänderung als View Transition an (Bereichs-/Notizwechsel gleiten statt springen).
@@ -22,3 +22,4 @@ export async function withTransition(update: () => void, kind?: TransitionKind):
   // Eine abgebrochene Transition (z. B. schneller Doppelklick) ist kein Fehler - der Zustand ist trotzdem gesetzt.
   await transition.finished.catch(() => {});
 }
+

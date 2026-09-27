@@ -2414,8 +2414,6 @@ kbd {
 :root {
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  /* Leichtes Nachfedern, als linear()-Kurve statt JS-Physik. */
-  --ease-spring: linear(0, 0.22 7%, 0.7 18%, 1.03 30%, 1.08 37%, 1.04 47%, 0.99 60%, 1);
   --dur-fast: 140ms;
   --dur: 260ms;
   --dur-slow: 520ms;
@@ -2458,25 +2456,10 @@ kbd {
   opacity: 0;
 }
 .nav-collapse svg {
-  transition: rotate var(--dur) var(--ease-spring);
+  transition: rotate var(--dur) var(--ease-out);
 }
 .nav-collapsed .nav-collapse svg {
   rotate: 180deg;
-}
-
-/* Symbole in der Navigation reagieren auf Überfahren. */
-.area-nav button svg,
-.nav-bottom > a svg {
-  transition:
-    translate var(--dur-fast) var(--ease-out),
-    scale var(--dur-fast) var(--ease-out);
-}
-.area-nav button:hover svg,
-.nav-bottom > a:hover svg {
-  translate: 2px 0;
-}
-.area-nav button:active svg {
-  scale: 0.9;
 }
 
 /* Knöpfe: heben sich leicht, geben beim Drücken nach. */
@@ -2492,10 +2475,10 @@ button,
 }
 .primary:not(:disabled):hover {
   translate: 0 -1px;
-  box-shadow: 0 8px 18px -10px rgb(38 41 45 / 0.6);
+  box-shadow: 0 6px 14px -10px rgb(38 41 45 / 0.45);
 }
 button:not(:disabled):active {
-  scale: 0.97;
+  scale: 0.98;
   translate: 0 0;
 }
 
@@ -2512,7 +2495,7 @@ button:not(:disabled):active {
 }
 ::view-transition-group(active-area) {
   animation-duration: var(--dur);
-  animation-timing-function: var(--ease-spring);
+  animation-timing-function: var(--ease-out);
 }
 ::view-transition-group(workspace),
 ::view-transition-group(note-view) {
@@ -2538,26 +2521,26 @@ html:active-view-transition-type(note) {
 @keyframes vt-out {
   to {
     opacity: 0;
-    translate: 0 -6px;
+    translate: 0 -3px;
   }
 }
 @keyframes vt-in-up {
   from {
     opacity: 0;
-    translate: 0 14px;
+    translate: 0 6px;
   }
 }
 @keyframes vt-in-side {
   from {
     opacity: 0;
-    translate: 18px 0;
+    translate: 8px 0;
   }
 }
 
 /* Ordnerbaum: Pfeil dreht sich, neue Einträge blenden ein. */
 .folder-toggle .chevron {
   display: inline-block;
-  transition: rotate var(--dur) var(--ease-spring);
+  transition: rotate var(--dur) var(--ease-out);
 }
 .folder-toggle[aria-expanded="true"] .chevron {
   rotate: 90deg;
@@ -2570,7 +2553,7 @@ html:active-view-transition-type(note) {
     background-color var(--dur-fast) ease;
   @starting-style {
     opacity: 0;
-    translate: -8px 0;
+    translate: -4px 0;
   }
 }
 
@@ -2588,12 +2571,12 @@ html:active-view-transition-type(note) {
 .jump-dialog {
   transition:
     opacity var(--dur) ease,
-    scale var(--dur-slow) var(--ease-spring),
-    translate var(--dur-slow) var(--ease-spring);
+    scale var(--dur) var(--ease-out),
+    translate var(--dur) var(--ease-out);
   @starting-style {
     opacity: 0;
-    scale: 0.94;
-    translate: 0 -14px;
+    scale: 0.98;
+    translate: 0 -6px;
   }
 }
 .jump-result {
@@ -2628,8 +2611,8 @@ html:active-view-transition-type(note) {
   }
 }
 @keyframes nudge {
-  25% { translate: -4px 0; }
-  60% { translate: 3px 0; }
+  25% { translate: -2px 0; }
+  60% { translate: 1px 0; }
 }
 
 /* Laden: das Logo atmet. */
@@ -2638,7 +2621,7 @@ html:active-view-transition-type(note) {
 }
 @keyframes breathe {
   50% {
-    scale: 1.08;
+    scale: 1.04;
     filter: drop-shadow(0 8px 16px rgb(38 41 45 / 0.35));
   }
 }
@@ -2654,13 +2637,13 @@ html:active-view-transition-type(note) {
 }
 .paper {
   animation:
-    paper-in 900ms var(--ease-spring) 200ms both,
-    drift 9s var(--ease-in-out) 1.2s infinite;
+    paper-in 700ms var(--ease-out) 200ms both,
+    drift 10s var(--ease-in-out) 1.2s infinite;
 }
 .paper-back {
   animation:
-    paper-in 900ms var(--ease-spring) 60ms both,
-    drift 11s var(--ease-in-out) 1.2s infinite reverse;
+    paper-in 700ms var(--ease-out) 60ms both,
+    drift 12s var(--ease-in-out) 1.2s infinite reverse;
 }
 .paper i {
   transform-origin: left;
@@ -2671,26 +2654,208 @@ html:active-view-transition-type(note) {
 .paper i:nth-of-type(3) { animation-delay: 940ms; }
 /* Überfahren nutzt scale, weil translate schon vom Schweben belegt ist. */
 .gate-illustration:hover .paper {
-  scale: 1.03;
+  scale: 1.015;
 }
 .gate-illustration .paper {
-  transition: scale var(--dur-slow) var(--ease-spring);
+  transition: scale var(--dur-slow) var(--ease-out);
 }
 @keyframes paper-in {
   from {
     opacity: 0;
-    translate: 0 40px;
-    rotate: -8deg;
+    translate: 0 16px;
+    rotate: -3deg;
   }
 }
 @keyframes drift {
   50% {
-    translate: 0 -5px;
+    translate: 0 -3px;
   }
 }
 @keyframes draw {
   from {
     scale: 0 1;
+  }
+}
+
+/* ------------------------------------------------------------
+   Bewegung, zweite Stufe: Auftritt und Aufbau, bewusst leise.
+   ------------------------------------------------------------ */
+@keyframes rise-soft {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+
+/* Auftritt der App: Leiste und Kopfzeile blenden mit kurzem Weg ein, Bereiche leicht gestaffelt. */
+.main-navigation {
+  animation: slide-in-soft 380ms var(--ease-out) both;
+}
+.app-header {
+  animation:
+    fade-in 360ms ease 60ms both,
+    header-edge linear both;
+  animation-timeline: auto, scroll(root);
+  animation-range: normal, 0 90px;
+}
+.area-nav button {
+  position: relative;
+  animation: rise-soft var(--dur) var(--ease-out) both;
+}
+.area-nav button:nth-of-type(1) { animation-delay: 100ms; }
+.area-nav button:nth-of-type(2) { animation-delay: 130ms; }
+.area-nav button:nth-of-type(3) { animation-delay: 160ms; }
+.area-nav button:nth-of-type(4) { animation-delay: 190ms; }
+@keyframes slide-in-soft {
+  from {
+    opacity: 0;
+    translate: -12px 0;
+  }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+/* Aktiver Bereich: schmale Leiste am linken Rand. */
+.area-nav button::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 25%;
+  bottom: 25%;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: #aab6c6;
+  scale: 1 0;
+  transition: scale var(--dur) var(--ease-out);
+}
+.area-nav button.active::before {
+  scale: 1 1;
+}
+.nav-collapsed .area-nav button::before {
+  left: -12px;
+}
+
+/* Logo: selten ein dezenter Lichtreflex über die Facetten. */
+.brand img {
+  animation: facet-glint 12s ease-in-out 3s infinite;
+}
+@keyframes facet-glint {
+  0%, 92%, 100% { filter: brightness(1); }
+  95% { filter: brightness(1.25); }
+}
+
+/* Bereichstitel wird enthüllt. */
+.workspace-heading h1 {
+  animation: wipe-in 460ms var(--ease-out) 40ms both;
+}
+.workspace-heading .eyebrow {
+  animation: fade-in 460ms ease both;
+}
+@keyframes wipe-in {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+/* Ordnerbaum: kurzer gestaffelter Aufbau, Akzentleiste bei Überfahren und Auswahl. */
+.note-rows > :nth-child(1) { transition-delay: 10ms; }
+.note-rows > :nth-child(2) { transition-delay: 25ms; }
+.note-rows > :nth-child(3) { transition-delay: 40ms; }
+.note-rows > :nth-child(4) { transition-delay: 55ms; }
+.note-rows > :nth-child(n + 5) { transition-delay: 70ms; }
+.note-row {
+  position: relative;
+}
+.note-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 22%;
+  bottom: 22%;
+  width: 2px;
+  background: var(--slate);
+  scale: 1 0;
+  transition: scale var(--dur) var(--ease-out);
+}
+.note-row:hover::before,
+.note-row.active::before {
+  scale: 1 1;
+}
+
+/* Notizinhalt: Blöcke erscheinen kurz nacheinander; in langen Notizen spätere Blöcke beim Scrollen. */
+.markdown > * {
+  animation: rise-soft var(--dur) var(--ease-out) both;
+}
+.markdown > :nth-child(1) { animation-delay: 30ms; }
+.markdown > :nth-child(2) { animation-delay: 55ms; }
+.markdown > :nth-child(3) { animation-delay: 80ms; }
+.markdown > :nth-child(4) { animation-delay: 105ms; }
+.markdown > :nth-child(5) { animation-delay: 130ms; }
+.markdown > :nth-child(6) { animation-delay: 155ms; }
+@supports (animation-timeline: view()) {
+  .markdown > :nth-child(n + 7) {
+    animation: rise-soft linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 40%;
+  }
+}
+
+/* Karten in Verwaltung und KI: erscheinen leicht gestaffelt, heben sich beim Überfahren kaum merklich. */
+.management section,
+.ai .block {
+  transition:
+    translate var(--dur) var(--ease-out),
+    box-shadow var(--dur) var(--ease-out);
+  animation: rise-soft var(--dur) var(--ease-out) both;
+}
+.management section:nth-of-type(2), .ai .block:nth-of-type(2) { animation-delay: 40ms; }
+.management section:nth-of-type(3), .ai .block:nth-of-type(3) { animation-delay: 80ms; }
+.management section:nth-of-type(n + 4), .ai .block:nth-of-type(n + 4) { animation-delay: 120ms; }
+.management section:hover,
+.ai .block:hover {
+  translate: 0 -1px;
+  box-shadow: 0 12px 28px -24px rgb(38 41 45 / 0.35);
+}
+
+/* Verwaltungsreiter und Lesen/Bearbeiten: Markierung gleitet, Inhalt blendet über (View Transition "tab"). */
+.admin-tabs button.active {
+  view-transition-name: admin-tab;
+}
+::view-transition-group(admin-tab) {
+  animation-duration: var(--dur);
+  animation-timing-function: var(--ease-out);
+}
+html:active-view-transition-type(tab) {
+  &::view-transition-old(workspace) {
+    animation: var(--dur-fast) ease both fade-out;
+  }
+  &::view-transition-new(workspace) {
+    animation: var(--dur) ease both fade-in;
+  }
+}
+@keyframes fade-out {
+  to { opacity: 0; }
+}
+
+/* Laufende KI-Jobs atmen leicht, gesetzte Checkboxen bestätigen kurz. */
+.status-running {
+  animation: pulse-soft 2.4s var(--ease-in-out) infinite;
+}
+@keyframes pulse-soft {
+  50% { opacity: 0.72; }
+}
+input[type="checkbox"]:checked {
+  animation: pop 220ms var(--ease-out);
+}
+@keyframes pop {
+  50% { scale: 1.1; }
+}
+
+/* Fokus-Ring zieht sich kurz zusammen. */
+:focus-visible {
+  transition: outline-offset var(--dur-fast) var(--ease-out);
+  @starting-style {
+    outline-offset: 5px;
   }
 }
 
