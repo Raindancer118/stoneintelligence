@@ -1,5 +1,5 @@
 import { type App, Notice, type Plugin, PluginSettingTab, Setting, setIcon } from "obsidian";
-import { DEFAULT_SETTINGS, type StoneIntelligenceSettings, wsUrlFor } from "../settings";
+import { applyServer, DEFAULT_SETTINGS, type StoneIntelligenceSettings, wsUrlFor } from "../settings";
 import type { VaultSummary } from "../sync/NoteApiClient";
 import type { SyncActivity } from "../sync/SyncActivity";
 import { presentStatus } from "./statusPresentation";
@@ -259,8 +259,13 @@ export class StoneIntelligenceSettingTab extends PluginSettingTab {
       new Setting(details).setName(name).setDesc(desc).addText((input) => {
         input.setPlaceholder(placeholder).setValue(settings[key]);
         input.inputEl.addEventListener("change", async () => {
+          const loggedIn = this.host.isLoggedIn();
+          applyServer(settings, { ...settings, [key]: input.getValue().trim() });
           settings[key] = input.getValue().trim();
           await this.host.saveConnectionSettings();
+          if (loggedIn !== this.host.isLoggedIn()) {
+            this.display();
+          }
         });
       });
 
@@ -295,10 +300,7 @@ export class StoneIntelligenceSettingTab extends PluginSettingTab {
       .setDesc("Stellt Server- und Anmeldeadressen der gehosteten Instanz wieder her.")
       .addButton((button) =>
         button.setButtonText("Zurücksetzen").setWarning().onClick(async () => {
-          settings.platformApiUrl = DEFAULT_SETTINGS.platformApiUrl;
-          settings.platformWsUrl = DEFAULT_SETTINGS.platformWsUrl;
-          settings.oidcIssuerUrl = DEFAULT_SETTINGS.oidcIssuerUrl;
-          settings.oidcClientId = DEFAULT_SETTINGS.oidcClientId;
+          applyServer(settings, DEFAULT_SETTINGS);
           await this.host.saveConnectionSettings();
           this.display();
         }),

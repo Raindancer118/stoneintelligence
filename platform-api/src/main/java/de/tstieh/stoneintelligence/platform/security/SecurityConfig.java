@@ -1,6 +1,7 @@
 package de.tstieh.stoneintelligence.platform.security;
 
 import java.util.List;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
@@ -39,9 +40,21 @@ public class SecurityConfig {
      * Ohne CORS-Konfiguration blockt der Browser jeden Cross-Origin-Request des
      * Webapp-Dashboards (kb.tstieh.de) schon vor Spring Security - das JS sieht dafuer nur ein
      * generisches "Failed to fetch" ohne jeden HTTP-Statuscode (live beobachtet, bevor diese
-     * Konfiguration existierte). `localhost:5173` fuer `npm run dev` gegen die deployte API.
+     * Konfiguration existierte). Erlaubt ist die Webapp dieser Instanz ({@code STONEINTELLIGENCE_WEBAPP_URL},
+     * dieselbe Adresse wie in den Einladungslinks - selbst gehostet eine andere) und `localhost:5173`
+     * fuer `npm run dev` gegen die deployte API.
      */
-    private static final List<String> ALLOWED_ORIGINS = List.of("https://kb.tstieh.de", "http://localhost:5173");
+    private final List<String> allowedOrigins;
+
+    public SecurityConfig(@Value("${STONEINTELLIGENCE_WEBAPP_URL:https://kb.tstieh.de}") String webappUrl) {
+        this.allowedOrigins = List.of(originOf(webappUrl), "http://localhost:5173");
+    }
+
+    /** CORS vergleicht nur Schema, Host und Port - ein Pfad oder Schraegstrich in der URL wuerde nie passen. */
+    private static String originOf(String url) {
+        var uri = java.net.URI.create(url.trim());
+        return uri.getScheme() + "://" + uri.getRawAuthority();
+    }
 
     /**
      * {@code /internal/**} gehoert allein dem KI-Worker (ADR 0008): eigene Kette mit Service-Token,
@@ -89,7 +102,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         var configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(ALLOWED_ORIGINS);
+        configuration.setAllowedOrigins(allowedOrigins);
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Operation-Id", "If-Match"));
         // Datei-Downloads (ADR 0009): Fassung, Hash und Name muss das Dashboard lesen koennen.
@@ -102,7 +115,7 @@ public class SecurityConfig {
         // regelt nur die AUTORISIERUNG - Spring Securitys CorsFilter ist eine fruehere, davon
         // komplett getrennte Pruefung und lehnt eine ECHTE (nicht nur Preflight-)Anfrage mit
         // einem nicht erlaubten Origin pauschal mit 403 ab. Obsidian Desktop (Electron) schickt
-        // einen Origin, der nie in ALLOWED_ORIGINS (nur die Webapp) stehen kann - live beobachtet:
+        // einen Origin, der nie in allowedOrigins (nur die Webapp) stehen kann - live beobachtet:
         // jeder Verbindungsversuch von Obsidian Desktop scheiterte mit 403, BEVOR das Ticket
         // ueberhaupt geprueft wurde.
         var wsConfiguration = new CorsConfiguration();

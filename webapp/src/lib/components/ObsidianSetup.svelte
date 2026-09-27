@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Vault } from "../api";
+  import { obsidianConnectLink as connectLink, serverHost } from "../connectionConfig";
 
   let { vaults, signedIn, onLogin, scopedVault = false }: {
     vaults: Vault[]; signedIn: boolean; onLogin: () => void;
@@ -12,11 +13,6 @@
   // Plugin-Browser bei BRAT, "brat?plugin=" öffnet BRATs Installationsdialog vorausgefüllt.
   const BRAT_LINK = "obsidian://show-plugin?id=obsidian42-brat";
   const INSTALL_LINK = `obsidian://brat?plugin=${encodeURIComponent("Raindancer118/stoneintelligence")}`;
-
-  // Nicht "vault=": diesen Parameter liest Obsidian selbst als Namen des zu öffnenden Obsidian-Vaults.
-  function connectLink(vault: Vault): string {
-    return `obsidian://stoneintelligence-connect?stoneVault=${encodeURIComponent(vault.id)}&name=${encodeURIComponent(vault.name)}`;
-  }
 </script>
 
 <article class="setup">
@@ -81,7 +77,7 @@
     </div>
     <div>
       <h2>Ohne Knöpfe</h2>
-      <p>In Obsidian unter <em>Einstellungen → StoneIntelligence</em> anmelden und bei <em>Synchronisieren mit</em> den Vault wählen. Server und Anmeldung sind bereits voreingestellt.</p>
+      <p>In Obsidian unter <em>Einstellungen → StoneIntelligence</em> anmelden und bei <em>Synchronisieren mit</em> den Vault wählen. Unter <em>Erweitert</em> muss als Server <strong>{serverHost()}</strong> stehen – sonst dort die Verbindungsdaten aus dem Vault einfügen.</p>
     </div>
   </section>
 </article>

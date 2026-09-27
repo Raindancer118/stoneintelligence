@@ -4,7 +4,7 @@ import { FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, setIcon, TAb
 import * as Y from "yjs";
 import {
   type FolderOp, isExcluded, isExcludedFolder, isNoteOp, migrateSettings, queueDelete, queueFolderOp, queueRename,
-  type StoneIntelligenceSettings, type VaultSyncState, emptyVaultState, wsUrlFor,
+  type StoneIntelligenceSettings, type VaultSyncState, applyServer, emptyVaultState, sameServer, wsUrlFor,
 } from "./settings";
 import { isInsideFolder, isSyncableFolderPath, planFolders } from "./sync/folderPlan";
 import { isSyncableFilePath } from "./sync/filePlan";
@@ -39,6 +39,7 @@ import { CONNECT_ACTION, type ConnectLink, parseConnectLink } from "./sync/conne
 import { desktopVaults } from "./sync/desktopVaults";
 import { findLinkedVault, newVaultFiles, suggestVaultPath, vaultPathForPickedFolder } from "./sync/localVaultPlan";
 import { ConnectVaultModal } from "./ui/ConnectVaultModal";
+import { serverSwitchWarning } from "./ui/connectText";
 import { type PropertiesInDocument, propertiesDefault } from "./ui/propertiesDisplay";
 import { DeletionConflictModal } from "./ui/DeletionConflictModal";
 import { AiChangesModal } from "./ui/AiChangesModal";
@@ -635,7 +636,8 @@ export default class StoneIntelligencePlugin extends Plugin {
    */
   private handleConnectLink(link: ConnectLink): void {
     const displayName = link.vaultName ?? "gemeinsamer Vault";
-    if (link.vaultId === this.settings.vaultId && this.isLoggedIn()) {
+    const otherServer = link.server && !sameServer(this.settings, link.server) ? link.server : null;
+    if (!otherServer && link.vaultId === this.settings.vaultId && this.isLoggedIn()) {
       new Notice(`StoneIntelligence: Dieser Obsidian-Vault ist bereits mit „${this.settings.vaultName || displayName}“ verbunden.`);
       void this.activateStatusView();
       return;
@@ -668,8 +670,9 @@ export default class StoneIntelligencePlugin extends Plugin {
       localNoteCount,
       currentVaultName: this.settings.vaultId && this.settings.vaultId !== link.vaultId
         ? (this.settings.vaultName || "einem anderen Vault") : null,
-      signedIn: this.isLoggedIn(),
+      signedIn: this.isLoggedIn() && !otherServer,
       newVaultPath,
+      serverWarning: otherServer ? serverSwitchWarning(otherServer, this.settings) : null,
     }, {
       connectHere: () => void this.connectToVault(link),
       pickFolder: (currentPath) => {
@@ -726,6 +729,10 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   private async connectToVault(link: ConnectLink): Promise<void> {
     try {
+      // Im Verbinden-Dialog bestaetigt (bzw. vom anlegenden Vault schon eingetragen).
+      if (link.server && applyServer(this.settings, link.server)) {
+        await this.saveConnectionSettings();
+      }
       if (!this.isLoggedIn()) {
         await this.login();
       }
@@ -789,7 +796,14 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   async applyConnectionConfig(json: string): Promise<void> {
     const parsed = JSON.parse(json) as Partial<StoneIntelligenceSettings>;
-    for (const key of ["platformApiUrl", "platformWsUrl", "vaultId", "vaultName", "oidcIssuerUrl", "oidcClientId"] as const) {
+    const text = (value: unknown, fallback: string): string => (typeof value === "string" ? value : fallback);
+    applyServer(this.settings, {
+      platformApiUrl: text(parsed.platformApiUrl, this.settings.platformApiUrl),
+      platformWsUrl: text(parsed.platformWsUrl, this.settings.platformWsUrl),
+      oidcIssuerUrl: text(parsed.oidcIssuerUrl, this.settings.oidcIssuerUrl),
+      oidcClientId: text(parsed.oidcClientId, this.settings.oidcClientId),
+    });
+    for (const key of ["vaultId", "vaultName"] as const) {
       if (typeof parsed[key] === "string") {
         this.settings[key] = parsed[key] as string;
       }

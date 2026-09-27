@@ -211,7 +211,7 @@
 <section class="admin-section"><h3>Vault umbenennen</h3><form onsubmit={e => { e.preventDefault(); void renameVault(); }}><label for="rename-vault">Neuer Vault-Name</label><input id="rename-vault" placeholder={vault.name} bind:value={vaultName} required maxlength="100" /><button class="primary" disabled={renamingVault}>Vault umbenennen</button></form></section>
 <section>
   <h3>Plugin-Verbindung</h3>
-  <p class="hint">Für die gehostete Instanz reicht der Reiter „In Obsidian“ – ein Klick verbindet das Plugin. Diese Konfiguration brauchst du nur für einen eigenen Server (Plugin: Erweitert → Verbindungsdaten einfügen).</p>
+  <p class="hint">Meist reicht der Reiter „In Obsidian“ – ein Klick verbindet das Plugin mit diesem Server. Die Konfiguration brauchst du nur ohne Knöpfe (Plugin: Erweitert → Verbindungsdaten einfügen).</p>
   <button class="secondary" onclick={copyConfig}>{configCopied ? "Kopiert" : "Konfiguration kopieren"}</button>
 </section>
 

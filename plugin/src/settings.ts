@@ -118,6 +118,35 @@ export function migrateSettings(raw: unknown): StoneIntelligenceSettings {
   return settings;
 }
 
+/** Wohin das Plugin spricht und wo es sich anmeldet - ein Token gilt nur fuer genau diese Kombination. */
+export type ServerSettings = Pick<StoneIntelligenceSettings, "platformApiUrl" | "platformWsUrl" | "oidcIssuerUrl" | "oidcClientId">;
+
+const withoutTrailingSlash = (url: string): string => url.trim().replace(/\/+$/, "");
+
+export function sameServer(a: ServerSettings, b: ServerSettings): boolean {
+  return withoutTrailingSlash(a.platformApiUrl) === withoutTrailingSlash(b.platformApiUrl)
+    && wsUrlFor(a) === wsUrlFor(b)
+    && withoutTrailingSlash(a.oidcIssuerUrl) === withoutTrailingSlash(b.oidcIssuerUrl)
+    && a.oidcClientId.trim() === b.oidcClientId.trim();
+}
+
+/**
+ * Stellt auf einen anderen Server um und vergisst dabei die Anmeldung: das Token des alten Servers
+ * darf nie beim neuen landen. Gleicher Server (nur anders geschrieben) aendert nichts.
+ */
+export function applyServer(settings: StoneIntelligenceSettings, server: ServerSettings): boolean {
+  if (sameServer(settings, server)) {
+    return false;
+  }
+  settings.platformApiUrl = server.platformApiUrl.trim();
+  settings.platformWsUrl = server.platformWsUrl.trim();
+  settings.oidcIssuerUrl = server.oidcIssuerUrl.trim();
+  settings.oidcClientId = server.oidcClientId.trim();
+  settings.tokens = null;
+  settings.displayName = null;
+  return true;
+}
+
 export function wsUrlFor(settings: Pick<StoneIntelligenceSettings, "platformApiUrl" | "platformWsUrl">): string {
   if (settings.platformWsUrl.trim()) {
     return settings.platformWsUrl.trim().replace(/\/+$/, "");
