@@ -58,3 +58,17 @@ describe("notes workspace", () => {
     expect(await screen.findByRole("heading", { name: "Photosynthese" })).toBeTruthy();
   });
 });
+
+describe("folder navigation", () => {
+  it("opens and closes nested folders without downloading note content", async () => {
+    vi.mocked(api.listNotes).mockResolvedValue({ epochId: "epoch", notes: [note, { ...note, id: "nested", path: "Projects/Research/Outline.md" }], complete: true, nextCursor: null });
+    render(NotesWorkspace, { vault, onDirtyChange: vi.fn() });
+    const folder = await screen.findByRole("button", { name: "Ordner Projects" });
+    expect(folder.getAttribute("aria-expanded")).toBe("true");
+    await fireEvent.click(folder);
+    expect(screen.queryByRole("button", { name: /Outline/ })).toBeNull();
+    await fireEvent.click(folder);
+    await screen.findByRole("button", { name: "Ordner Projects/Research" });
+    expect(api.noteContent).not.toHaveBeenCalled();
+  });
+});

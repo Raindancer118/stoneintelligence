@@ -142,32 +142,3 @@
     {#if showHistory}<section class="history" aria-label="Änderungsverlauf">{#if historyLoading}<p role="status">Verlauf wird geladen…</p>{:else if history}<ul class="activity">{#each history.activity ? activityLines(history.activity) : [] as line}<li>{line}</li>{/each}</ul>{#if history.events.length}<ol>{#each [...history.events].reverse() as event}<li><strong>{describeEvent(event)}</strong><span>{date(event.occurredAt)}</span></li>{/each}</ol>{:else}<p>Noch keine Einträge.</p>{/if}{/if}</section>{/if}
   </details>
 </article>
-
-<style>
-  .document { min-width: 0; background: var(--surface-raised); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .document-heading { padding: 1.5rem 1.75rem 1rem; display: flex; gap: 1rem; align-items: start; justify-content: space-between; }
-  .title-block { min-width: 0; } h2 { font-size: clamp(1.35rem, 2.4vw, 2rem); overflow-wrap: anywhere; margin: .2rem 0 0; }
-  .path { font-size: .8rem; color: var(--ink-dim); overflow-wrap: anywhere; margin: 0; }
-  .save-state { font-size: .8rem; color: var(--ink-dim); text-align: right; padding-top: .2rem; }
-  .document-toolbar { display: flex; justify-content: space-between; gap: .75rem; flex-wrap: wrap; padding: .25rem 1.75rem .75rem; border-bottom: 1px solid var(--line); }
-  .modes, .actions, .detail-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
-  .modes button { background: transparent; border: 0; border-bottom: 2px solid transparent; padding: .5rem .8rem; color: var(--ink-dim); }
-  .modes button.chosen { border-color: var(--forest); color: var(--forest); font-weight: 700; }
-  .reading, .writing { padding: 2rem 1.75rem; min-height: 23rem; }
-  .markdown { max-width: 75ch; overflow-wrap: anywhere; line-height: 1.8; }
-  .markdown :global(h1) { font-size: 1.9rem; } .markdown :global(h2) { font-size: 1.5rem; } .markdown :global(h3) { font-size: 1.2rem; }
-  .markdown :global(pre) { background: var(--bg); padding: 1rem; border-radius: 5px; overflow: auto; }
-  .markdown :global(code) { font-family: ui-monospace, monospace; font-size: .88em; }
-  .markdown :global(blockquote) { border-left: 3px solid var(--line); margin-left: 0; padding-left: 1.2rem; color: var(--ink-dim); }
-  .markdown :global(table) { display: block; max-width: 100%; overflow: auto; border-collapse: collapse; }
-  .markdown :global(th), .markdown :global(td) { padding: .5rem .75rem; border: 1px solid var(--line); text-align: left; }
-  textarea { width: 100%; min-height: 25rem; resize: vertical; padding: 1rem; line-height: 1.7; font-family: ui-monospace, monospace; font-size: .92rem; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; color: var(--ink); }
-  .document-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; padding: .8rem 1.75rem; font-size: .78rem; color: var(--ink-dim); border-top: 1px solid var(--line); }
-  .details { border-top: 1px solid var(--line); padding: .75rem 1.75rem 1.25rem; background: var(--surface); }
-  summary { min-height: 48px; display: list-item; align-content: center; cursor: pointer; font-size: .85rem; font-weight: 500; }
-  dl { display: flex; flex-wrap: wrap; gap: 1rem 3rem; margin: .5rem 0 1rem; font-size: .85rem; } dt { color: var(--ink-dim); } dd { margin: .2rem 0; }
-  .rename-form { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: 1rem; } .rename-form input { flex: 1; min-width: 10rem; }
-  .history { margin-top: 1.25rem; } .history ol { list-style: none; padding: 0; font-size: .85rem; } .history li { display: flex; flex-direction: column; padding: .75rem 0; border-top: 1px solid var(--line); } .history li span { color: var(--ink-dim); } .activity { margin: 0 0 .75rem; padding-left: 1.1rem; color: var(--ink-dim); font-size: .85rem; }
-  .loading, .empty { padding: 2rem; color: var(--ink-dim); } .empty h3 { color: var(--ink); } .feedback { margin: 1rem 1.75rem; }
-  @media (max-width: 700px) { .document-heading, .document-toolbar, .reading, .writing, .details, .document-footer { padding-left: 1rem; padding-right: 1rem; } .document-heading { flex-direction: column; gap: .3rem; } .save-state { text-align: left; } }
-</style>

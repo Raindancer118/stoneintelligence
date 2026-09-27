@@ -105,6 +105,7 @@
   }
 
   async function load() {
+    loading = true;
     try {
       [services, permissions, jobs, changeSets] = await Promise.all([
         api.aiServices(), api.permissions(vault.id), api.listAiJobs(vault.id), api.listChangeSets(vault.id),
@@ -236,10 +237,10 @@
 <section class="ai">
   <header class="intro">
     <h2>Wissen aus Dokumenten</h2>
-    <p>Lade Skripte, Artikel oder Mitschriften hoch. Eine KI liest sie und legt daraus verlinkte Notizen mit Quellenangabe an. Deine eigenen Notizen verändert sie nicht, und jede Verarbeitung lässt sich vollständig rückgängig machen.</p>
+    <p>Lade Skripte, Artikel oder Mitschriften hoch. Eine KI liest sie und legt daraus verlinkte Notizen mit Quellenangabe an. Deine eigenen Notizen verändert sie nicht, und du kannst Änderungen später prüfen und rückgängig machen.</p>
   </header>
 
-  {#if error}<p class="feedback error" role="alert">{error}</p>{/if}
+  {#if error}<div class="feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={load}>Erneut versuchen</button></div>{/if}
 
   {#if loading}
     <p role="status">KI-Bereich wird geladen…</p>
@@ -308,6 +309,7 @@
               <div class="main">
                 <span class="name">{job.fileName}</span>
                 <span class="meta">{serviceName(job.service)} · Level {job.level} · {when(job.createdAt)}</span>
+                {#if job.status === "RUNNING" && job.percent !== null}<progress class="job-progress" value={job.percent} max="100" aria-label={`Fortschritt ${job.fileName}`}></progress>{/if}
                 {#if jobDetail(job)}<span class="detail" class:problem={job.status === "FAILED"}>{jobDetail(job)}</span>{/if}
               </div>
               <span class="status status-{job.status.toLowerCase()}" class:status-capacity={job.waitingForCapacity && job.status === "PENDING"}>{job.waitingForCapacity && job.status === "PENDING" ? "Wartet auf Kontingent" : STATUS[job.status]}</span>
@@ -372,44 +374,3 @@
     </section>
   {/if}
 </section>
-
-<style>
-  .ai { max-width: 52rem; }
-  .intro h2 { font-size: 1.35rem; margin: 0 0 .5rem; }
-  .intro p { color: var(--ink-dim); max-width: 62ch; margin: 0 0 2rem; }
-  .upload { display: grid; gap: .6rem; padding: 1.25rem 1.5rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 2.5rem; }
-  .choices { display: flex; flex-wrap: wrap; gap: 1rem; }
-  label { display: grid; gap: .35rem; font-size: .85rem; font-weight: 500; }
-  .choices label { flex: 1 1 14rem; }
-  .files input { min-height: 48px; padding: .6rem; }
-  .upload .hint { margin: 0; }
-  .upload .primary { justify-self: start; min-height: 44px; }
-  .rejected { margin: 0; padding-left: 1.2rem; color: var(--rust); font-size: .85rem; }
-  .notice { margin: 0; color: var(--forest); font-size: .85rem; }
-  .block { margin-bottom: 2.5rem; }
-  .block h3 { font-size: 1rem; margin: 0 0 .75rem; }
-  .rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
-  .row { display: flex; align-items: center; gap: 1rem; padding: .85rem 0; border-bottom: 1px solid var(--line); }
-  .row.stacked { display: block; }
-  .line { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
-  .main { display: grid; gap: .15rem; flex: 1 1 18rem; min-width: 0; }
-  .name { font-weight: 600; overflow-wrap: anywhere; }
-  .meta, .detail { font-size: .8rem; color: var(--ink-dim); }
-  .detail.problem { color: var(--rust); }
-  .status { font-size: .75rem; font-weight: 600; letter-spacing: .02em; padding: .2rem .55rem; border-radius: var(--radius); border: 1px solid var(--line); white-space: nowrap; }
-  .status-running, .status-pending { color: var(--forest); border-color: var(--forest); }
-  .status-succeeded { background: var(--forest-soft); border-color: var(--forest-soft); color: var(--forest); }
-  .status-failed { color: var(--rust); border-color: var(--rust); }
-  .status-cancelled { color: var(--ink-dim); }
-  .changes { margin: .6rem 0 0; padding: 0 0 0 .2rem; list-style: none; display: grid; gap: .3rem; font-size: .85rem; }
-  .kind { display: inline-block; min-width: 4.5rem; color: var(--ink-dim); font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
-  .feedback ul { margin: 0; padding-left: 1.2rem; }
-  .capacity { border-left: 3px solid var(--forest); padding: .5rem 0 .5rem .9rem; font-size: .85rem; }
-  .capacity.exhausted { border-left-color: var(--rust); }
-  .capacity .headline { margin: 0 0 .3rem; font-weight: 600; }
-  .capacity.exhausted .headline { color: var(--rust); }
-  .capacity ul { margin: 0; padding: 0; list-style: none; display: grid; gap: .2rem; color: var(--ink-dim); }
-  .capacity .provider { color: var(--ink); font-weight: 500; margin-right: .35rem; }
-  .capacity .stamp { margin: .3rem 0 0; color: var(--ink-dim); font-size: .8rem; }
-  .status-capacity { color: var(--rust); border-color: var(--rust); }
-</style>

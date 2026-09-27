@@ -2,12 +2,42 @@
   import { onMount } from "svelte";
   import type { User } from "oidc-client-ts";
   import { completeLogin, getUser, login as startLogin, logout as startLogout, preferredUsername } from "./lib/auth";
-  import { api, type Vault } from "./lib/api";
+  import { api, type Note, type Vault } from "./lib/api";
   import Sidebar from "./lib/components/Sidebar.svelte";
   import InviteLanding from "./lib/components/InviteLanding.svelte";
   import ObsidianSetup from "./lib/components/ObsidianSetup.svelte";
   import PrivacyPolicy from "./lib/components/PrivacyPolicy.svelte";
 
+  import Icon from "./lib/components/Icon.svelte";
+  import QuickJump from "./lib/components/QuickJump.svelte";
+  import { connectionConfigJson } from "./lib/connectionConfig";
+  let collapsed = $state(false);
+  let mobileOpen = $state(false);
+  let jumping = $state(false);
+  let loadedNotes = $state<Note[]>([]);
+  let jumpNote = $state<Note | null>(null);
+  let copied = $state(false);
+  let canManage = $state(false);
+  const areas = $derived([
+    { id: "notes", label: "Notizen" }, { id: "obsidian", label: "In Obsidian" },
+    { id: "ai", label: "KI-Wissen" }, ...(canManage ? [{ id: "manage", label: "Mitglieder & Rechte" }] : []),
+  ]);
+  function toggleNavigation() {
+    collapsed = !collapsed;
+    try { localStorage.setItem("stone.navigation.collapsed", String(collapsed)); } catch { /* Private browsing can disable storage. */ }
+  }
+  function keyboard(event: KeyboardEvent) {
+    if (user && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); jumping = !jumping; }
+  }
+  function jumpToNote(note: Note) {
+    if (!mayLeave()) return;
+    dirty = false; section = "notes"; setupPage = false; jumpNote = note; jumping = false; mobileOpen = false;
+  }
+  async function copyConfig() {
+    if (!selected) return;
+    try { await navigator.clipboard.writeText(connectionConfigJson(selected.id)); copied = true; }
+    catch { error = "Die Zwischenablage ist nicht erreichbar. Bitte erlaube den Zugriff und versuche es erneut."; }
+  }
   /** Nur relative App-Pfade als Rücksprungziel - nie eine fremde Adresse aus dem Login-State. */
   function safeReturnPath(value: unknown): string | null {
     return typeof value === "string" && (/^\/invite\/[A-Za-z0-9_-]+$/.test(value) || value === "/setup") ? value : null;
@@ -23,7 +53,7 @@
   let selected = $state<Vault | null>(null);
   let section = $state<"notes" | "manage" | "obsidian" | "ai">("notes");
   let dirty = $state(false);
-  let canManage = $state(false);
+
   let authBusy = $state(false);
   let inviteToken = $state<string | null>(null);
   let setupPage = $state(false);
@@ -59,9 +89,9 @@
   function mayLeave() { return !dirty || window.confirm("Ungespeicherte Änderungen verwerfen? Speichere oder exportiere deinen Entwurf, wenn du ihn behalten möchtest."); }
   function choose(vault: Vault) {
     if (selected?.id === vault.id || !mayLeave()) return;
-    selected = vault; section = "notes"; dirty = false; canManage = false;
+    selected = vault; loadedNotes = []; jumpNote = null; mobileOpen = false; section = "notes"; dirty = false; canManage = false;
   }
-  function navigate(next: "notes" | "manage" | "obsidian" | "ai") { if (next !== section && mayLeave()) { section = next; dirty = false; } }
+  function navigate(next: "notes" | "manage" | "obsidian" | "ai") { if ((next !== section || setupPage) && mayLeave()) { section = next; setupPage = false; dirty = false; jumpNote = null; } mobileOpen = false; jumping = false; }
   async function refreshVaults(created?: Vault) {
     const loaded = await api.listVaults();
     if (!alive) return;
@@ -85,6 +115,7 @@
     finally { authBusy = false; }
   }
   onMount(() => {
+    try { collapsed = localStorage.getItem("stone.navigation.collapsed") === "true"; } catch { /* Storage is optional. */ }
     void (async () => {
       try {
         if (window.location.pathname === "/callback") {
@@ -102,66 +133,54 @@
       } catch (e) { if (alive) error = e instanceof Error ? e.message : "Das Dashboard konnte nicht geladen werden."; }
       finally { if (alive) loading = false; }
     })();
-    const onPopState = () => { setupPage = window.location.pathname === "/setup"; privacyPage = window.location.pathname === "/datenschutz"; };
+    const onPopState = () => { if (!mayLeave()) { window.history.pushState({}, "", setupPage ? "/setup" : privacyPage ? "/datenschutz" : "/"); return; } inviteToken = inviteTokenFrom(window.location.pathname); setupPage = window.location.pathname === "/setup"; privacyPage = window.location.pathname === "/datenschutz"; };
     window.addEventListener("popstate", onPopState);
     return () => { alive = false; window.removeEventListener("popstate", onPopState); };
   });
 </script>
 
 <svelte:head><title>{selected ? `${selected.name} · ` : ""}StoneIntelligence</title><meta name="description" content="Deine Notizen lesen, bearbeiten und gemeinsam organisieren." /></svelte:head>
-{#if loading}<div class="boot" role="status"><img src="/logo.png" alt="" width="48" height="48" /><p>Dein Arbeitsplatz wird geladen…</p></div>
+<svelte:window onkeydown={keyboard} />
+<a class="skip-link" href="#workspace">Zum Inhalt</a>
+{#if loading}
+  <main id="workspace" class="boot" role="status"><img src="/logo.png" alt="" width="48" height="48" /><p>Dein Arbeitsplatz wird geladen…</p></main>
 {:else if privacyPage}
-  <main class="standalone"><a class="gate-brand home" href="/" onclick={leavePrivacy}><img src="/logo.png" alt="" width="40" height="40" /><span>StoneIntelligence</span></a><PrivacyPolicy onBack={leavePrivacy} /></main>
-  <footer class="legal-links"><a href={IMPRINT_URL} rel="noopener">Impressum</a></footer>
+  <main id="workspace" class="standalone"><a class="gate-brand" href="/" onclick={leavePrivacy}><img src="/logo.png" alt="" width="40" height="40" /><span>StoneIntelligence</span></a><PrivacyPolicy onBack={leavePrivacy} /></main>
 {:else if inviteToken}
   <InviteLanding token={inviteToken} signedIn={user !== null} onLogin={() => authenticate()} onJoined={joined} />
 {:else if setupPage && !user}
-  <main class="standalone"><a class="gate-brand home" href="/" onclick={leaveSetup}><img src="/logo.png" alt="" width="40" height="40" /><span>StoneIntelligence</span></a><ObsidianSetup vaults={[]} signedIn={false} onLogin={() => authenticate()} /></main>
-  <footer class="legal-links"><a href="/datenschutz" onclick={openPrivacy}>Datenschutz</a><a href={IMPRINT_URL} rel="noopener">Impressum</a></footer>
+  <main id="workspace" class="standalone"><a class="gate-brand" href="/" onclick={leaveSetup}><img src="/logo.png" alt="" width="40" height="40" /><span>StoneIntelligence</span></a><ObsidianSetup vaults={[]} signedIn={false} onLogin={() => authenticate()} /></main>
 {:else if !user}
-  <main class="gate"><div class="gate-brand"><img src="/logo.png" alt="" width="48" height="48" /><span>StoneIntelligence</span></div><h1>Ein Platz für dein Wissen.</h1><p>Lies und bearbeite deine Obsidian-Notizen im Browser. Deine Vaults und ihre Zugriffsrechte bleiben an einem Ort.</p>{#if error}<p class="feedback error" role="alert">{error}</p>{/if}<button class="primary" disabled={authBusy} onclick={() => authenticate()}>{authBusy ? "Anmeldung wird geöffnet…" : "Mit Authentik anmelden"}</button><p class="hint">Melde dich mit deinem bestehenden Konto an. Du willst in Obsidian arbeiten? <a href="/setup" onclick={openSetup}>Obsidian einrichten</a></p></main>
-  <footer class="legal-links"><a href="/datenschutz" onclick={openPrivacy}>Datenschutz</a><a href={IMPRINT_URL} rel="noopener">Impressum</a></footer>
+  <main id="workspace" class="gate">
+    <div class="gate-story"><a class="gate-brand" href="/"><img src="/logo.png" alt="" width="42" height="42" /><span>StoneIntelligence</span></a><p class="eyebrow">Für Gedanken, die weitergehen.</p><h1>Wissen wächst.<br />Gemeinsam.</h1><p class="gate-lead">Deine Notizen. Eure Ideen. Ein gemeinsamer Ort – in Obsidian und hier im Browser.</p><div class="gate-illustration" aria-hidden="true"><span class="paper paper-back">Ideen & Verbindungen</span><div class="paper"><span>GEMEINSAMES WISSEN</span><h2>Was wir heute<br />verstanden haben.</h2><i></i><i></i><i></i><p>Festhalten. Weiterdenken.</p></div></div></div>
+    <section class="gate-login"><p class="eyebrow">Dein Arbeitsplatz</p><h2>Schön, dass du da bist.</h2><p>Lies, schreibe und teile die Notizen deiner Vaults. Melde dich mit deinem bestehenden Konto an.</p>{#if error}<p class="feedback error" role="alert">{error}</p>{/if}<button class="primary" disabled={authBusy} onclick={() => authenticate()}>{authBusy ? "Anmeldung wird geöffnet…" : "Mit Authentik anmelden"}<Icon name="arrow" /></button><p class="hint">Die Anmeldung läuft sicher über Authentik.</p><div class="gate-setup"><span>Lieber direkt in Obsidian?</span><a href="/setup" onclick={openSetup}>Obsidian einrichten <span aria-hidden="true">↗</span></a></div></section>
+  </main>
 {:else}
-  <div class="shell">
-    <header class="app-header"><div class="brand"><img src="/logo.png" alt="" width="30" height="30" /><span>StoneIntelligence</span></div><div class="account"><a class="setup-link" href="/setup" onclick={openSetup}>Obsidian einrichten</a><a class="quiet-link" href="/datenschutz" onclick={openPrivacy}>Datenschutz</a><a class="quiet-link" href={IMPRINT_URL} rel="noopener">Impressum</a><span>{preferredUsername(user)}</span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></header>
-    {#if error}<div class="app-error feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={() => { error = ""; void refreshVaults().catch(e => error = e.message); }}>Erneut versuchen</button></div>{/if}
-    <div class="body"><aside><Sidebar {vaults} selectedId={selected?.id ?? null} onSelect={choose} onCreated={refreshVaults} canCreate={() => mayLeave()} /></aside>
+  <div class="shell" class:nav-collapsed={collapsed}>
+    <aside class="main-navigation" class:mobile-open={mobileOpen} aria-label="Hauptnavigation">
+      <div class="brand"><img src="/logo.png" alt="" width="34" height="34" /><span>Stone<span class="brand-light">Intelligence</span></span></div>
+      <button class="nav-collapse" aria-label={collapsed ? "Navigation ausklappen" : "Navigation einklappen"} aria-expanded={!collapsed} onclick={toggleNavigation}><Icon name="panel" /><span>Navigation einklappen</span></button>
+      <div class="vault-switcher"><Sidebar {vaults} selectedId={selected?.id ?? null} onSelect={choose} onCreated={refreshVaults} canCreate={() => mayLeave()} /></div>
+      {#if selected}<nav class="area-nav" aria-label="Vault-Bereiche"><p class="nav-caption">Arbeitsplatz</p>{#each areas as area}<button class:active={section === area.id && !setupPage} aria-label={area.label} title={area.label} aria-pressed={section === area.id && !setupPage} onclick={() => navigate(area.id as typeof section)}><Icon name={area.id} /><span>{area.label}</span></button>{/each}</nav>{/if}
+      <div class="nav-bottom"><a href="/setup" onclick={openSetup}><Icon name="obsidian" /><span>Obsidian einrichten</span></a><div class="account"><span class="avatar">{preferredUsername(user).slice(0, 1).toUpperCase()}</span><span class="account-name">{preferredUsername(user)}<small>Dein Konto</small></span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></div>
+    </aside>
+    <div class="main-column">
+      <header class="app-header"><button class="mobile-toggle quiet" aria-label={mobileOpen ? "Menü schließen" : "Menü öffnen"} aria-expanded={mobileOpen} onclick={() => mobileOpen = !mobileOpen}><Icon name="panel" /></button><div class="breadcrumb"><span>Dein Wissen</span><span aria-hidden="true">/</span><strong>{setupPage ? "Einrichtung" : selected?.name ?? "Willkommen"}</strong></div><button class="quick-trigger" onclick={() => jumping = true}><Icon name="search" /><span>Schnellsprung</span><kbd>⌘ K</kbd></button></header>
+      {#if error}<div class="app-error feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={() => { error = ""; void refreshVaults().catch(e => error = e.message); }}>Erneut versuchen</button></div>{/if}
       <main id="workspace">
-        {#if setupPage}
-          <p><a href="/" onclick={leaveSetup}>← Zurück zu den Notizen</a></p>
-          <ObsidianSetup {vaults} signedIn={true} onLogin={() => authenticate()} />
+        {#if setupPage}<p><a href="/" onclick={leaveSetup}>← Zurück zu den Notizen</a></p><ObsidianSetup {vaults} signedIn={true} onLogin={() => authenticate()} />
         {:else if selected}
-          <div class="workspace-heading"><div><p class="workspace-label">Arbeitsbereich</p><h1>{selected.name}</h1></div><nav aria-label="Vault-Bereiche"><button class:active={section === "notes"} aria-pressed={section === "notes"} onclick={() => navigate("notes")}>Notizen</button><button class:active={section === "obsidian"} aria-pressed={section === "obsidian"} onclick={() => navigate("obsidian")}>In Obsidian</button><button class:active={section === "ai"} aria-pressed={section === "ai"} onclick={() => navigate("ai")}>KI-Wissen</button>{#if canManage}<button class:active={section === "manage"} aria-pressed={section === "manage"} onclick={() => navigate("manage")}>Mitglieder & Rechte</button>{/if}</nav></div>
+          <div class="workspace-heading"><div><p class="eyebrow">{section === "notes" ? "Deine Bibliothek" : section === "ai" ? "Entdecken & verknüpfen" : section === "manage" ? "Gemeinsam arbeiten" : "Überall verbunden"}</p><h1>{selected.name}</h1></div><span class="workspace-badge"><span aria-hidden="true">●</span> {areas.find(a => a.id === section)?.label}</span></div>
           {#key selected.id}
-            {#if section === "obsidian"}
-              <ObsidianSetup vaults={[selected]} signedIn={true} scopedVault={true} onLogin={() => authenticate()} />
-            {:else if section === "ai"}
-              {#await import("./lib/components/AiWorkspace.svelte")}<p role="status">KI-Bereich wird geladen…</p>{:then module}<module.default vault={selected} />{:catch}<p class="feedback error" role="alert">Der KI-Bereich konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
-            {:else if section === "notes"}
-              {#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
-            {:else}
-              {#await import("./lib/components/VaultDetail.svelte")}<p role="status">Verwaltung wird geladen…</p>{:then module}<div class="management"><module.default vault={selected} me={preferredUsername(user)} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. Bitte lade die Seite erneut.</p>{/await}
-            {/if}
+            {#if section === "obsidian"}<ObsidianSetup vaults={[selected]} signedIn={true} scopedVault={true} onLogin={() => authenticate()} /><section class="connection-panel"><h3>Dein eigener Server</h3><p class="hint">Füge die Verbindungsdaten im Plugin unter Erweitert ein.</p><button class="secondary" onclick={copyConfig}>{copied ? "Kopiert" : "Konfiguration kopieren"}</button></section>
+            {:else if section === "ai"}{#await import("./lib/components/AiWorkspace.svelte")}<p role="status">KI-Bereich wird geladen…</p>{:then module}<module.default vault={selected} />{:catch}<p class="feedback error" role="alert">Der KI-Bereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
+            {:else if section === "notes"}{#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} requestedNote={jumpNote} onNotesLoaded={notes => loadedNotes = notes} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
+            {:else}{#await import("./lib/components/VaultDetail.svelte")}<p role="status">Verwaltung wird geladen…</p>{:then module}<div class="management"><module.default vault={selected} me={preferredUsername(user)} onRenamed={v => { vaults = vaults.map(old => old.id === v.id ? v : old); selected = v; }} onLeft={() => refreshVaults()} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}{/if}
           {/key}
-        {:else}<section class="first-vault"><h1>Willkommen in deinem Arbeitsplatz.</h1><p>Lege links deinen ersten Vault an. Ein Vault bündelt deine Notizen und legt fest, mit wem du sie teilst.</p><p class="hint">Du kannst anschließend neue Notizen schreiben oder deinen Obsidian-Vault über die Verwaltung verbinden.</p></section>{/if}
+        {:else}<section class="first-vault"><p class="eyebrow">Ein neuer Anfang</p><h1>Hier beginnt dein<br />gemeinsames Wissen.</h1><p>Lege in der Navigation deinen ersten Vault an. Ein Vault bündelt deine Notizen und legt fest, mit wem du sie teilst.</p><button class="primary" onclick={() => { collapsed = false; mobileOpen = true; }}>Ersten Vault anlegen</button></section>{/if}
       </main>
     </div>
   </div>
 {/if}
-<style>
-  .boot { min-height: 70vh; display: grid; place-content: center; justify-items: center; color: var(--ink-dim); }
-  .gate { max-width: 42rem; margin: clamp(4rem, 13vh, 10rem) auto; padding: 2rem; } .gate-brand { display: flex; gap: .8rem; align-items: center; font-weight: 700; margin-bottom: 4rem; } .gate h1 { font-size: clamp(2.4rem, 6vw, 3.8rem); letter-spacing: -.04em; line-height: 1.1; max-width: 14ch; } .gate > p { max-width: 47ch; color: var(--ink-dim); margin: 1.5rem 0; } .gate .primary { padding: .85rem 1.5rem; }
-  .app-header { min-height: 76px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; padding: .75rem 2rem; background: var(--surface); border-bottom: 1px solid var(--line); }
-  .brand, .account { display: flex; align-items: center; gap: .7rem; } .brand { font-weight: 700; letter-spacing: -.02em; } .account { color: var(--ink-dim); font-size: .85rem; }
-  .body { display: grid; grid-template-columns: 14rem minmax(0, 1fr); min-height: calc(100vh - 76px); } aside { background: var(--surface); border-right: 1px solid var(--line); min-width: 0; }
-  #workspace { min-width: 0; padding: 2rem clamp(1rem, 3vw, 3rem) 4rem; } .workspace-heading { display: flex; justify-content: space-between; align-items: end; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem; } .workspace-heading > * { min-width: 0; max-width: 100%; } .workspace-heading h1 { font-size: 1.9rem; margin: .25rem 0 0; overflow-wrap: anywhere; } .workspace-label { color: var(--ink-dim); font-size: .8rem; margin: 0; }
-  /* Auf schmalen Bildschirmen scrollt die Reiterleiste für sich, statt die Seite zu verbreitern. */
-  nav { display: flex; gap: .4rem; border-bottom: 1px solid var(--line); max-width: 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; } nav button { flex: none; white-space: nowrap; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink-dim); padding: .6rem 1rem; } nav button.active { color: var(--forest); border-color: var(--forest); font-weight: 700; }
-  .standalone { max-width: 50rem; margin: clamp(2.5rem, 8vh, 6rem) auto; padding: 2rem; } .home { color: var(--ink); text-decoration: none; margin-bottom: 3rem; display: inline-flex; }
-  .setup-link { color: var(--forest); font-weight: 500; text-decoration: none; min-height: 48px; display: inline-flex; align-items: center; } .setup-link:hover { text-decoration: underline; }
-  .legal-links { display: flex; gap: 1.25rem; justify-content: center; padding: 1.5rem 1rem 2rem; font-size: .8rem; }
-  .legal-links a, .quiet-link { color: var(--ink-dim); text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; } .legal-links a:hover, .quiet-link:hover { color: var(--ink); text-decoration: underline; }
-  .management { max-width: 62rem; } .app-error { margin: 1rem 2rem; } .first-vault { padding: 4rem 0; max-width: 44rem; } .first-vault h1 { font-size: 2.5rem; } .first-vault p { max-width: 58ch; color: var(--ink-dim); }
-  @media (max-width: 1100px) { .body { grid-template-columns: 11.5rem minmax(0, 1fr); } }
-  @media (max-width: 850px) { .body { display: block; } aside { border-right: 0; border-bottom: 1px solid var(--line); } #workspace { padding-top: 1.5rem; } .app-header { padding: .6rem 1rem; } }
-</style>
+<footer class="legal-links"><span>StoneIntelligence · Raum für Wissen</span><a href="/datenschutz" onclick={openPrivacy}>Datenschutz</a><a href={IMPRINT_URL} rel="noopener">Impressum</a></footer>
+{#if jumping && user}<QuickJump notes={loadedNotes} {areas} onNote={jumpToNote} onArea={area => navigate(area as typeof section)} onClose={() => jumping = false} />{/if}
