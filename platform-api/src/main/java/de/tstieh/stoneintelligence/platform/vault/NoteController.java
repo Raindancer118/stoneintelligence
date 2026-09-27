@@ -109,14 +109,45 @@ public class NoteController {
         access.requireMember(vId, authentication.getName());
         var page = notes.list(vId, cursor, pageSize, parseKinds(kinds));
         var readable = access.readableNotes(vId, authentication.getName(), page.notes());
+        return new ReconciliationResponse(
+            page.epochId(), page.complete(), page.nextCursor().orElse(null), listed(vId, authentication.getName(), readable));
+    }
+
+    /** Obergrenze der Pfadtreffer, die vor der Rechtepruefung geholt werden - gesperrte Treffer sollen kein Limit aufbrauchen. */
+    private static final int SEARCH_CANDIDATES = 1000;
+
+    /**
+     * Suche nach Titel/Pfad auf dem Server, damit die Oberflaeche nicht alle Eintraege fuer eine Suche halten muss.
+     * Nur fuer die Oberflaeche; keine Sync-Semantik wie {@link #reconcile}.
+     */
+    @GetMapping("/api/v1/vaults/{vaultId}/notes/search")
+    public SearchResponse search(
+        @PathVariable String vaultId,
+        @RequestParam String q,
+        @RequestParam(defaultValue = "50") int limit,
+        @RequestParam(defaultValue = "note,file") String kinds,
+        Authentication authentication
+    ) {
+        var query = q.strip();
+        if (query.isEmpty() || query.length() > 200) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "q must contain 1 to 200 characters");
+        }
+        var max = Math.clamp(limit, 1, 200);
+        var vId = VaultId.of(vaultId);
+        access.requireMember(vId, authentication.getName());
+        var readable = access.readableNotes(vId, authentication.getName(), notes.search(vId, query, parseKinds(kinds), SEARCH_CANDIDATES));
+        var shown = readable.size() > max ? readable.subList(0, max) : readable;
+        return new SearchResponse(listed(vId, authentication.getName(), shown), readable.size() > max);
+    }
+
+    private List<ListedNoteResponse> listed(VaultId vId, String actor, List<Note> readable) {
         var revisions = snapshots.latestRevisions(readable.stream().filter(note -> !note.isFile()).map(Note::id).toList());
         var files = fileVersions.current(readable.stream().filter(Note::isFile).map(Note::id).toList());
-        var entryAccess = access.entryAccess(vId, authentication.getName(), readable);
-        return new ReconciliationResponse(
-            page.epochId(), page.complete(), page.nextCursor().orElse(null),
-            readable.stream().map(note -> (note.isFile()
-                ? ListedNoteResponse.fromFile(note, files.get(note.id()))
-                : ListedNoteResponse.from(note, revisions.getOrDefault(note.id(), 0L))).with(entryAccess.get(note.id()))).toList());
+        var entryAccess = access.entryAccess(vId, actor, readable);
+        return readable.stream().map(note -> (note.isFile()
+            ? ListedNoteResponse.fromFile(note, files.get(note.id()))
+            : ListedNoteResponse.from(note, revisions.getOrDefault(note.id(), 0L))).with(entryAccess.get(note.id()))).toList();
     }
 
     /** {@code note} (Standard, auch fuer aeltere Clients) oder {@code note,file} - ADR 0009 Punkt 5. */
@@ -258,6 +289,9 @@ public class NoteController {
                 note.createdBy(), note.createdAt(), version == null ? 0 : version.revision(), note.kind(),
                 version == null ? null : version.sha256(), version == null ? null : version.size(), null, null);
         }
+    }
+
+    public record SearchResponse(List<ListedNoteResponse> notes, boolean truncated) {
     }
 
     public record ReconciliationResponse(java.util.UUID epochId, boolean complete, String nextCursor, List<ListedNoteResponse> notes) {

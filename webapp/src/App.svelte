@@ -14,7 +14,6 @@
   let collapsed = $state(false);
   let mobileOpen = $state(false);
   let jumping = $state(false);
-  let loadedNotes = $state<Note[]>([]);
   let jumpNote = $state<Note | null>(null);
   let copied = $state(false);
   let canManage = $state(false);
@@ -89,7 +88,7 @@
   function mayLeave() { return !dirty || window.confirm("Ungespeicherte Änderungen verwerfen? Speichere oder exportiere deinen Entwurf, wenn du ihn behalten möchtest."); }
   function choose(vault: Vault) {
     if (selected?.id === vault.id || !mayLeave()) return;
-    selected = vault; loadedNotes = []; jumpNote = null; mobileOpen = false; section = "notes"; dirty = false; canManage = false;
+    selected = vault; jumpNote = null; mobileOpen = false; section = "notes"; dirty = false; canManage = false;
   }
   function navigate(next: "notes" | "manage" | "obsidian" | "ai") { if ((next !== section || setupPage) && mayLeave()) { section = next; setupPage = false; dirty = false; jumpNote = null; } mobileOpen = false; jumping = false; }
   async function refreshVaults(created?: Vault) {
@@ -174,7 +173,7 @@
           {#key selected.id}
             {#if section === "obsidian"}<ObsidianSetup vaults={[selected]} signedIn={true} scopedVault={true} onLogin={() => authenticate()} /><section class="connection-panel"><h3>Dein eigener Server</h3><p class="hint">Füge die Verbindungsdaten im Plugin unter Erweitert ein.</p><button class="secondary" onclick={copyConfig}>{copied ? "Kopiert" : "Konfiguration kopieren"}</button></section>
             {:else if section === "ai"}{#await import("./lib/components/AiWorkspace.svelte")}<p role="status">KI-Bereich wird geladen…</p>{:then module}<module.default vault={selected} />{:catch}<p class="feedback error" role="alert">Der KI-Bereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
-            {:else if section === "notes"}{#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} requestedNote={jumpNote} onNotesLoaded={notes => loadedNotes = notes} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
+            {:else if section === "notes"}{#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} requestedNote={jumpNote} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
             {:else}{#await import("./lib/components/VaultDetail.svelte")}<p role="status">Verwaltung wird geladen…</p>{:then module}<div class="management"><module.default vault={selected} me={preferredUsername(user)} onRenamed={v => { vaults = vaults.map(old => old.id === v.id ? v : old); selected = v; }} onLeft={() => refreshVaults()} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}{/if}
           {/key}
         {:else}<section class="first-vault"><p class="eyebrow">Ein neuer Anfang</p><h1>Hier beginnt dein<br />gemeinsames Wissen.</h1><p>Lege in der Navigation deinen ersten Vault an. Ein Vault bündelt deine Notizen und legt fest, mit wem du sie teilst.</p><button class="primary" onclick={() => { collapsed = false; mobileOpen = true; }}>Ersten Vault anlegen</button></section>{/if}
@@ -183,4 +182,4 @@
   </div>
 {/if}
 <footer class="legal-links"><span>StoneIntelligence · Raum für Wissen</span><a href="/datenschutz" onclick={openPrivacy}>Datenschutz</a><a href={IMPRINT_URL} rel="noopener">Impressum</a></footer>
-{#if jumping && user}<QuickJump notes={loadedNotes} {areas} onNote={jumpToNote} onArea={area => navigate(area as typeof section)} onClose={() => jumping = false} />{/if}
+{#if jumping && user}<QuickJump vaultId={selected?.id ?? null} {areas} onNote={jumpToNote} onArea={area => navigate(area as typeof section)} onClose={() => jumping = false} />{/if}

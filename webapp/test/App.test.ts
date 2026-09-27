@@ -8,7 +8,7 @@ vi.mock("../src/lib/auth", () => ({
   preferredUsername: () => "Tom",
 }));
 vi.mock("../src/lib/api", async (original) => ({ ...(await original<typeof import("../src/lib/api")>()), api: {
-  listVaults: vi.fn(), permissions: vi.fn(), listNotes: vi.fn(), describeInvitation: vi.fn(), acceptInvitation: vi.fn(),
+  listVaults: vi.fn(), permissions: vi.fn(), listNotes: vi.fn(), searchNotes: vi.fn(), describeInvitation: vi.fn(), acceptInvitation: vi.fn(),
   aiServices: vi.fn(), listAiJobs: vi.fn(), listChangeSets: vi.fn(),
 } }));
 beforeEach(() => { vi.resetAllMocks(); window.history.replaceState({}, "", "/"); });

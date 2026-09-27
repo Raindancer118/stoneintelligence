@@ -38,6 +38,20 @@ describe("API responses", () => {
     expect(init.headers["Content-Type"]).toBeUndefined();
     expect(init.headers.Authorization).toBe("Bearer test-token");
   });
+  it("asks the server to search titles and paths, and pages through notes in large pages", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(Response.json({ notes: [], truncated: false })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.searchNotes("vault", "Grenz werte");
+    await api.listNotes("vault");
+
+    const search = new URL(fetchMock.mock.calls[0][0]);
+    expect(search.pathname).toMatch(/\/api\/v1\/vaults\/vault\/notes\/search$/);
+    expect(search.searchParams.get("q")).toBe("Grenz werte");
+    expect(search.searchParams.get("kinds")).toBe("note,file");
+    expect(new URL(fetchMock.mock.calls[1][0]).searchParams.get("pageSize")).toBe("500");
+  });
+
   it("asks for notes and files, and loads a file as a blob with the login", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(Response.json({ epochId: "e", complete: true, nextCursor: null, notes: [] }))

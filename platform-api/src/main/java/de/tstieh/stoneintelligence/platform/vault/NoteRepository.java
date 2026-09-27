@@ -51,6 +51,12 @@ public interface NoteRepository {
     ReconciliationPage list(VaultId vaultId, String cursorToken, int pageSize, java.util.Set<NoteKind> kinds);
 
     /**
+     * Eintraege, deren Pfad {@code query} enthaelt (Gross-/Kleinschreibung egal, {@code %}/{@code _} woertlich),
+     * nach Pfad sortiert, hoechstens {@code limit}. Keine Sync-Semantik - nur fuer die Suche in der Oberflaeche.
+     */
+    java.util.List<Note> search(VaultId vaultId, String query, java.util.Set<NoteKind> kinds, int limit);
+
+    /**
      * Idempotent ueber {@code operationId}: ein wiederholter Aufruf mit derselben
      * {@code operationId} liefert denselben {@link Tombstone} zurueck, ohne einen zweiten
      * anzulegen (Fehlerklasse 3). Wirft {@link NoteNotFoundException}, wenn unter einer NEUEN
