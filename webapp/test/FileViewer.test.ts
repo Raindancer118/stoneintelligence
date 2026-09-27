@@ -82,3 +82,12 @@ describe("Dateiansicht", () => {
     expect(screen.queryByRole("button", { name: "Umbenennen / verschieben" })).toBeNull();
   });
 });
+
+
+it("previews text as inert content rather than executable markup", async () => {
+  const text = '<script>alert(1)</script>\nTeam notes';
+  vi.mocked(api.fileBlob).mockResolvedValue({ text: async () => text } as Blob);
+  render(FileViewer, { note: file("Notizen.txt"), permissions: ["READ"], onChanged: vi.fn(), onDeleted: vi.fn() });
+  expect(await screen.findByText(/<script>alert/)).toBeTruthy();
+  expect(document.querySelector(".preview script")).toBeNull();
+});

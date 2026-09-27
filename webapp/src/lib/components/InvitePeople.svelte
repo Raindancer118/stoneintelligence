@@ -134,18 +134,3 @@
     </ul>
   {/if}
 </section>
-
-<style>
-  .invite-form { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; margin: 1rem 0 .5rem; }
-  .field { display: grid; gap: .35rem; font-size: .8rem; color: var(--ink-dim); }
-  .field:first-child { flex: 1 1 18rem; }
-  .field input { width: 100%; }
-  .people { list-style: none; padding: 0; margin: .5rem 0 1rem; border-top: 1px solid var(--line); }
-  .people li { display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-height: 48px; padding: .35rem 0; border-bottom: 1px solid var(--line); }
-  .name { font-weight: 500; overflow-wrap: anywhere; }
-  .meta { color: var(--ink-dim); font-size: .8rem; }
-  .email-invite { margin: .75rem 0; }
-  .email-invite .hint { margin: .5rem 0 0; max-width: 60ch; }
-  .notice { color: var(--forest); font-weight: 500; }
-  h4 { margin: 1.5rem 0 .25rem; font-size: .85rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); }
-</style>

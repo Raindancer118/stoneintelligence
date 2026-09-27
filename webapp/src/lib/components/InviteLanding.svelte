@@ -17,23 +17,22 @@
   };
   const dateFormat = new Intl.DateTimeFormat("de-DE", { day: "numeric", month: "long", year: "numeric" });
 
-  onMount(() => {
-    void api.describeInvitation(token).then(loaded => info = loaded, (e: Error) => error = e.message);
-  });
+  function load() { error = ""; void api.describeInvitation(token).then(loaded => info = loaded, (e: Error) => error = e.message); }
+  onMount(load);
 
   async function accept() {
     accepting = true; error = "";
-    try { onJoined((await api.acceptInvitation(token)).vaultId); }
+    try { await onJoined((await api.acceptInvitation(token)).vaultId); }
     catch (e) { error = (e as Error).message; }
     finally { accepting = false; }
   }
 </script>
 
-<main class="invite-landing">
+<main id="workspace" class="invite-landing">
   <div class="brand"><img src="/logo.png" alt="" width="40" height="40" /><span>StoneIntelligence</span></div>
   {#if error && !info}
     <h1>Einladung nicht gefunden</h1>
-    <p class="error" role="alert">{error}</p>
+    <p class="error" role="alert">{error}</p><button class="secondary" onclick={load}>Erneut versuchen</button>
   {:else if !info}
     <p role="status">Einladung wird geladen…</p>
   {:else}
@@ -62,13 +61,3 @@
     {/if}
   {/if}
 </main>
-
-<style>
-  .invite-landing { max-width: 42rem; margin: clamp(3rem, 12vh, 8rem) auto; padding: 2rem; }
-  .brand { display: flex; gap: .7rem; align-items: center; font-weight: 700; margin-bottom: 3rem; }
-  h1 { font-size: clamp(1.9rem, 5vw, 2.8rem); letter-spacing: -.03em; line-height: 1.15; overflow-wrap: anywhere; }
-  .lead { color: var(--ink-dim); max-width: 52ch; margin: 1.25rem 0 2rem; }
-  .choices { display: grid; gap: 1.25rem; }
-  .choices .hint { margin: .5rem 0 0; }
-  .button-link { display: inline-flex; align-items: center; min-height: 48px; text-decoration: none; }
-</style>
