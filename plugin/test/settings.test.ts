@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SETTINGS, emptyVaultState, isExcluded, isExcludedFolder, migrateSettings, queueDelete, queueFolderOp, queueRename,
-  wsUrlFor,
+  applyServer, sameServer, wsUrlFor,
 } from "../src/settings";
 
 describe("migrateSettings", () => {
@@ -149,3 +149,47 @@ describe("Dateien", () => {
   });
 });
 
+
+describe("Serverwechsel", () => {
+  const hosted = {
+    platformApiUrl: "https://stoneintelligence.tstieh.de", platformWsUrl: "",
+    oidcIssuerUrl: "https://portal.tstieh.de/application/o/stoneintelligence/", oidcClientId: "hosted",
+  };
+  const selfHosted = {
+    platformApiUrl: "https://notes.example.org", platformWsUrl: "wss://notes.example.org",
+    oidcIssuerUrl: "https://sso.example.org/application/o/si/", oidcClientId: "own",
+  };
+
+  // Die Webapp nennt die WebSocket-Adresse ausdruecklich, das Plugin leitet sie meist ab.
+  it("should_treatTheSameServer_asSame_despiteSpellingDifferences", () => {
+    expect(sameServer(hosted, {
+      ...hosted, platformApiUrl: "https://stoneintelligence.tstieh.de/", platformWsUrl: "wss://stoneintelligence.tstieh.de",
+      oidcIssuerUrl: "https://portal.tstieh.de/application/o/stoneintelligence",
+    })).toBe(true);
+  });
+
+  it("should_notTreatAnotherServerOrClient_asSame", () => {
+    expect(sameServer(hosted, selfHosted)).toBe(false);
+    expect(sameServer(hosted, { ...hosted, oidcClientId: "other" })).toBe(false);
+    expect(sameServer(hosted, { ...hosted, oidcIssuerUrl: "https://evil.example/" })).toBe(false);
+  });
+
+  // Ein Token des alten Servers darf nie an den neuen gehen - dort wird neu angemeldet.
+  it("should_forgetTheLogin_when_switchingServers", () => {
+    const settings = { ...migrateSettings({ ...hosted, vaultId: "v1" }), tokens: { accessToken: "a", refreshToken: "r", expiresAt: 1 }, displayName: "Tom" };
+
+    expect(applyServer(settings, selfHosted)).toBe(true);
+
+    expect(settings).toMatchObject({ ...selfHosted, tokens: null, displayName: null });
+  });
+
+  it("should_keepTheLogin_when_theServerStaysTheSame", () => {
+    const tokens = { accessToken: "a", refreshToken: "r", expiresAt: 1 };
+    const settings = { ...migrateSettings(hosted), tokens };
+
+    expect(applyServer(settings, { ...hosted, platformWsUrl: "wss://stoneintelligence.tstieh.de" })).toBe(false);
+
+    expect(settings.tokens).toBe(tokens);
+    expect(settings.platformWsUrl).toBe("");
+  });
+});
