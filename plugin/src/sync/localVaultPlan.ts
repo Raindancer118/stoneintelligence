@@ -101,12 +101,12 @@ export interface NewVaultInput {
 
 /**
  * Dateien (relativ zum neuen Vault) fuer ein aktiviertes Plugin mit den Server-Einstellungen dieses
- * Geraets. Bewusst OHNE Tokens: Authentik rotiert Refresh-Tokens, zwei Vaults mit demselben Token
+ * Geraets - oder denen aus dem Link, wenn er einen (bestaetigten) Server nennt. Bewusst OHNE Tokens: Authentik rotiert Refresh-Tokens, zwei Vaults mit demselben Token
  * wuerden sich gegenseitig abmelden - der neue Vault meldet sich selbst an.
  */
 export function newVaultFiles(input: NewVaultInput): Array<{ path: string; content: string }> {
   const pluginDir = `.obsidian/plugins/${input.pluginId}`;
-  const { platformApiUrl, platformWsUrl, oidcIssuerUrl, oidcClientId } = input.settings;
+  const { platformApiUrl, platformWsUrl, oidcIssuerUrl, oidcClientId } = input.link.server ?? input.settings;
   return [
     ...Object.entries(input.pluginFiles).map(([name, content]) => ({ path: `${pluginDir}/${name}`, content })),
     { path: ".obsidian/community-plugins.json", content: JSON.stringify([input.pluginId]) },

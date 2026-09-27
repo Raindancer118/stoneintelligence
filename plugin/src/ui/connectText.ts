@@ -13,3 +13,23 @@ export function uploadWarning(count: number): string {
 export function recommendNewVault(current: { localNoteCount: number; connectedElsewhere: boolean }): boolean {
   return current.localNoteCount > 0 || current.connectedElsewhere;
 }
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** Der Link zeigt auf einen anderen Server: sagen, wohin es geht und wo die Anmeldung laeuft. */
+export function serverSwitchWarning(
+  target: { platformApiUrl: string; oidcIssuerUrl: string },
+  current: { platformApiUrl: string },
+): string {
+  const server = hostOf(target.platformApiUrl);
+  const issuer = hostOf(target.oidcIssuerUrl);
+  const login = issuer === server ? "" : ` (Anmeldung über ${issuer})`;
+  return `Dieser Link gehört zum Server ${server}${login}, bisher ist ${hostOf(current.platformApiUrl)} eingestellt. `
+    + "Verbinde nur, wenn du dieser Einrichtungsseite vertraust – danach meldest du dich dort neu an.";
+}

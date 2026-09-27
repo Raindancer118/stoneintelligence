@@ -129,4 +129,18 @@ describe("newVaultFiles", () => {
   it("should_neverCopyTokens", () => {
     expect(byPath[".obsidian/plugins/stoneintelligence/data.json"]).not.toContain("token");
   });
+
+  // Link einer selbst gehosteten Instanz: der neue Vault gehoert zu deren Server, nicht zu dem
+  // dieses Vaults (der bleibt, wie er ist).
+  it("should_useTheServerFromTheLink_when_itNamesOne", () => {
+    const server = { platformApiUrl: "https://notes.example.org", platformWsUrl: "", oidcIssuerUrl: "https://sso.example.org/", oidcClientId: "own" };
+    const link = { vaultId: STONE_VAULT, vaultName: "Team", server };
+    const created = newVaultFiles({
+      pluginId: "stoneintelligence", pluginFiles: {},
+      settings: { platformApiUrl: "https://api.example", platformWsUrl: "", oidcIssuerUrl: "https://sso.example/", oidcClientId: "client" },
+      link,
+    });
+
+    expect(JSON.parse(created.find((file) => file.path.endsWith("data.json"))!.content)).toEqual({ ...server, pendingConnect: link });
+  });
 });
