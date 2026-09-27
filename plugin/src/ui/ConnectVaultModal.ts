@@ -12,6 +12,8 @@ export interface ConnectVaultDetails {
   signedIn: boolean;
   /** Vorgeschlagener Ordner fuer einen neuen Obsidian-Vault; null = hier nicht moeglich (Mobile). */
   newVaultPath: string | null;
+  /** Der Link zeigt auf einen anderen Server (selbst gehostete Instanz) - vor allem anderen nennen. */
+  serverWarning: string | null;
 }
 
 export interface ConnectVaultChoice {
@@ -37,10 +39,13 @@ export class ConnectVaultModal extends Modal {
   }
 
   onOpen(): void {
-    const { vaultName, thisVaultName, localNoteCount, currentVaultName, signedIn, newVaultPath } = this.details;
+    const { vaultName, thisVaultName, localNoteCount, currentVaultName, signedIn, newVaultPath, serverWarning } = this.details;
     const preferNew = newVaultPath !== null && recommendNewVault({ localNoteCount, connectedElsewhere: currentVaultName !== null });
     this.setTitle(`Mit „${vaultName}“ verbinden`);
     this.contentEl.addClass("stoneintelligence-connect");
+    if (serverWarning) {
+      this.contentEl.createEl("p", { cls: "stoneintelligence-connect-warning", text: serverWarning });
+    }
     this.contentEl.createEl("p", {
       text: `Die Notizen aus „${vaultName}“ werden in einen Obsidian-Vault geladen und von da an in beide Richtungen synchronisiert. In welchen?`,
     });

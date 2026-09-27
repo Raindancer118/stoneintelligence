@@ -90,7 +90,9 @@ test("connect the selected vault to Obsidian from the vault", async ({ page }, t
   await openNote(page);
   await page.getByRole("button", { name: "In Obsidian", exact: true }).click();
   const connect = page.getByRole("link", { name: "Mit „Team-Wissen“ verbinden" }).first();
-  await expect(connect).toHaveAttribute("href", /^obsidian:\/\/stoneintelligence-connect\?stoneVault=[0-9a-f-]{36}&name=Team-Wissen$/);
+  await expect(connect).toHaveAttribute("href", new RegExp(String.raw`^obsidian://stoneintelligence-connect\?stoneVault=[0-9a-f-]{36}&name=Team-Wissen`
+    + "&server=http%3A%2F%2F127.0.0.1%3A4173&ws=ws%3A%2F%2F127.0.0.1%3A4173"
+    + "&issuer=https%3A%2F%2Fidentity.example.test&client=dashboard-test$"));
   await expect(page.getByRole("link", { name: "StoneIntelligence installieren" })).toHaveAttribute("href", "obsidian://brat?plugin=Raindancer118%2Fstoneintelligence");
   await page.screenshot({ path: testInfo.outputPath("vault-in-obsidian.png"), fullPage: true });
 });

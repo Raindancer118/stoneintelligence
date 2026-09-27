@@ -42,8 +42,9 @@ verwalten.
    annehmen und im Vault den Reiter **„In Obsidian“** öffnen. Dort verbindet ein Klick den
    Obsidian-Vault.
 
-Das Plugin ist auf die gehostete Instanz voreingestellt. Für einen eigenen Server lassen sich
-API-Adresse und OIDC-Anmeldung unter **Einstellungen → StoneIntelligence → Erweitert** ändern.
+Das Plugin ist auf die gehostete Instanz voreingestellt. Die Knöpfe der Einrichtungsseite einer
+selbst gehosteten Instanz geben deren Server mit; das Plugin nennt den neuen Server und stellt erst
+nach Bestätigung um. Von Hand geht das unter **Einstellungen → StoneIntelligence → Erweitert**.
 Obsidian **1.6.6 oder neuer** wird benötigt; das Plugin läuft auch auf Mobilgeräten.
 
 Wer BRAT manuell einrichtet, trägt dort `Raindancer118/stoneintelligence` als Plugin-Repository
@@ -81,8 +82,16 @@ Für lokale Builds der Java-Module werden die privaten Maven-Abhängigkeiten aus
 Der mitgelieferte [`docker-compose.yml`](docker-compose.yml) definiert PostgreSQL, API, Worker
 und MCP-Adapter. Für eine eigene API-Instanz sind mindestens ein Datenbankpasswort und ein
 passender OIDC-Issuer nötig. Der Worker und der MCP-Adapter befinden sich noch im Aufbau; für
-die aktuelle Sync-Anwendung reichen PostgreSQL und `platform-api`. Die Browser-App benötigt
-zusätzlich einen passenden OIDC-Client und eine erlaubte Origin in der API-Konfiguration.
+die aktuelle Sync-Anwendung reichen PostgreSQL und `platform-api`.
+
+Für die Webapp einer eigenen Instanz:
+
+- `STONEINTELLIGENCE_WEBAPP_URL` der API auf die Adresse der Webapp setzen (CORS, Einladungslinks).
+- In `webapp/.env` die `VITE_*`-Werte vor dem Build auf die eigene API und den eigenen OIDC-Client
+  setzen. Die Einrichtungsseite gibt genau diese Werte an das Plugin weiter.
+- Der OIDC-Client (öffentlich, PKCE) wird von Webapp und Plugin gemeinsam genutzt und braucht die
+  Redirect-URIs `<webapp>/callback`, `http://127.0.0.1:42813/callback` (Obsidian Desktop) und
+  `obsidian://stoneintelligence-auth` (Obsidian Mobile).
 
 ## Was wo liegt
 
