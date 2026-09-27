@@ -233,6 +233,65 @@ public abstract class NoteRepositoryContractTest {
     }
 
     @Nested
+    class Search {
+
+        private static final java.util.Set<NoteKind> ALL = java.util.Set.of(NoteKind.NOTE, NoteKind.FILE);
+
+        private java.util.List<String> paths(java.util.List<Note> notes) {
+            return notes.stream().map(Note::path).toList();
+        }
+
+        @Test
+        void should_findEntriesWhosePathContainsTheQuery_ignoringCase() {
+            var repository = repository();
+            var vaultId = newVault();
+            repository.create(vaultId, "Studium/Analysis/Grenzwerte.md", NoteLevel.of(1), "tom");
+            repository.create(vaultId, "Projekte/grenzfall.md", NoteLevel.of(1), "tom");
+            repository.create(vaultId, "Inbox.md", NoteLevel.of(1), "tom");
+
+            assertThat(paths(repository.search(vaultId, "GRENZ", ALL, 10)))
+                .containsExactlyInAnyOrder("Studium/Analysis/Grenzwerte.md", "Projekte/grenzfall.md");
+            assertThat(paths(repository.search(vaultId, "analysis/", ALL, 10))).containsExactly("Studium/Analysis/Grenzwerte.md");
+        }
+
+        @Test
+        void should_treatWildcardCharactersLiterally() {
+            var repository = repository();
+            var vaultId = newVault();
+            repository.create(vaultId, "a_b.md", NoteLevel.of(1), "tom");
+            repository.create(vaultId, "axb.md", NoteLevel.of(1), "tom");
+            repository.create(vaultId, "100%.md", NoteLevel.of(1), "tom");
+
+            assertThat(paths(repository.search(vaultId, "_", ALL, 10))).containsExactly("a_b.md");
+            assertThat(paths(repository.search(vaultId, "%", ALL, 10))).containsExactly("100%.md");
+        }
+
+        @Test
+        void should_returnAtMostTheLimit_sortedByPath() {
+            var repository = repository();
+            var vaultId = newVault();
+            for (var name : java.util.List.of("d.md", "b.md", "e.md", "a.md", "c.md")) {
+                repository.create(vaultId, "notes/" + name, NoteLevel.of(1), "tom");
+            }
+
+            assertThat(paths(repository.search(vaultId, "notes", ALL, 3))).containsExactly("notes/a.md", "notes/b.md", "notes/c.md");
+        }
+
+        @Test
+        void should_searchOnlyTheOwnVault_andOnlyTheRequestedKinds() {
+            var repository = repository();
+            var vaultId = newVault();
+            var otherVaultId = newVault();
+            repository.create(vaultId, "Skript.md", NoteLevel.of(1), "tom");
+            repository.create(vaultId, "Skript.pdf", NoteLevel.of(1), "tom", NoteKind.FILE);
+            repository.create(otherVaultId, "Skript fremd.md", NoteLevel.of(1), "someone-else");
+
+            assertThat(paths(repository.search(vaultId, "skript", java.util.Set.of(NoteKind.NOTE), 10))).containsExactly("Skript.md");
+            assertThat(paths(repository.search(vaultId, "skript", ALL, 10))).containsExactlyInAnyOrder("Skript.md", "Skript.pdf");
+        }
+    }
+
+    @Nested
     class Delete {
 
         @Test

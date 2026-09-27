@@ -101,6 +101,10 @@ export async function mockWorkspace(page: Page) {
       }
       return json({ revision, updates: revision ? [Buffer.from(Y.encodeStateAsUpdate(currentDoc)).toString("base64")] : [] });
     }
+    if (path.endsWith("/notes/search")) {
+      const q = (new URL(request.url()).searchParams.get("q") ?? "").toLocaleLowerCase();
+      return json({ notes: notes.filter(n => n.path.toLocaleLowerCase().includes(q)), truncated: false });
+    }
     if (path.endsWith("/notes")) {
       if (request.method() === "POST") { const note = { ...notes[0]!, id: "b0000000-0000-4000-8000-000000000002", path: request.postDataJSON().path }; notes.push(note); documents.set(note.id, new Y.Doc()); revisions.set(note.id, 0); return json(note); }
       return json({ epochId: "test-epoch", complete: true, nextCursor: null, notes });

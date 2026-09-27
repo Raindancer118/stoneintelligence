@@ -83,6 +83,18 @@ public final class FakeNoteRepository implements NoteRepository {
     }
 
     @Override
+    public synchronized java.util.List<Note> search(VaultId vaultId, String query, java.util.Set<NoteKind> kinds, int limit) {
+        var needle = query.toLowerCase(java.util.Locale.ROOT);
+        return notes.values().stream()
+            .filter(note -> note.vaultId().equals(vaultId))
+            .filter(note -> kinds.contains(note.kind()))
+            .filter(note -> note.path().toLowerCase(java.util.Locale.ROOT).contains(needle))
+            .sorted(Comparator.comparing((Note note) -> note.path().toLowerCase(java.util.Locale.ROOT)).thenComparing(Note::path))
+            .limit(limit)
+            .toList();
+    }
+
+    @Override
     public synchronized Tombstone delete(VaultId vaultId, NoteId noteId, String operationId, String deletedBy) {
         var key = vaultId.value() + "|" + noteId.value() + "|" + operationId;
         var existing = tombstonesByOperationKey.get(key);
