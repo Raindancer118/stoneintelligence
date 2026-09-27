@@ -25,7 +25,8 @@ describe("vault detail loading", () => {
     { placeholder: "Rollenname", button: "Rolle anlegen", refresh: "listRoles" },
   ] as const)("reloads only $refresh after $button", async ({ placeholder, button, refresh }) => {
     render(VaultDetail, { vault: { id: "vault", name: "Notes", createdAt: "" }, me: "tom" });
-    await screen.findByLabelText("Name der Gruppe Team");
+    await screen.findByText("tom (du)");
+    await fireEvent.click(screen.getByRole("button", { name: refresh === "listGroups" ? "Gruppen" : "Rollen", exact: true }));
     await fireEvent.input(screen.getByPlaceholderText(placeholder), { target: { value: "New team" } });
     if (refresh === "listRoles") await fireEvent.click(screen.getByRole("checkbox", { name: "READ" }));
     await fireEvent.click(screen.getByRole("button", { name: button }));
@@ -57,6 +58,7 @@ describe("vault members and management", () => {
     vi.mocked(api.deleteGroup).mockRejectedValue(new ApiError(409));
     render(VaultDetail, { vault, me: "tom" });
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Gruppen", exact: true }));
     await fireEvent.click(await screen.findByRole("button", { name: "Gruppe löschen" }));
 
     expect(await screen.findByText(/niemand mehr den Vault verwalten/)).toBeTruthy();
@@ -66,6 +68,7 @@ describe("vault members and management", () => {
       occurredAt: "2026-09-26T10:00:00Z", noteId: null, path: null, paths: [] }]);
     render(VaultDetail, { vault, me: "tom" });
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Protokoll", exact: true }));
     await fireEvent.click(await screen.findByRole("button", { name: "Letzte Ereignisse anzeigen" }));
 
     expect(await screen.findByText("tom hat ben aus dem Vault genommen")).toBeTruthy();

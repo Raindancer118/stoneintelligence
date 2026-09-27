@@ -17,10 +17,12 @@
   function explain(e: unknown) { return e instanceof ApiError && e.status !== 422 ? explainAccessError(e.status) : (e as Error).message; }
   function when(iso: string) { return new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" }); }
 
-  onMount(async () => {
+  async function load() {
+    error = "";
     try { settings = await api.linkingSettings(vault.id); max = settings.maxLinksPerNote === null ? "" : String(settings.maxLinksPerNote); }
     catch (e) { error = explain(e); }
-  });
+  }
+  onMount(() => { void load(); });
 
   async function save(change: Partial<LinkingSettings>) {
     if (!settings || busy) return;
@@ -42,8 +44,8 @@
   }
 
   function saveMax() {
-    const parsed = max.trim() === "" ? null : Number.parseInt(max, 10);
-    if (parsed !== null && (!Number.isFinite(parsed) || parsed < 1)) { error = "Bitte eine Zahl ab 1 eintragen oder das Feld leer lassen."; return; }
+    const parsed = max.trim() === "" ? null : Number(max);
+    if (parsed !== null && (!Number.isSafeInteger(parsed) || parsed < 1)) { error = "Bitte eine Zahl ab 1 eintragen oder das Feld leer lassen."; return; }
     void save({ maxLinksPerNote: parsed });
   }
 
@@ -84,13 +86,4 @@
     {#if message}<p class="feedback" role="status">{message}</p>{/if}
   </section>
 {/if}
-{#if error}<p class="feedback error" role="alert">{error}</p>{/if}
-
-<style>
-  .mode { display: flex; flex-direction: column; gap: .3rem; font-size: .82rem; font-weight: 500; margin: .6rem 0; max-width: 24rem; }
-  .linking .toggle { display: flex; align-items: center; gap: .5rem; margin: .5rem 0; }
-  .linking .toggle input { min-height: auto; }
-  .max { display: flex; flex-wrap: wrap; align-items: end; gap: .6rem; margin: .8rem 0; } .max label { width: 100%; font-size: .82rem; font-weight: 500; } .max input { width: 8rem; }
-  .run { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-top: .8rem; }
-  .feedback { margin: .8rem 0 0; font-size: .88rem; } .error { color: var(--rust); }
-</style>
+{#if error}<div class="feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={load}>Erneut versuchen</button></div>{/if}

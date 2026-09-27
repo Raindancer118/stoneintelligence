@@ -27,6 +27,7 @@ export interface Note {
   /** Dateien (PDFs, Bilder, Anhänge) stehen mit in der Liste; fehlt bei älteren Servern. */
   kind?: "NOTE" | "FILE"; sha256?: string | null; size?: number | null; revision?: number;
 }
+export interface NoteSearch { notes: Note[]; truncated: boolean }
 export interface NotePage { epochId: string; complete: boolean; nextCursor: string | null; notes: Note[]; }
 export interface NoteContent { revision: number; updates: string[]; }
 export interface PersonSuggestion { username: string; name: string; maskedEmail: string; alreadyMember: boolean; }
@@ -142,7 +143,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   permissions: (vaultId: string) => request<string[]>(`/api/v1/vaults/${vaultId}/permissions`),
   listNotes: (vaultId: string, cursor?: string) => request<NotePage>(
-    `/api/v1/vaults/${vaultId}/notes?${new URLSearchParams({ pageSize: "100", kinds: "note,file", ...(cursor ? { cursor } : {}) })}`),
+    `/api/v1/vaults/${vaultId}/notes?${new URLSearchParams({ pageSize: "500", kinds: "note,file", ...(cursor ? { cursor } : {}) })}`),
+  /** Titel-/Pfadsuche auf dem Server; {@code truncated}: es gibt mehr Treffer als angezeigt. */
+  searchNotes: (vaultId: string, q: string, limit = 50) => request<NoteSearch>(
+    `/api/v1/vaults/${vaultId}/notes/search?${new URLSearchParams({ q, limit: String(limit), kinds: "note,file" })}`),
   /** Inhalt einer Datei - mit Anmeldung geladen, angezeigt über eine Blob-URL (die API liefert immer als Anhang). */
   fileBlob: async (vaultId: string, fileId: string) => {
     const response = await fetch(`${baseUrl}/api/v1/vaults/${vaultId}/files/${fileId}/content`, {

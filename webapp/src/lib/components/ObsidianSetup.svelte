@@ -85,22 +85,3 @@
     </div>
   </section>
 </article>
-
-<style>
-  .setup { max-width: 46rem; }
-  .eyebrow { color: var(--forest); font-weight: 700; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; margin: 0; }
-  h1 { font-size: clamp(2.1rem, 5vw, 3rem); letter-spacing: -.035em; line-height: 1.1; margin: .4rem 0 0; }
-  .scoped-title { font-size: 1.4rem; margin: 0 0 1rem; }
-  .quick { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.25rem 1.5rem; background: var(--surface); border-radius: var(--radius); box-shadow: 0 1px 3px rgb(33 31 26 / 8%), 0 4px 14px rgb(33 31 26 / 6%); }
-  .quick p { margin: 0; color: var(--ink-dim); } .quick .quick-title { color: var(--ink); font-weight: 700; margin-bottom: .2rem; }
-  .lead { color: var(--ink-dim); max-width: 58ch; margin: 1.25rem 0 2.5rem; }
-  .steps { list-style: none; counter-reset: step; padding: 0; margin: 0; border-top: 1px solid var(--line); }
-  .steps li { counter-increment: step; position: relative; padding: 1.5rem 0 1.5rem 3.25rem; border-bottom: 1px solid var(--line); }
-  .steps li::before { content: counter(step); position: absolute; left: 0; top: 1.45rem; width: 2rem; height: 2rem; display: grid; place-items: center; border: 1px solid var(--forest); color: var(--forest); border-radius: var(--radius); font-weight: 700; font-size: .9rem; }
-  .steps h2, .notes h2 { font-size: 1.05rem; margin: 0 0 .35rem; }
-  .steps p { color: var(--ink-dim); margin: 0 0 .9rem; max-width: 60ch; }
-  .action { display: inline-flex; align-items: center; min-height: 48px; padding: 0 1rem; text-decoration: none; }
-  .connect { display: flex; flex-wrap: wrap; gap: .6rem; }
-  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 2rem; margin-top: 2.5rem; }
-  .notes p { color: var(--ink-dim); margin: 0; }
-</style>

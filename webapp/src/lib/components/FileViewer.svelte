@@ -16,6 +16,8 @@
   const size = $derived(note.size ?? 0);
 
   let url = $state<string | null>(null);
+  let textPreview = $state<string | null>(null);
+  const isText = $derived(/\.(txt|md|markdown|csv|json|log|yaml|yml)$/i.test(note.path));
   let loading = $state(false);
   let error = $state("");
   let busy = $state(false);
@@ -30,6 +32,7 @@
     try {
       const blob = await api.fileBlob(note.vaultId, note.id);
       if (!alive) return;
+      if (isText) textPreview = await blob.text();
       if (url) URL.revokeObjectURL(url);
       url = URL.createObjectURL(blob);
     } catch (e) {
@@ -79,14 +82,16 @@
 
   <div class="preview">
     {#if note.revision === 0}
-      <div class="empty"><h3>Noch kein Inhalt</h3><p>Das Gerät, das die Datei angelegt hat, lädt sie gerade hoch.</p></div>
+      <div class="empty"><h3>Noch kein Inhalt</h3><p>Das Gerät, das die Datei angelegt hat, lädt sie gerade hoch. Aktualisiere anschließend die Notizliste.</p></div>
     {:else if !url && !loading && size > AUTO_LOAD_BYTES}
       <div class="empty"><h3>Große Datei</h3><p>Sie wird erst geladen, wenn du sie ansehen oder herunterladen möchtest.</p>
         <button class="primary" onclick={load}>Datei laden ({formatSize(size)})</button></div>
     {:else if loading}
       <p class="loading" role="status">Datei wird geladen…</p>
     {:else if url}
-      {#if kind === "image"}
+      {#if isText && textPreview !== null}
+        <pre aria-label="Textvorschau">{textPreview}</pre>
+      {:else if kind === "image"}
         <img src={url} alt={name} />
       {:else if kind === "pdf"}
         <iframe src={url} title={name}></iframe>
@@ -111,21 +116,3 @@
     </details>
   {/if}
 </article>
-
-<style>
-  .document { min-width: 0; background: var(--surface-raised); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .document-heading { padding: 1.5rem 1.75rem 1rem; display: flex; gap: 1rem; align-items: start; justify-content: space-between; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
-  .title-block { min-width: 0; } h2 { font-size: clamp(1.35rem, 2.4vw, 2rem); overflow-wrap: anywhere; margin: .2rem 0 0; }
-  .path, .meta { font-size: .8rem; color: var(--ink-dim); overflow-wrap: anywhere; margin: 0; } .meta { margin-top: .35rem; }
-  .action { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; }
-  .preview { padding: 1.5rem 1.75rem; display: grid; place-items: center; min-height: 12rem; }
-  .preview img { max-width: 100%; max-height: 70vh; object-fit: contain; border-radius: 4px; }
-  .preview iframe { width: 100%; height: 75vh; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
-  .preview video { max-width: 100%; max-height: 70vh; } .preview audio { width: 100%; max-width: 32rem; }
-  .empty { text-align: center; max-width: 36ch; color: var(--ink-dim); } .empty h3 { color: var(--ink); margin: 0 0 .4rem; } .empty .primary { margin-top: .75rem; min-height: 44px; }
-  .loading { color: var(--ink-dim); }
-  .feedback { margin: 1rem 1.75rem 0; }
-  .details { border-top: 1px solid var(--line); padding: 1rem 1.75rem; } .details summary { cursor: pointer; font-weight: 500; }
-  .detail-actions { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .75rem; }
-  .rename-form { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: 1rem; } .rename-form input { flex: 1; min-width: 10rem; }
-</style>
