@@ -52,8 +52,10 @@ Leise und kurz: Bewegung zeigt, wohin etwas geht, sie soll nicht auffallen. Alle
 (Abschnitte „Bewegung"), Bereichs-, Notiz-, Reiter- und Lesen/Bearbeiten-Wechsel zusätzlich über
 View Transitions aus `src/lib/motion.ts` (Typen `area`, `note`, `tab`). Keine Animationsbibliothek.
 
-- Tokens: `--ease-out`, `--ease-in-out`; Dauern 140/260/520ms; Wege höchstens 4–8px.
-  Keine Federkurven.
+- Tokens: `--ease-out`, `--ease-in-out`, `--ease-spring` (Federkurve als `linear()`); Dauern
+  140/260/520ms; Wege in der App höchstens 4–8px.
+- Federn (Tom mag sie): Markierung des aktiven Bereichs und Reiters, Pfeile, Akzentleisten,
+  Schnellsprung-Dialog, Checkboxen, Blätter der Anmeldeseite.
 - Bereichswechsel: Inhalt blendet mit kurzem Weg von unten ein, die Markierung des aktiven
   Bereichs wandert. Notizwechsel: nur das Dokument, seitlich. Reiter: Überblenden.
 - App-Auftritt: Leiste und Kopfzeile blenden ein, Bereiche leicht gestaffelt; aktiver Bereich mit
@@ -61,9 +63,10 @@ View Transitions aus `src/lib/motion.ts` (Typen `area`, `note`, `tab`). Keine An
 - Ordnerbaum: kurzer gestaffelter Aufbau, Pfeil dreht, Akzentleiste bei Überfahren/Auswahl.
 - Notizinhalt: Blöcke kurz nacheinander, in langen Notizen spätere Blöcke beim Scrollen (`view()`).
 - Karten in Verwaltung/KI: leicht gestaffelt, heben sich beim Überfahren um 1px.
-- Schnellsprung: Hintergrund mit Unschärfe, Dialog blendet ein. Kopfzeile sticky mit Scroll-Kante.
-- Anmeldeseite: Überschrift steigt auf, Blätter schweben herein und treiben langsam. Laden: Logo
-  atmet; selten ein dezenter Lichtreflex auf dem Logo.
+- Schnellsprung: Hintergrund mit Unschärfe, Dialog federt herein. Kopfzeile sticky mit Scroll-Kante.
+- Anmeldeseite bewusst kräftiger: Überschrift steigt auf, Blätter federn aus 40px/−8° herein,
+  treiben langsam, Linien zeichnen sich. Laden: Logo atmet; selten ein dezenter Lichtreflex.
+- Laufende KI-Jobs pulsieren deutlich (1,6s, bis 55 % Deckkraft).
 - **Bewusst nicht:** Lichtfleck am Zeiger, Glanz über Knöpfe, Bewegung an Navigationssymbolen
   (von Tom nach Probe am 27.09.2026 abgelehnt).
 - `prefers-reduced-motion`: alle Animationen, Übergänge und View Transitions aus; `motion.ts`

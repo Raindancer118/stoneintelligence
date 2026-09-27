@@ -2414,6 +2414,8 @@ kbd {
 :root {
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Leichtes Nachfedern, als linear()-Kurve statt JS-Physik. */
+  --ease-spring: linear(0, 0.22 7%, 0.7 18%, 1.03 30%, 1.08 37%, 1.04 47%, 0.99 60%, 1);
   --dur-fast: 140ms;
   --dur: 260ms;
   --dur-slow: 520ms;
@@ -2456,7 +2458,7 @@ kbd {
   opacity: 0;
 }
 .nav-collapse svg {
-  transition: rotate var(--dur) var(--ease-out);
+  transition: rotate var(--dur) var(--ease-spring);
 }
 .nav-collapsed .nav-collapse svg {
   rotate: 180deg;
@@ -2495,7 +2497,7 @@ button:not(:disabled):active {
 }
 ::view-transition-group(active-area) {
   animation-duration: var(--dur);
-  animation-timing-function: var(--ease-out);
+  animation-timing-function: var(--ease-spring);
 }
 ::view-transition-group(workspace),
 ::view-transition-group(note-view) {
@@ -2540,7 +2542,7 @@ html:active-view-transition-type(note) {
 /* Ordnerbaum: Pfeil dreht sich, neue Einträge blenden ein. */
 .folder-toggle .chevron {
   display: inline-block;
-  transition: rotate var(--dur) var(--ease-out);
+  transition: rotate var(--dur) var(--ease-spring);
 }
 .folder-toggle[aria-expanded="true"] .chevron {
   rotate: 90deg;
@@ -2571,12 +2573,12 @@ html:active-view-transition-type(note) {
 .jump-dialog {
   transition:
     opacity var(--dur) ease,
-    scale var(--dur) var(--ease-out),
-    translate var(--dur) var(--ease-out);
+    scale var(--dur-slow) var(--ease-spring),
+    translate var(--dur-slow) var(--ease-spring);
   @starting-style {
     opacity: 0;
-    scale: 0.98;
-    translate: 0 -6px;
+    scale: 0.94;
+    translate: 0 -14px;
   }
 }
 .jump-result {
@@ -2637,13 +2639,13 @@ html:active-view-transition-type(note) {
 }
 .paper {
   animation:
-    paper-in 700ms var(--ease-out) 200ms both,
-    drift 10s var(--ease-in-out) 1.2s infinite;
+    paper-in 900ms var(--ease-spring) 200ms both,
+    drift 9s var(--ease-in-out) 1.2s infinite;
 }
 .paper-back {
   animation:
-    paper-in 700ms var(--ease-out) 60ms both,
-    drift 12s var(--ease-in-out) 1.2s infinite reverse;
+    paper-in 900ms var(--ease-spring) 60ms both,
+    drift 11s var(--ease-in-out) 1.2s infinite reverse;
 }
 .paper i {
   transform-origin: left;
@@ -2654,21 +2656,21 @@ html:active-view-transition-type(note) {
 .paper i:nth-of-type(3) { animation-delay: 940ms; }
 /* Überfahren nutzt scale, weil translate schon vom Schweben belegt ist. */
 .gate-illustration:hover .paper {
-  scale: 1.015;
+  scale: 1.03;
 }
 .gate-illustration .paper {
-  transition: scale var(--dur-slow) var(--ease-out);
+  transition: scale var(--dur-slow) var(--ease-spring);
 }
 @keyframes paper-in {
   from {
     opacity: 0;
-    translate: 0 16px;
-    rotate: -3deg;
+    translate: 0 40px;
+    rotate: -8deg;
   }
 }
 @keyframes drift {
   50% {
-    translate: 0 -3px;
+    translate: 0 -5px;
   }
 }
 @keyframes draw {
@@ -2727,7 +2729,7 @@ html:active-view-transition-type(note) {
   border-radius: 0 2px 2px 0;
   background: #aab6c6;
   scale: 1 0;
-  transition: scale var(--dur) var(--ease-out);
+  transition: scale var(--dur) var(--ease-spring);
 }
 .area-nav button.active::before {
   scale: 1 1;
@@ -2775,7 +2777,7 @@ html:active-view-transition-type(note) {
   width: 2px;
   background: var(--slate);
   scale: 1 0;
-  transition: scale var(--dur) var(--ease-out);
+  transition: scale var(--dur) var(--ease-spring);
 }
 .note-row:hover::before,
 .note-row.active::before {
@@ -2823,7 +2825,7 @@ html:active-view-transition-type(note) {
 }
 ::view-transition-group(admin-tab) {
   animation-duration: var(--dur);
-  animation-timing-function: var(--ease-out);
+  animation-timing-function: var(--ease-spring);
 }
 html:active-view-transition-type(tab) {
   &::view-transition-old(workspace) {
@@ -2839,13 +2841,13 @@ html:active-view-transition-type(tab) {
 
 /* Laufende KI-Jobs atmen leicht, gesetzte Checkboxen bestätigen kurz. */
 .status-running {
-  animation: pulse-soft 2.4s var(--ease-in-out) infinite;
+  animation: pulse-soft 1.6s var(--ease-in-out) infinite;
 }
 @keyframes pulse-soft {
-  50% { opacity: 0.72; }
+  50% { opacity: 0.55; }
 }
 input[type="checkbox"]:checked {
-  animation: pop 220ms var(--ease-out);
+  animation: pop 320ms var(--ease-spring);
 }
 @keyframes pop {
   50% { scale: 1.1; }
