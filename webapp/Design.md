@@ -48,19 +48,24 @@ Anfrage. Inhalte werden nie für eine Suche geladen.
 
 ## Bewegung
 
-Alles in `app.css` (Abschnitt „Bewegung"), Bereichs-/Notizwechsel zusätzlich über View Transitions
-aus `src/lib/motion.ts` (Typen `area` und `note`). Keine Animationsbibliothek.
+Leise und kurz: Bewegung zeigt, wohin etwas geht, sie soll nicht auffallen. Alles in `app.css`
+(Abschnitte „Bewegung"), Bereichs-, Notiz-, Reiter- und Lesen/Bearbeiten-Wechsel zusätzlich über
+View Transitions aus `src/lib/motion.ts` (Typen `area`, `note`, `tab`). Keine Animationsbibliothek.
 
-- Tokens: `--ease-out`, `--ease-in-out`, `--ease-spring` (Federkurve als `linear()`), Dauern
-  140/260/520ms.
-- Bereichswechsel: Inhalt gleitet von unten ein, die Markierung des aktiven Bereichs wandert
-  (`view-transition-name: active-area`). Notizwechsel: nur das Dokument gleitet seitlich.
-- Navigation einklappen: Spaltenbreite gleitet, Beschriftungen blenden (`allow-discrete`).
-- Ordnerbaum: Pfeil dreht, Einträge blenden über `@starting-style` ein.
-- Schnellsprung: Hintergrund mit Unschärfe, Dialog federt, Treffer gestaffelt.
-- Kopfzeile sticky, Kante/Unschärfe per Scroll-Timeline. Knöpfe heben sich, geben beim Drücken nach.
-- Anmeldeseite: Überschrift steigt auf, Blätter schweben herein und treiben langsam, Linien
-  zeichnen sich. Laden: Logo atmet.
+- Tokens: `--ease-out`, `--ease-in-out`; Dauern 140/260/520ms; Wege höchstens 4–8px.
+  Keine Federkurven.
+- Bereichswechsel: Inhalt blendet mit kurzem Weg von unten ein, die Markierung des aktiven
+  Bereichs wandert. Notizwechsel: nur das Dokument, seitlich. Reiter: Überblenden.
+- App-Auftritt: Leiste und Kopfzeile blenden ein, Bereiche leicht gestaffelt; aktiver Bereich mit
+  schmaler Leiste links; Bereichstitel wird enthüllt.
+- Ordnerbaum: kurzer gestaffelter Aufbau, Pfeil dreht, Akzentleiste bei Überfahren/Auswahl.
+- Notizinhalt: Blöcke kurz nacheinander, in langen Notizen spätere Blöcke beim Scrollen (`view()`).
+- Karten in Verwaltung/KI: leicht gestaffelt, heben sich beim Überfahren um 1px.
+- Schnellsprung: Hintergrund mit Unschärfe, Dialog blendet ein. Kopfzeile sticky mit Scroll-Kante.
+- Anmeldeseite: Überschrift steigt auf, Blätter schweben herein und treiben langsam. Laden: Logo
+  atmet; selten ein dezenter Lichtreflex auf dem Logo.
+- **Bewusst nicht:** Lichtfleck am Zeiger, Glanz über Knöpfe, Bewegung an Navigationssymbolen
+  (von Tom nach Probe am 27.09.2026 abgelehnt).
 - `prefers-reduced-motion`: alle Animationen, Übergänge und View Transitions aus; `motion.ts`
   startet dann gar keine Transition.
 

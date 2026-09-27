@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { withTransition } from "../motion";
   import { onMount } from "svelte";
   import { api, ApiError, type Note, type NoteContent, type NoteHistory } from "../api";
   import { activityLines, describeEvent } from "../historyText";
@@ -109,8 +110,8 @@
   </header>
   <div class="document-toolbar">
     <div class="modes" aria-label="Ansicht">
-      <button class:chosen={mode === "read"} aria-pressed={mode === "read"} onclick={() => mode = "read"}>Lesen</button>
-      {#if writable}<button class:chosen={mode === "edit"} aria-pressed={mode === "edit"} disabled={!content || loading || saving} onclick={() => mode = "edit"}>Bearbeiten</button>{/if}
+      <button class:chosen={mode === "read"} aria-pressed={mode === "read"} onclick={() => void withTransition(() => mode = "read", "note")}>Lesen</button>
+      {#if writable}<button class:chosen={mode === "edit"} aria-pressed={mode === "edit"} disabled={!content || loading || saving} onclick={() => void withTransition(() => mode = "edit", "note")}>Bearbeiten</button>{/if}
     </div>
     <div class="actions">
       <button class="quiet" disabled={!content || loading} onclick={() => downloadNote(note.path, draft)}>Markdown exportieren</button>

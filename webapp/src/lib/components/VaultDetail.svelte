@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { withTransition } from "../motion";
   import { onMount } from "svelte";
   import { api, ApiError, type Group, type Role, type Vault, type VaultMember } from "../api";
   import { explainAccessError, permissionsLabel } from "../accessPlan";
@@ -179,7 +180,7 @@
 </script>
 
 <header class="admin-intro"><h2>Mitglieder & Rechte</h2><p>Ein guter Ort für Zusammenarbeit beginnt mit den richtigen Zugängen.</p></header>
-<nav class="admin-tabs" aria-label="Verwaltungsbereiche">{#each adminPages as item}<button class:active={page === item.id} aria-pressed={page === item.id} onclick={() => page = item.id}>{item.label}</button>{/each}</nav>
+<nav class="admin-tabs" aria-label="Verwaltungsbereiche">{#each adminPages as item}<button class:active={page === item.id} aria-pressed={page === item.id} onclick={() => void withTransition(() => page = item.id, "tab")}>{item.label}</button>{/each}</nav>
 {#if loading}<p role="status">Verwaltung wird geladen…</p>{/if}
 
 {#if error}

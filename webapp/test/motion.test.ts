@@ -41,3 +41,4 @@ describe("view transitions", () => {
     expect(update).toHaveBeenCalledOnce();
   });
 });
+
