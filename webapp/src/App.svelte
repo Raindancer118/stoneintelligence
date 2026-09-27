@@ -11,6 +11,7 @@
   import Icon from "./lib/components/Icon.svelte";
   import QuickJump from "./lib/components/QuickJump.svelte";
   import { connectionConfigJson } from "./lib/connectionConfig";
+  import { withTransition } from "./lib/motion";
   let collapsed = $state(false);
   let mobileOpen = $state(false);
   let jumping = $state(false);
@@ -88,9 +89,9 @@
   function mayLeave() { return !dirty || window.confirm("Ungespeicherte Änderungen verwerfen? Speichere oder exportiere deinen Entwurf, wenn du ihn behalten möchtest."); }
   function choose(vault: Vault) {
     if (selected?.id === vault.id || !mayLeave()) return;
-    selected = vault; jumpNote = null; mobileOpen = false; section = "notes"; dirty = false; canManage = false;
+    void withTransition(() => { selected = vault; jumpNote = null; mobileOpen = false; section = "notes"; dirty = false; canManage = false; }, "area");
   }
-  function navigate(next: "notes" | "manage" | "obsidian" | "ai") { if ((next !== section || setupPage) && mayLeave()) { section = next; setupPage = false; dirty = false; jumpNote = null; } mobileOpen = false; jumping = false; }
+  function navigate(next: "notes" | "manage" | "obsidian" | "ai") { if ((next !== section || setupPage) && mayLeave()) void withTransition(() => { section = next; setupPage = false; dirty = false; jumpNote = null; }, "area"); mobileOpen = false; jumping = false; }
   async function refreshVaults(created?: Vault) {
     const loaded = await api.listVaults();
     if (!alive) return;

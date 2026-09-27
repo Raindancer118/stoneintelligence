@@ -7,6 +7,7 @@
   import { fileKindLabel } from "../fileKinds";
   import SharePanel from "./SharePanel.svelte";
   import Icon from "./Icon.svelte";
+  import { withTransition } from "../motion";
   let { vault, onDirtyChange, onPermissions = () => {}, requestedNote = null }: { vault: Vault; onDirtyChange: (dirty: boolean) => void; onPermissions?: (permissions: string[]) => void; requestedNote?: Note | null } = $props();
   let closedFolders = $state<string[]>([]);
   let lastRequest: Note | null = null;
@@ -60,7 +61,7 @@
 
   function setDirty(value: boolean) { dirty = value; onDirtyChange(value || creating); }
   function mayLeave() { return !dirty || window.confirm("Ungespeicherte Änderungen verwerfen? Du kannst die Notiz vorher speichern oder als Markdown exportieren."); }
-  function select(note: Note | null) { if (selected?.id === note?.id || !mayLeave()) return; selected = note; sharing = null; similar = null; setDirty(false); }
+  function select(note: Note | null) { if (selected?.id === note?.id || !mayLeave()) return; void withTransition(() => { selected = note; sharing = null; similar = null; setDirty(false); }, "note"); }
   async function showSimilar() {
     if (!selected || similarLoading) return;
     if (similar) { similar = null; return; }
@@ -145,7 +146,7 @@
 {#snippet tree(prefix: string, depth: number)}
   {#each childFolders(prefix) as path (path)}
     <div class="folder-branch">
-      <button class="folder-toggle" style={`--depth:${depth}`} aria-label={`Ordner ${path}`} aria-expanded={!closedFolders.includes(path) || !!search} onclick={() => toggleFolder(path)}><span aria-hidden="true">{closedFolders.includes(path) && !search ? "›" : "⌄"}</span><Icon name="folder" size={17} /><span>{path.split("/").pop()}</span><small>{index.counts.get(path) ?? 0}</small></button>
+      <button class="folder-toggle" style={`--depth:${depth}`} aria-label={`Ordner ${path}`} aria-expanded={!closedFolders.includes(path) || !!search} onclick={() => toggleFolder(path)}><span class="chevron" aria-hidden="true">›</span><Icon name="folder" size={17} /><span>{path.split("/").pop()}</span><small>{index.counts.get(path) ?? 0}</small></button>
       {#if !closedFolders.includes(path) || search}{@render tree(path + "/", depth + 1)}{/if}
     </div>
   {/each}
