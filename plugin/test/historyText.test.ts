@@ -10,6 +10,7 @@ describe("historyText", () => {
   it("should_tellNotesAndFilesInPlainWords", () => {
     expect(describeEvent(event("note.created", { path: "Team/plan.md" }))).toBe("tom hat „plan“ angelegt");
     expect(describeEvent(event("note.content-updated"))).toBe("tom hat „plan“ bearbeitet");
+    expect(describeEvent(event("note.version-restored", { restoredRevision: 3 }))).toBe("tom hat eine frühere Version von „plan“ wiederhergestellt");
     expect(describeEvent(event("note.renamed", { from: "Team/plan.md", to: "Team/Plan 2.md" }))).toBe("tom hat „plan“ in „Plan 2“ umbenannt");
     expect(describeEvent(event("note.renamed", { from: "Team/plan.md", to: "Archiv/plan.md" }))).toBe("tom hat „plan“ nach „Archiv“ verschoben");
     expect(describeEvent(event("note.deleted"))).toBe("tom hat „plan“ gelöscht");

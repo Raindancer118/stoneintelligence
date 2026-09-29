@@ -29,6 +29,7 @@ export interface VaultGroup { id: string; name: string; memberSubjects: string[]
 export interface VaultRole { id: string; name: string; permissions: Permission[]; }
 export type { HistoryEvent, NoteActivity, NoteHistory } from "./historyText";
 import type { HistoryEvent, NoteHistory } from "./historyText";
+import type { Restored, VersionList, VersionText } from "./versionText";
 export interface AiService { id: string; name: string; levels: number[]; }
 export type AiJobStatus = "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
 export interface AiJob {
@@ -466,6 +467,21 @@ export class NoteApiClient {
   /** Neueste zuerst; `path` = Ordner, `""` = der ganze Vault. */
   async vaultLog(vaultId: string, path: string, limit = 100): Promise<HistoryEvent[]> {
     return this.json<HistoryEvent[]>(`/api/v1/vaults/${vaultId}/audit?${new URLSearchParams({ path, limit: String(limit) })}`, "failed to load log");
+  }
+
+  /** Neueste Version zuerst. */
+  async noteVersions(vaultId: string, noteId: string, limit = 100): Promise<VersionList> {
+    return this.json<VersionList>(`/api/v1/vaults/${vaultId}/notes/${noteId}/versions?limit=${limit}`, "failed to load versions");
+  }
+
+  /** Text der Version und der aktuelle Text daneben - fuer den Vergleich. */
+  async noteVersion(vaultId: string, noteId: string, revision: number): Promise<VersionText> {
+    return this.json<VersionText>(`/api/v1/vaults/${vaultId}/notes/${noteId}/versions/${revision}`, "failed to load version");
+  }
+
+  /** Setzt den Text als neue Aenderung auf die Version zurueck; der Verlauf dazwischen bleibt. */
+  async restoreVersion(vaultId: string, noteId: string, revision: number): Promise<Restored> {
+    return this.json<Restored>(`/api/v1/vaults/${vaultId}/notes/${noteId}/versions/${revision}/restore`, "failed to restore version", {});
   }
 
   async aiServices(): Promise<AiService[]> {
