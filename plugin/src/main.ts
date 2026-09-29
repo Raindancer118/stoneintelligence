@@ -224,6 +224,9 @@ export default class StoneIntelligencePlugin extends Plugin {
   /** Server ohne Feed: weiter bei jedem Durchlauf die volle Liste. */
   private feedUnsupported = false;
   private readonly dedupeServerRefresh = dedupeInFlight<void>();
+  private areaChangeRunning = false;
+  /** Waehrend eines Bereichswechsels ruhen die Abgleiche; angefragte laufen danach (scopeChanged). */
+  private passesPaused = false;
   /** Datei-Synchronisation (ADR 0009): Grenzen des Servers; `null` = Server kennt keine Dateien. */
   private fileLimits: FileLimits | null | undefined;
   private fileLimitsAt = 0;
@@ -303,8 +306,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       openInvite: () => this.openInvite(),
       selectiveSync: () => this.settings.vaultId ? this.vaultState().vaultSelectiveSync ?? false : false,
       selectiveSyncChanged: (enabled) => {
-        this.vaultState().vaultSelectiveSync = enabled;
-        this.scopeChanged();
+        void this.applyAreas((state) => ({ ...state, vaultSelectiveSync: enabled }));
       },
       vaultRenamed: (name) => {
         this.settings.vaultName = name;
@@ -779,8 +781,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         this.activity.touch();
       }
       if (vault && (vault.selectiveSync ?? false) !== (this.vaultState().vaultSelectiveSync ?? false)) {
-        this.vaultState().vaultSelectiveSync = vault.selectiveSync ?? false;
-        this.scopeChanged();
+        await this.applyAreas((state) => ({ ...state, vaultSelectiveSync: vault.selectiveSync ?? false }));
       }
     } catch {
       // Nur Anzeige - der Sync haengt nicht davon ab.
@@ -1343,7 +1344,7 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   /** Stoesst einen Durchlauf an; laeuft schon einer, folgt genau ein weiterer direkt danach. */
   requestPass(): void {
-    if (!this.isReady()) {
+    if (!this.isReady() || this.passesPaused) {
       return;
     }
     if (this.passRunning) {
@@ -1359,7 +1360,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       do {
         this.passRequested = false;
         await this.reconcileOnce();
-      } while (this.passRequested && this.isReady());
+      } while (this.passRequested && this.isReady() && !this.passesPaused);
     } finally {
       this.passRunning = false;
     }
@@ -1457,11 +1458,7 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   async setAreasMode(enabled: boolean): Promise<void> {
-    this.vaultState().areasMode = enabled;
-    this.scopeChanged();
-    if (enabled) {
-      await this.offerAreaCleanup();
-    }
+    await this.applyAreas((state) => ({ ...state, areasMode: enabled }));
   }
 
   openAreaPicker(): void {
@@ -1472,11 +1469,11 @@ export default class StoneIntelligencePlugin extends Plugin {
     const state = this.vaultState();
     new FolderPickerModal(this.app, (path) => this.noteApiClient.folderChildren(this.settings.vaultId, path),
       (path) => {
-        state.areas = [...new Set([...(state.areas ?? []), path])];
-        if (!isAreasMode(state, state.vaultSelectiveSync ?? false)) {
-          state.areasMode = true;
-        }
-        this.scopeChanged();
+        void this.applyAreas((current) => ({
+          ...current,
+          areas: [...new Set([...(current.areas ?? []), path])],
+          areasMode: isAreasMode(current, current.vaultSelectiveSync ?? false) ? current.areasMode : true,
+        }));
         new Notice(`StoneIntelligence: „${path}“ wird jetzt auf diesem Gerät synchronisiert.`);
       },
       (path) => (state.areas ?? []).some((area) => path === area || path.startsWith(`${area}/`)),
@@ -1484,16 +1481,116 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   async removeArea(path: string): Promise<void> {
-    const state = this.vaultState();
-    state.areas = (state.areas ?? []).filter((area) => area !== path);
-    this.scopeChanged();
-    await this.offerAreaCleanup();
+    await this.applyAreas((state) => ({ ...state, areas: (state.areas ?? []).filter((area) => area !== path) }));
   }
 
   async releasePinned(): Promise<void> {
-    this.vaultState().pinned = [];
+    await this.applyAreas((state) => ({ ...state, pinned: [] }));
+  }
+
+  /**
+   * Bereiche aendern. Die neuen gelten erst nach der Entscheidung, was mit Kopien ausserhalb passiert -
+   * vorher haette ein Abgleich sie als "fehlt" gesehen und angeheftet (live gefunden). Entfernt wird erst,
+   * wenn die neuen Bereiche gelten und kein Durchlauf mit den alten mehr laeuft, sonst kaemen sie wieder.
+   */
+  private async applyAreas(change: (state: VaultSyncState) => VaultSyncState): Promise<void> {
+    if (this.areaChangeRunning) {
+      return;
+    }
+    this.areaChangeRunning = true;
+    // Ab hier kein Abgleich, bis Zuordnungen, Bereiche und Dateien zusammenpassen - ein Durchlauf
+    // dazwischen hielte die Kopien fuer "fehlt auf dem Server" (anheften) oder holte sie zurueck.
+    // Erst pausieren, dann zaehlen: sonst laedt ein laufender Durchlauf waehrenddessen noch Notizen.
+    this.passesPaused = true;
+    try {
+      await this.whenNoPassRuns();
+      const state = this.vaultState();
+      const next = change({ ...state });
+      const nextScope = effectiveScope(next, next.vaultSelectiveSync ?? false);
+      const outside = nextScope === null ? [] : outOfScope([...Object.keys(state.noteIds), ...Object.keys(state.fileIds)], nextScope);
+      let remove = false;
+      if (outside.length > 0) {
+        remove = await confirmAction(this.app, "Außerhalb der Arbeitsbereiche",
+          `${outside.length} Notizen und Dateien auf diesem Gerät liegen außerhalb deiner Arbeitsbereiche. `
+          + "Sollen diese Kopien hier entfernt werden (in den Papierkorb)? Auf dem Server und bei allen anderen bleibt alles, "
+          + "und was du hier geändert und noch nicht übertragen hast, bleibt ebenfalls. Ohne Entfernen bleiben sie angeheftet und aktuell.",
+          "Vom Gerät entfernen");
+      }
+      const removable = remove ? await this.cleanCopies(outside) : [];
+      const keep = outside.filter((path) => !removable.includes(path));
+      this.forgetLocalCopies(removable);
+      state.areasMode = next.areasMode;
+      state.areas = next.areas;
+      state.vaultSelectiveSync = next.vaultSelectiveSync;
+      state.pinned = [...new Set([...(next.pinned ?? []), ...keep])].filter((path) => !removable.includes(path));
+      await this.trashLocalCopies(removable);
+    } finally {
+      this.passesPaused = false;
+      this.areaChangeRunning = false;
+    }
     this.scopeChanged();
-    await this.offerAreaCleanup();
+  }
+
+  /** Welche dieser Kopien gefahrlos weg koennen: unveraendert seit dem letzten Abgleich, nichts offen. */
+  private async cleanCopies(paths: string[]): Promise<string[]> {
+    const state = this.vaultState();
+    const clean: string[] = [];
+    for (const path of paths) {
+      const noteId = state.noteIds[path];
+      if (noteId) {
+        if (!await this.hasUnsyncedEdits(noteId, path) && !state.pendingOps.some((op) => "noteId" in op && op.noteId === noteId)) {
+          clean.push(path);
+        }
+        continue;
+      }
+      const id = state.fileIds[path];
+      const meta = id ? state.fileMeta[id] : undefined;
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (id && meta && file instanceof TFile && file.stat.mtime === meta.mtime && file.stat.size === meta.size) {
+        clean.push(path);
+      }
+    }
+    return clean;
+  }
+
+  private forgetLocalCopies(paths: string[]): void {
+    const state = this.vaultState();
+    for (const path of paths) {
+      const noteId = state.noteIds[path];
+      if (noteId) {
+        this.detachLive(path);
+        this.unmapNote(noteId);
+        continue;
+      }
+      const id = state.fileIds[path];
+      if (id) {
+        delete state.fileIds[path];
+        delete state.fileMeta[id];
+      }
+    }
+    this.requestSettingsSave();
+  }
+
+  private async trashLocalCopies(paths: string[]): Promise<void> {
+    for (const path of paths) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) {
+        continue;
+      }
+      this.serverDrivenPaths.add(path);
+      try {
+        await this.app.fileManager.trashFile(file);
+        this.activity.log("deleted", path, "Außerhalb der Arbeitsbereiche, vom Gerät entfernt");
+      } finally {
+        this.serverDrivenPaths.delete(path);
+      }
+    }
+  }
+
+  private async whenNoPassRuns(): Promise<void> {
+    for (let attempt = 0; attempt < 600 && (this.passRunning || this.folderPassRunning); attempt++) {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
   }
 
   /** „Aus dem Vault holen…": Notiz suchen, anheften, holen und oeffnen, sobald sie da ist. */
@@ -1523,74 +1620,6 @@ export default class StoneIntelligencePlugin extends Plugin {
       await new Promise((resolve) => window.setTimeout(resolve, 500));
     }
     new Notice(`StoneIntelligence: „${path}“ wird geholt – das dauert gerade länger.`);
-  }
-
-  /**
-   * Nach dem Verkleinern der Bereiche: Kopien ausserhalb duerfen weg, wenn die Person zustimmt. Was
-   * hier geaendert und noch nicht uebertragen ist, bleibt immer und wird angeheftet.
-   */
-  private async offerAreaCleanup(): Promise<void> {
-    const scope = this.currentScope();
-    if (scope === null) {
-      return;
-    }
-    const state = this.vaultState();
-    const notes = outOfScope(Object.keys(state.noteIds), scope);
-    const files = outOfScope(Object.keys(state.fileIds), scope);
-    if (notes.length + files.length === 0) {
-      return;
-    }
-    const remove = await confirmAction(this.app, "Außerhalb der Arbeitsbereiche",
-      `${notes.length + files.length} Notizen und Dateien auf diesem Gerät liegen außerhalb deiner Arbeitsbereiche. `
-      + "Sollen diese Kopien hier entfernt werden (in den Papierkorb)? Auf dem Server und bei allen anderen bleibt alles, "
-      + "und was du hier geändert und noch nicht übertragen hast, bleibt ebenfalls. Ohne Entfernen bleiben sie angeheftet und aktuell.",
-      "Vom Gerät entfernen");
-    const keep: string[] = [];
-    if (!remove) {
-      keep.push(...notes, ...files);
-    } else {
-      for (const path of notes) {
-        const noteId = state.noteIds[path];
-        if (!noteId || await this.hasUnsyncedEdits(noteId, path) || state.pendingOps.some((op) => "noteId" in op && op.noteId === noteId)) {
-          keep.push(path);
-          continue;
-        }
-        this.detachLive(path);
-        this.unmapNote(noteId);
-        await this.removeLocalCopy(path);
-      }
-      for (const path of files) {
-        const id = state.fileIds[path];
-        const meta = id ? state.fileMeta[id] : undefined;
-        const file = this.app.vault.getAbstractFileByPath(path);
-        const changed = !meta || (file instanceof TFile && (file.stat.mtime !== meta.mtime || file.stat.size !== meta.size));
-        if (!id || changed) {
-          keep.push(path);
-          continue;
-        }
-        delete state.fileIds[path];
-        delete state.fileMeta[id];
-        await this.removeLocalCopy(path);
-      }
-    }
-    if (keep.length > 0) {
-      state.pinned = [...new Set([...(state.pinned ?? []), ...keep])];
-    }
-    this.scopeChanged();
-  }
-
-  private async removeLocalCopy(path: string): Promise<void> {
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) {
-      return;
-    }
-    this.serverDrivenPaths.add(path);
-    try {
-      await this.app.fileManager.trashFile(file);
-      this.activity.log("deleted", path, "Außerhalb der Arbeitsbereiche, vom Gerät entfernt");
-    } finally {
-      this.serverDrivenPaths.delete(path);
-    }
   }
 
   /** Arbeitsbereiche dieses Geraets (ADR 0013); `null` = der ganze Vault. */
@@ -1898,6 +1927,9 @@ export default class StoneIntelligencePlugin extends Plugin {
    * hochladen, anderswo geloeschte entfernen, sobald sie leer sind. Laeuft nie parallel zu sich selbst.
    */
   private async reconcileFolders(): Promise<void> {
+    if (this.passesPaused) {
+      return;
+    }
     if (this.folderPassRunning) {
       this.folderPassRequested = true;
       return;
