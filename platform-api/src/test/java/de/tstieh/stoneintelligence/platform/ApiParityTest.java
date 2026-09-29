@@ -33,7 +33,8 @@ class ApiParityTest {
         "/api/v1/vaults/*/folders/rename", "Ordner verschiebt man im Obsidian-Dateibaum, die Webapp hat keinen Ordnerbaum",
         "/api/v1/vaults/*/ai/jobs/from-files", "Die Webapp laedt Dokumente direkt hoch statt aus dem Vault",
         "/api/v1/vaults/*/files", "Dateien legt der Datei-Sync an; die Webapp zeigt und laedt sie nur",
-        "/api/v1/vaults/*/folders", "Ordner verwaltet man im Obsidian-Dateibaum; die Webapp baut ihren Ordnerbaum aus den Pfaden der Notizen");
+        "/api/v1/vaults/*/folders", "Ordner verwaltet man im Obsidian-Dateibaum; die Webapp baut ihren Ordnerbaum aus den Pfaden der Notizen",
+        "/api/v1/vaults/*/changes", "Aenderungs-Feed fuer Geraete, die einen Vault spiegeln; die Webapp zeigt immer den aktuellen Serverstand");
 
     /** Nur in der Webapp noetig - mit Begruendung. */
     private static final Map<String, String> NOT_IN_PLUGIN = Map.of(
