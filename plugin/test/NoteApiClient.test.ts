@@ -441,4 +441,21 @@ describe("NoteApiClient access (ADR 0011)", () => {
 
     await expect(client(fakeFetch).removeFolderGrant("v1", "", "USER", "tom")).rejects.toMatchObject({ status: 409 });
   });
+  describe("versions", () => {
+    it("lists, shows and restores the versions of a note", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ revision: 7, changed: true }) });
+      const client = new NoteApiClient("https://platform.example", vi.fn().mockResolvedValue("t"), fakeFetch as unknown as typeof fetch);
+
+      await client.noteVersions("v1", "n1");
+      await client.noteVersion("v1", "n1", 3);
+      expect(await client.restoreVersion("v1", "n1", 3)).toEqual({ revision: 7, changed: true });
+
+      expect(fakeFetch.mock.calls.map(([url]) => url)).toEqual([
+        "https://platform.example/api/v1/vaults/v1/notes/n1/versions?limit=100",
+        "https://platform.example/api/v1/vaults/v1/notes/n1/versions/3",
+        "https://platform.example/api/v1/vaults/v1/notes/n1/versions/3/restore",
+      ]);
+      expect(fakeFetch.mock.calls[2][1]).toEqual(expect.objectContaining({ method: "POST" }));
+    });
+  });
 });

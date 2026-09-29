@@ -28,7 +28,7 @@ class SyncRelayServiceTest {
             relay.onJoin(noteId, sender);
             relay.onJoin(noteId, other);
 
-            relay.onUpdate(noteId, sender, bytes("update-1"), false);
+            relay.onUpdate(noteId, sender, bytes("update-1"), false, "tom");
 
             assertThat(other.receivedDocUpdates).containsExactly(bytes("update-1"));
             assertThat(sender.receivedDocUpdates).isEmpty();
@@ -42,7 +42,7 @@ class SyncRelayServiceTest {
             relay.onJoin(noteId, sessionOnThisNote);
             relay.onJoin(otherNoteId, sessionOnOtherNote);
 
-            relay.onUpdate(noteId, sessionOnThisNote, bytes("update"), false);
+            relay.onUpdate(noteId, sessionOnThisNote, bytes("update"), false, "tom");
 
             assertThat(sessionOnOtherNote.receivedDocUpdates).isEmpty();
         }
@@ -61,8 +61,8 @@ class SyncRelayServiceTest {
             relay.onJoin(noteId, senderOnThisNote);
             relay.onJoin(otherNoteId, senderOnOtherNote);
 
-            relay.onUpdate(noteId, senderOnThisNote, bytes("update-for-this-note"), false);
-            relay.onUpdate(otherNoteId, senderOnOtherNote, bytes("update-for-other-note"), false);
+            relay.onUpdate(noteId, senderOnThisNote, bytes("update-for-this-note"), false, "tom");
+            relay.onUpdate(otherNoteId, senderOnOtherNote, bytes("update-for-other-note"), false, "tom");
 
             assertThat(multiplexed.receivedDocUpdateNoteIds).containsExactly(noteId, otherNoteId);
             assertThat(multiplexed.receivedDocUpdates).containsExactly(
@@ -147,7 +147,7 @@ class SyncRelayServiceTest {
             // Dokument-Update-Catchup selbst.
             var early = new RecordingSyncSession("early");
             relay.onJoin(noteId, early);
-            relay.onUpdate(noteId, early, bytes("doc-update"), false);
+            relay.onUpdate(noteId, early, bytes("doc-update"), false, "tom");
             relay.onAwarenessUpdate(noteId, early, bytes("cursor-at-42"));
 
             var lateJoiner = new RecordingSyncSession("late");
@@ -165,8 +165,8 @@ class SyncRelayServiceTest {
         void should_receiveFullUpdateHistory_when_joiningAfterUpdatesAlreadyHappened() {
             var early = new RecordingSyncSession("early");
             relay.onJoin(noteId, early);
-            relay.onUpdate(noteId, early, bytes("update-1"), false);
-            relay.onUpdate(noteId, early, bytes("update-2"), false);
+            relay.onUpdate(noteId, early, bytes("update-1"), false, "tom");
+            relay.onUpdate(noteId, early, bytes("update-2"), false, "tom");
 
             var lateJoiner = new RecordingSyncSession("late");
             relay.onJoin(noteId, lateJoiner);
@@ -183,7 +183,7 @@ class SyncRelayServiceTest {
             // Notizinhalt).
             var early = new RecordingSyncSession("early");
             relay.onJoin(noteId, early);
-            relay.onUpdate(noteId, early, bytes("update-1"), false);
+            relay.onUpdate(noteId, early, bytes("update-1"), false, "tom");
 
             var lateJoiner = new RecordingSyncSession("late");
             relay.onJoin(noteId, lateJoiner);
@@ -213,7 +213,7 @@ class SyncRelayServiceTest {
             relay.onJoin(noteId, leaver);
             relay.onLeave(noteId, leaver);
 
-            relay.onUpdate(noteId, sender, bytes("update"), false);
+            relay.onUpdate(noteId, sender, bytes("update"), false, "tom");
 
             assertThat(leaver.receivedDocUpdates).isEmpty();
         }
@@ -259,7 +259,7 @@ class SyncRelayServiceTest {
 
             var sender = new RecordingSyncSession("sender");
             relay.onJoin(noteId, sender);
-            relay.onUpdate(noteId, sender, bytes("update-after-deletion"), false);
+            relay.onUpdate(noteId, sender, bytes("update-after-deletion"), false, "tom");
 
             assertThat(session.receivedDocUpdates).isEmpty();
         }

@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { api, ApiError, type Note, type NoteContent, type NoteHistory } from "../api";
   import { activityLines, describeEvent } from "../historyText";
+  import VersionHistory from "./VersionHistory.svelte";
   import { decodeContent, prepareUpdate, renderMarkdown, normalizeNotePath, downloadNote } from "../noteContent";
 
   let { note, permissions, onChanged, onDeleted, onDirtyChange }: {
@@ -95,6 +96,10 @@
     catch (e) { if (alive) { error = message(e); showHistory = false; } }
     finally { if (alive) historyLoading = false; }
   }
+  async function afterRestore() {
+    void load();
+    try { const loaded = await api.noteHistory(note.vaultId, note.id); if (alive) history = loaded; } catch { /* Verlauf bleibt wie er war */ }
+  }
   function beforeUnload(event: BeforeUnloadEvent) { if (dirty || saving || busy) { event.preventDefault(); event.returnValue = ""; } }
   function shortcut(event: KeyboardEvent) {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void save(); }
@@ -140,6 +145,6 @@
       {#if permissions.includes("DELETE")}<button class="danger" disabled={saving || busy} onclick={remove}>Notiz löschen</button>{/if}
     </div>
     {#if renaming}<form class="rename-form" onsubmit={(e) => { e.preventDefault(); void rename(); }}><label for="new-path">Neuer Pfad</label><input id="new-path" bind:value={newPath} required disabled={busy} /><button class="primary" disabled={busy}>Pfad speichern</button><button type="button" class="quiet" onclick={() => renaming = false}>Abbrechen</button></form>{/if}
-    {#if showHistory}<section class="history" aria-label="Änderungsverlauf">{#if historyLoading}<p role="status">Verlauf wird geladen…</p>{:else if history}<ul class="activity">{#each history.activity ? activityLines(history.activity) : [] as line}<li>{line}</li>{/each}</ul>{#if history.events.length}<ol>{#each [...history.events].reverse() as event}<li><strong>{describeEvent(event)}</strong><span>{date(event.occurredAt)}</span></li>{/each}</ol>{:else}<p>Noch keine Einträge.</p>{/if}{/if}</section>{/if}
+    {#if showHistory}<section class="history" aria-label="Änderungsverlauf">{#if historyLoading}<p role="status">Verlauf wird geladen…</p>{:else if history}<ul class="activity">{#each history.activity ? activityLines(history.activity) : [] as line}<li>{line}</li>{/each}</ul>{#if note.noteLevel !== 101}<VersionHistory {note} {writable} {dirty} onRestored={afterRestore} />{/if}<h4>Protokoll</h4>{#if history.events.length}<ol>{#each [...history.events].reverse() as event}<li><strong>{describeEvent(event)}</strong><span>{date(event.occurredAt)}</span></li>{/each}</ol>{:else}<p>Noch keine Einträge.</p>{/if}{/if}</section>{/if}
   </details>
 </article>

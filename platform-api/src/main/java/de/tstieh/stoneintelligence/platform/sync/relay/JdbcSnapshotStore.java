@@ -29,18 +29,19 @@ public class JdbcSnapshotStore implements SnapshotStore {
      * wenigen Versuchen aufgeloest statt die Anfrage hart scheitern zu lassen.
      */
     @Override
-    public UpdateRecord append(NoteId noteId, byte[] payload, boolean ciphertext) {
+    public UpdateRecord append(NoteId noteId, byte[] payload, boolean ciphertext, String actor) {
         for (int attempt = 1; attempt <= MAX_SEQUENCE_RETRIES; attempt++) {
             try {
                 var sequence = jdbcClient.sql("""
-                        INSERT INTO platform.note_snapshots (note_id, server_sequence, state, is_ciphertext)
-                        SELECT :noteId, COALESCE(MAX(server_sequence), 0) + 1, :state, :ciphertext
+                        INSERT INTO platform.note_snapshots (note_id, server_sequence, state, is_ciphertext, actor)
+                        SELECT :noteId, COALESCE(MAX(server_sequence), 0) + 1, :state, :ciphertext, :actor
                         FROM platform.note_snapshots WHERE note_id = :noteId
                         RETURNING server_sequence
                         """)
                     .param("noteId", noteId.value())
                     .param("state", payload)
                     .param("ciphertext", ciphertext)
+                    .param("actor", actor)
                     .query(Long.class)
                     .single();
                 return new UpdateRecord(sequence, payload, ciphertext);
@@ -55,17 +56,17 @@ public class JdbcSnapshotStore implements SnapshotStore {
 
     /** Ein CAS ueber den vorhandenen Unique-Key; konkurrierende WS-Appends gewinnen oder verlieren atomar. */
     @Override
-    public java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload) {
+    public java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload, String actor) {
         return jdbcClient.sql("""
-                INSERT INTO platform.note_snapshots (note_id, server_sequence, state, is_ciphertext)
-                SELECT :noteId, :expected + 1, :state, false
+                INSERT INTO platform.note_snapshots (note_id, server_sequence, state, is_ciphertext, actor)
+                SELECT :noteId, :expected + 1, :state, false, :actor
                 WHERE :expected = (SELECT COALESCE(MAX(server_sequence), 0)
                     FROM platform.note_snapshots WHERE note_id = :noteId)
                 ON CONFLICT (note_id, server_sequence) DO NOTHING
                 RETURNING server_sequence
                 """)
             .param("noteId", noteId.value()).param("expected", expectedRevision).param("state", payload)
-            .query(Long.class).optional().map(sequence -> new UpdateRecord(sequence, payload, false));
+            .param("actor", actor).query(Long.class).optional().map(sequence -> new UpdateRecord(sequence, payload, false));
     }
 
     @Override
@@ -78,6 +79,32 @@ public class JdbcSnapshotStore implements SnapshotStore {
             .param("noteId", noteId.value())
             .param("after", afterServerSequence)
             .query(RECORD_MAPPER)
+            .list();
+    }
+
+    @Override
+    public List<UpdateRecord> listUpTo(NoteId noteId, long serverSequence) {
+        return jdbcClient.sql("""
+                SELECT server_sequence, state, is_ciphertext FROM platform.note_snapshots
+                WHERE note_id = :noteId AND server_sequence <= :upTo
+                ORDER BY server_sequence
+                """)
+            .param("noteId", noteId.value())
+            .param("upTo", serverSequence)
+            .query(RECORD_MAPPER)
+            .list();
+    }
+
+    @Override
+    public List<UpdateInfo> log(NoteId noteId) {
+        return jdbcClient.sql("""
+                SELECT server_sequence, actor, created_at, is_ciphertext FROM platform.note_snapshots
+                WHERE note_id = :noteId
+                ORDER BY server_sequence
+                """)
+            .param("noteId", noteId.value())
+            .query((rs, rowNum) -> new UpdateInfo(rs.getLong("server_sequence"), rs.getString("actor"),
+                rs.getTimestamp("created_at").toInstant(), rs.getBoolean("is_ciphertext")))
             .list();
     }
 

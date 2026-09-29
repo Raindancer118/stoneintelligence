@@ -2906,3 +2906,83 @@ input[type="checkbox"]:checked {
 .legal li + li {
   margin-top: 0.35rem;
 }
+
+/* Versionsverlauf einer Notiz */
+.versions {
+  padding: 8px 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.versions ol {
+  padding: 0;
+  list-style: none;
+}
+.history .versions li {
+  padding: 0;
+}
+.versions .version {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 8px;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  color: var(--ink);
+  text-align: start;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.versions .version:hover,
+.versions .version[aria-expanded="true"] {
+  background: var(--slate-soft);
+}
+.versions .version span {
+  color: var(--ink-dim);
+  font-size: 0.875rem;
+}
+.version-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 8px 16px;
+}
+.diff {
+  width: 100%;
+  max-height: 22rem;
+  overflow: auto;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.diff > div {
+  padding: 0 10px 0 26px;
+  text-indent: -16px;
+}
+.diff .removed {
+  background: color-mix(in srgb, var(--rust) 10%, transparent);
+}
+.diff .removed::before {
+  content: "− ";
+  color: var(--rust);
+}
+.diff .added {
+  background: color-mix(in srgb, var(--slate) 12%, transparent);
+}
+.diff .added::before {
+  content: "+ ";
+  color: var(--slate);
+}
+.diff .gap {
+  color: var(--ink-dim);
+  font-style: italic;
+  text-align: center;
+  text-indent: 0;
+}
