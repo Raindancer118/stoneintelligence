@@ -17,6 +17,7 @@
     <ul>
       <li><strong>Konto:</strong> Benutzername, Name und E-Mail-Adresse aus der Anmeldung.</li>
       <li><strong>Inhalte:</strong> deine Notizen (einschließlich ihres Bearbeitungsverlaufs), Dateien wie PDFs und Bilder, Ordner, Vaults, Mitgliedschaften und Rechte.</li>
+      <li><strong>Versionen:</strong> zu jeder Änderung an einer Notiz, wer sie wann geschrieben hat. Daraus entstehen die früheren Versionen einer Notiz; wer die Notiz lesen darf, sieht sie mit Namen und Zeitpunkt und kann sie mit Schreibrecht wiederherstellen.</li>
       <li><strong>Änderungsprotokoll:</strong> wer eine Notiz wann angelegt, umbenannt, gespeichert oder gelöscht hat.</li>
       <li><strong>Einladungen:</strong> die E-Mail-Adresse einer eingeladenen Person, wer eingeladen hat und wann.</li>
       <li><strong>Technische Zugriffsdaten:</strong> IP-Adresse, Zeitpunkt, abgerufene Adresse und Browserkennung, die der vorgeschaltete Webserver beim Aufruf erfasst.</li>
@@ -65,7 +66,7 @@
   <section>
     <h2>7. Speicherdauer</h2>
     <ul>
-      <li>Notizen, Dateien und Ordner: bis sie gelöscht werden oder der Vault aufgelöst wird. Ersetzte Fassungen von Dateien und die Inhalte gelöschter Dateien werden nach 24 Stunden entfernt.</li>
+      <li>Notizen mit allen früheren Versionen, Dateien und Ordner: bis sie gelöscht werden oder der Vault aufgelöst wird. Ersetzte Fassungen von Dateien und die Inhalte gelöschter Dateien werden nach 24 Stunden entfernt.</li>
       <li>Zum Einlesen hochgeladene Dokumente: bis die Verarbeitung abgeschlossen ist; Angaben zur Verarbeitung und die Aufzeichnung der KI-Änderungen (für „Rückgängig"): 90 Tage.</li>
       <li>Ähnlichkeitsvektoren, gesetzte und abgelehnte Verknüpfungen: solange die beteiligten Notizen bestehen; Einwilligungen zur KI-Prüfung: bis zum Widerruf; sie wirken nur, solange du Mitglied des Vaults bist.</li>
       <li>Einladungen: 30 Tage nach Annahme, Widerruf oder Ablauf.</li>
