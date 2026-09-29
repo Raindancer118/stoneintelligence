@@ -104,7 +104,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             }
             default -> {
                 if (hasWriteAccess(session, frame.noteId())) {
-                    relay.onUpdate(frame.noteId(), syncSession, frame.payload(), isCiphertextNote(frame.noteId()));
+                    relay.onUpdate(frame.noteId(), syncSession, frame.payload(), isCiphertextNote(frame.noteId()), actorOf(session));
                     var vaultId = vaultIdOf(session);
                     activity.edited(vaultId, frame.noteId(), actorOf(session));
                     announcements.announceNoteUpdated(vaultId, frame.noteId(),

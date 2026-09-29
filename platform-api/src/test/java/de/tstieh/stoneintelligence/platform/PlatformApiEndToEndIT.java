@@ -210,8 +210,8 @@ class PlatformApiEndToEndIT {
         var two = new de.tstieh.stoneintelligence.platform.sync.relay.JdbcSnapshotStore(JdbcClient.create(dataSource));
         var start = new java.util.concurrent.CyclicBarrier(2);
         try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
-            var a = executor.submit(() -> { start.await(5, TimeUnit.SECONDS); return one.appendIfCurrent(noteId, 0, new byte[] {1, 2}); });
-            var b = executor.submit(() -> { start.await(5, TimeUnit.SECONDS); return two.appendIfCurrent(noteId, 0, new byte[] {3, 4}); });
+            var a = executor.submit(() -> { start.await(5, TimeUnit.SECONDS); return one.appendIfCurrent(noteId, 0, new byte[] {1, 2}, "tom"); });
+            var b = executor.submit(() -> { start.await(5, TimeUnit.SECONDS); return two.appendIfCurrent(noteId, 0, new byte[] {3, 4}, "tom"); });
             assertThat(List.of(a.get(10, TimeUnit.SECONDS), b.get(10, TimeUnit.SECONDS)))
                 .filteredOn(java.util.Optional::isPresent).hasSize(1);
         }

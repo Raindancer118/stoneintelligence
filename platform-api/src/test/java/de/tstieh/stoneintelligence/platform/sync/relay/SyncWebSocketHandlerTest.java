@@ -107,6 +107,7 @@ class SyncWebSocketHandlerTest {
         send(writer, SyncFrame.TYPE_DOC_UPDATE, note.id(), "real edit".getBytes());
 
         assertThat(snapshotStore.listSince(note.id(), 0)).hasSize(1);
+        assertThat(snapshotStore.log(note.id())).extracting(UpdateInfo::actor).containsExactly("writer-actor");
     }
 
     // Dateien haben keinen Yjs-Inhalt (ADR 0009): nie joinbar, nie beschreibbar ueber den Sync-Kanal.
@@ -195,7 +196,7 @@ class SyncWebSocketHandlerTest {
 
             announcements.announceAccessChanged(vaultId);
             reader.sentMessages.clear();
-            relay.onUpdate(noteId, new RecordingSyncSession("someone-else"), "secret".getBytes(), false);
+            relay.onUpdate(noteId, new RecordingSyncSession("someone-else"), "secret".getBytes(), false, "tom");
 
             assertThat(reader.sentMessages).isEmpty();
         }

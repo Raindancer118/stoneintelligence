@@ -77,17 +77,17 @@ public class SyncRelayService {
      * Eingehendes Yjs-Dokument-Update: persistieren, dann an alle anderen Sessions im Room
      * verteilen. Synchronisiert auf {@link #lockFor(NoteId)}, s. Klassendoc.
      */
-    public void onUpdate(NoteId noteId, SyncSession sender, byte[] payload, boolean ciphertext) {
+    public void onUpdate(NoteId noteId, SyncSession sender, byte[] payload, boolean ciphertext, String actor) {
         synchronized (lockFor(noteId)) {
-            snapshotStore.append(noteId, payload, ciphertext);
+            snapshotStore.append(noteId, payload, ciphertext, actor);
             registry.broadcastExcept(noteId, sender, session -> session.sendDocUpdate(noteId, payload));
         }
     }
 
     /** HTTP-Editor und WebSocket benutzen dieselbe Update-Historie und denselben Raum. */
-    public java.util.Optional<UpdateRecord> saveIfCurrent(NoteId noteId, long expectedRevision, byte[] payload) {
+    public java.util.Optional<UpdateRecord> saveIfCurrent(NoteId noteId, long expectedRevision, byte[] payload, String actor) {
         synchronized (lockFor(noteId)) {
-            var appended = snapshotStore.appendIfCurrent(noteId, expectedRevision, payload);
+            var appended = snapshotStore.appendIfCurrent(noteId, expectedRevision, payload, actor);
             appended.ifPresent(update -> registry.broadcastExcept(noteId, null,
                 session -> session.sendDocUpdate(noteId, update.payload())));
             return appended;
