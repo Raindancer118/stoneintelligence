@@ -11,7 +11,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import de.tstieh.stoneintelligence.domain.id.VaultId;
 
-public final class FakeAuthorizationRepository implements AuthorizationRepository {
+public class FakeAuthorizationRepository implements AuthorizationRepository {
 
     private record Scoped<T>(VaultId vaultId, T rule) {
     }

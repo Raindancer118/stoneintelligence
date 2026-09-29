@@ -36,6 +36,8 @@ public class VaultAnnouncementService {
     private final Map<NoteId, Long> lastUpdateAnnouncement = new ConcurrentHashMap<>();
     private final java.util.function.LongSupplier nanoClock;
 
+    private final java.util.List<java.util.function.Consumer<VaultId>> accessListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     public VaultAnnouncementService() {
         this(System::nanoTime);
     }
@@ -87,6 +89,11 @@ public class VaultAnnouncementService {
     }
 
     /** Ordner angelegt, geloescht oder verschoben - nur an Verbindungen, die Ordner verstehen. */
+    /** Wird nach jeder Rechteaenderung ueber diese Instanz aufgerufen, vor den Verbindungen. */
+    public void addAccessListener(java.util.function.Consumer<VaultId> listener) {
+        accessListeners.add(listener);
+    }
+
     public void announceFoldersChanged(VaultId vaultId, String path) {
         announce(vaultId, SyncFrame.TYPE_VAULT_FOLDERS_CHANGED, SyncFrame.NO_NOTE, path, NoteKind.NOTE);
     }
@@ -97,6 +104,8 @@ public class VaultAnnouncementService {
      */
     public void announceAccessChanged(VaultId vaultId) {
         afterCommit(() -> {
+            // Zuerst die Caches (VaultAccessGuard), damit die Verbindungen gleich gegen den neuen Stand pruefen.
+            accessListeners.forEach(listener -> listener.accept(vaultId));
             for (var subscriber : subscribers.getOrDefault(vaultId, Set.of())) {
                 try {
                     subscriber.accessChanged();

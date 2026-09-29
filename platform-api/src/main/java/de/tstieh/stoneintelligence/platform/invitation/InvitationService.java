@@ -182,6 +182,7 @@ public class InvitationService {
         }
         var group = ensureGroup(invitation.vaultId(), invitation.access());
         authorization.addMember(group.id(), actor);
+        access.accessChanged(invitation.vaultId());
         deleteExternal(invitation);
         var vault = vault(invitation.vaultId());
         return new JoinedVault(vault.id().value().toString(), vault.name());
@@ -193,6 +194,7 @@ public class InvitationService {
         }
         var group = ensureGroup(vaultId, level);
         authorization.addMember(group.id(), user.username());
+        access.accessChanged(vaultId);
         if (user.email() != null && !user.email().isBlank()) {
             try {
                 mailer.send(InvitationMails.added(user.email(), user.name(), vault(vaultId).name(), actor, level, settings.webappUrl()));
