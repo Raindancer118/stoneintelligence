@@ -9,7 +9,7 @@ import de.tstieh.stoneintelligence.platform.vault.Note;
 import de.tstieh.stoneintelligence.platform.vault.NoteRepository;
 
 /** In-Memory-Fake, spiegelt {@code JdbcAccessGrantRepository} (Eintrags-Pfade live aus dem Notiz-Speicher). */
-public final class FakeAccessGrantRepository implements AccessGrantRepository {
+public class FakeAccessGrantRepository implements AccessGrantRepository {
 
     private final NoteRepository notes;
     private final List<AccessGrant> grants = new ArrayList<>();
