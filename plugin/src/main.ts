@@ -24,7 +24,7 @@ import {
 import {
   MultiplexedTransport, VAULT_ACCESS_CHANGED, VAULT_FOLDERS_CHANGED, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED,
 } from "./sync/multiplexedTransport";
-import { type FileLimits, HttpError, NoteApiClient, type VaultSummary } from "./sync/NoteApiClient";
+import { type FileLimits, HttpError, NoteApiClient, type NoteListItem, type VaultSummary } from "./sync/NoteApiClient";
 import {
   type ContentSyncPorts, type ContentSyncResult, conflictCopyPath, hasUnsyncedLocalEdits, prepareNoteDoc, resolveFirstContact,
   revertReadOnlyEdit, syncNoteContent, textOfState,
@@ -51,6 +51,7 @@ import { type Tab as VaultAdminTab, VaultAdminView, VIEW_TYPE_VAULT_ADMIN } from
 import { AiReadModal, type AiReadTarget } from "./ui/AiReadModal";
 import { canReadWithAi } from "./sync/aiJobText";
 import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
+import { ServerMirror } from "./sync/serverMirror";
 import { presentStatus, type StatusPresentation } from "./ui/statusPresentation";
 import { type Collaborator, type LiveNote, StatusView, VIEW_TYPE_STATUS } from "./ui/StatusView";
 
@@ -214,6 +215,11 @@ export default class StoneIntelligencePlugin extends Plugin {
   private folderPassTimer: number | null = null;
   /** Server ohne Ordner-Synchronisation (Endpunkt fehlt) - dann gar nicht erst versuchen. */
   private folderSyncUnsupported = false;
+  /** Server-Bestand im Speicher, nachgefuehrt ueber den Aenderungs-Feed (ADR 0013). */
+  private readonly mirror = new ServerMirror();
+  /** Server ohne Feed: weiter bei jedem Durchlauf die volle Liste. */
+  private feedUnsupported = false;
+  private readonly dedupeServerRefresh = dedupeInFlight<void>();
   /** Datei-Synchronisation (ADR 0009): Grenzen des Servers; `null` = Server kennt keine Dateien. */
   private fileLimits: FileLimits | null | undefined;
   private fileLimitsAt = 0;
@@ -1351,7 +1357,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     let serverFiles: import("./sync/filePlan").ServerFile[] = [];
     const limits = await this.currentFileLimits();
     try {
-      const entries = limits ? await this.noteApiClient.listAllEntries(vaultId) : await this.noteApiClient.listAllNotes(vaultId);
+      const entries = await this.serverEntries(vaultId, limits !== null);
       this.rememberAccess(entries);
       serverNotes = entries.filter((entry) => entry.kind !== "FILE");
       serverFiles = entries.filter((entry) => entry.kind === "FILE")
@@ -1402,6 +1408,74 @@ export default class StoneIntelligencePlugin extends Plugin {
       await this.fileSync.reconcile(serverFiles.filter((file) => !isExcluded(file.path, this.settings.excludedFolders)),
         limits.maxFileBytes);
     }
+  }
+
+  /**
+   * Server-Eintraege fuer den Abgleich. Mit Feed (ADR 0013) aus dem Spiegel: nur die Aenderungen seit dem
+   * letzten Mal, voll geladen wird beim ersten Mal und wenn sich meine Sicht geaendert hat.
+   */
+  private async serverEntries(vaultId: string, includeFiles: boolean): Promise<NoteListItem[]> {
+    if (!this.feedUnsupported) {
+      await this.dedupeServerRefresh(() => this.refreshServer(vaultId, includeFiles));
+      if (!this.feedUnsupported && this.mirror.isReadyFor(vaultId, kindsFor(includeFiles))) {
+        return this.mirror.entries();
+      }
+    }
+    return includeFiles ? this.noteApiClient.listAllEntries(vaultId) : this.noteApiClient.listAllNotes(vaultId);
+  }
+
+  private async refreshServer(vaultId: string, includeFiles: boolean): Promise<void> {
+    const kinds = kindsFor(includeFiles);
+    if (this.mirror.isReadyFor(vaultId, kinds) && this.mirror.cursor !== null) {
+      try {
+        let page;
+        do {
+          page = await this.noteApiClient.changes(vaultId, this.mirror.cursor, includeFiles);
+          if (page === null) {
+            this.feedUnsupported = true;
+            this.mirror.reset();
+            return;
+          }
+          if (vaultId !== this.settings.vaultId) {
+            return;
+          }
+          this.mirror.apply(page);
+        } while (page.more && this.mirror.isReadyFor(vaultId, kinds));
+        if (this.mirror.isReadyFor(vaultId, kinds)) {
+          return;
+        }
+      } catch (error) {
+        // Unbrauchbarer Cursor (etwa nach einem Server-Umbau): neu anfangen statt haengenzubleiben.
+        if (!(error instanceof HttpError && error.status === 400)) {
+          throw error;
+        }
+        this.mirror.reset();
+      }
+    }
+    const start = await this.noteApiClient.changes(vaultId, null, includeFiles);
+    if (start === null) {
+      this.feedUnsupported = true;
+      this.mirror.reset();
+      return;
+    }
+    const entries = includeFiles ? await this.noteApiClient.listAllEntries(vaultId) : await this.noteApiClient.listAllNotes(vaultId);
+    const folders = this.folderSyncUnsupported ? null : await this.noteApiClient.listFolders(vaultId);
+    if (vaultId === this.settings.vaultId) {
+      this.mirror.load(vaultId, kinds, start.cursor, entries, folders);
+    }
+  }
+
+  /** Ordner des Servers - aus dem Spiegel, wenn er sie kennt; `null`: der Server kennt keine Ordner. */
+  private async serverFolders(vaultId: string): Promise<string[] | null> {
+    if (!this.feedUnsupported) {
+      const includeFiles = (await this.currentFileLimits()) !== null;
+      await this.dedupeServerRefresh(() => this.refreshServer(vaultId, includeFiles));
+      const folders = this.mirror.isReadyFor(vaultId, kindsFor(includeFiles)) ? this.mirror.folders() : null;
+      if (folders !== null) {
+        return folders;
+      }
+    }
+    return this.noteApiClient.listFolders(vaultId);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1642,7 +1716,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     await this.flushPendingOps();
     let serverFolders: string[] | null;
     try {
-      serverFolders = await this.noteApiClient.listFolders(vaultId);
+      serverFolders = await this.serverFolders(vaultId);
     } catch (error) {
       console.debug("StoneIntelligence: Ordnerliste nicht abrufbar", error);
       return;
@@ -1742,7 +1816,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       noteId = await this.noteApiClient.createNote(this.settings.vaultId, path, 1);
     } catch (error) {
       if (error instanceof HttpError && error.status === 409) {
-        const match = (await this.noteApiClient.listAllNotes(this.settings.vaultId)).find((note) => note.path === path);
+        const match = this.mirror.byPath(path) ?? await this.noteApiClient.findByPath(this.settings.vaultId, path);
         if (!match) {
           throw error;
         }
@@ -2628,4 +2702,8 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.updatePresenceBar();
     this.activity.touch();
   }
+}
+
+function kindsFor(includeFiles: boolean): string {
+  return includeFiles ? "note,file" : "note";
 }
