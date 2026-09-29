@@ -15,6 +15,7 @@ import de.tstieh.stoneintelligence.platform.vault.Note;
 import de.tstieh.stoneintelligence.platform.vault.NoteController;
 import de.tstieh.stoneintelligence.platform.vault.NoteKind;
 import de.tstieh.stoneintelligence.platform.vault.NoteRepository;
+import de.tstieh.stoneintelligence.platform.vault.SyncScope;
 import de.tstieh.stoneintelligence.platform.vault.VaultAccessGuard;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -54,7 +55,7 @@ public class ChangeController {
     @GetMapping("/api/v1/vaults/{vaultId}/changes")
     public Changes changes(@PathVariable String vaultId, @RequestParam(required = false) String since,
                            @RequestParam(defaultValue = "500") int limit, @RequestParam(defaultValue = "note") String kinds,
-                           Authentication auth) {
+                           @RequestParam(required = false) List<String> scope, Authentication auth) {
         var vId = VaultId.of(vaultId);
         var actor = auth.getName();
         access.requireMember(vId, actor);
@@ -68,6 +69,12 @@ public class ChangeController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid cursor");
         }
         var wanted = parseKinds(kinds);
+        SyncScope areas;
+        try {
+            areas = scope == null ? SyncScope.wholeVault() : SyncScope.of(scope);
+        } catch (IllegalArgumentException tooMany) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, tooMany.getMessage());
+        }
         var batch = feed.read(vId, cursor, Math.clamp(limit, 1, MAX_LIMIT));
         var who = access.membership(vId, actor);
 
@@ -79,21 +86,23 @@ public class ChangeController {
             }
             if (event.noteId() != null) {
                 ids.add(event.noteId());
-            } else {
+            } else if (areas.touchesFolder(event.folderPath()) || event.folderPath().isEmpty()) {
                 relist.add(event.folderPath());
             }
         }
 
         var all = notes.findByIds(vId, ids);
-        var readable = access.readableNotes(vId, actor, all.stream().filter(note -> wanted.contains(note.kind())).toList());
+        // Ausserhalb der Bereiche: fuer dieses Geraet "weg" - es heftet die Notiz an, falls es sie hat.
+        var readable = access.readableNotes(vId, actor, all.stream()
+            .filter(note -> wanted.contains(note.kind()) && areas.covers(note.path())).toList());
         var keep = new java.util.HashSet<NoteId>(readable.stream().map(Note::id).toList());
         // Eintraege einer nicht angefragten Art (aeltere Clients ohne Dateien) sind weder da noch weg.
         all.stream().filter(note -> !wanted.contains(note.kind())).forEach(note -> keep.add(note.id()));
         var removed = ids.stream().filter(id -> !keep.contains(id)).map(id -> id.value().toString()).toList();
         var asFolder = (java.util.function.UnaryOperator<String>) path -> path + "/";
         return new Changes(batch.next().format(), batch.more(), listing.listed(vId, actor, readable), removed,
-            new Folders(access.readablePaths(vId, actor, batch.foldersChanged(), asFolder),
-                access.readablePaths(vId, actor, batch.foldersRemoved(), asFolder)),
+            new Folders(access.readablePaths(vId, actor, batch.foldersChanged().stream().filter(areas::touchesFolder).toList(), asFolder),
+                access.readablePaths(vId, actor, batch.foldersRemoved().stream().filter(areas::touchesFolder).toList(), asFolder)),
             outermost(relist));
     }
 

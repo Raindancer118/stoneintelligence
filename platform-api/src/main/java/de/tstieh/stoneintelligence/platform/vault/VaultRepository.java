@@ -11,4 +11,6 @@ public interface VaultRepository {
 
     /** Neuer Name; leer, wenn es den Vault nicht gibt. */
     Optional<Vault> rename(VaultId id, String name);
+
+    Optional<Vault> setSelectiveSync(VaultId id, boolean selectiveSync);
 }

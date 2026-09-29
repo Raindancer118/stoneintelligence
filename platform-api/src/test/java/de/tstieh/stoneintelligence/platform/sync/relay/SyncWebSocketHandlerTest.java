@@ -231,5 +231,18 @@ class SyncWebSocketHandlerTest {
             });
             assertThat(legacy.sentMessages).isEmpty();
         }
-    }
+    
+        @Test
+        void should_announceOnlyWithinTheAreasAConnectionReported() {
+            var vaultId = newReaderOnlyNote("reader-actor", "Team/shared.md");
+            var device = connect(vaultId, "reader-actor");
+            send(device, SyncFrame.TYPE_SET_SCOPE, SyncFrame.NO_NOTE, "Team\nKunden/Vertrag.md".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            announcements.announceNoteCreated(vaultId, de.tstieh.stoneintelligence.domain.id.NoteId.newId(), "Rest/x.md");
+            announcements.announceNoteCreated(vaultId, de.tstieh.stoneintelligence.domain.id.NoteId.newId(), "Team/y.md");
+
+            assertThat(device.sentMessages).singleElement().satisfies(message ->
+                assertThat(new String(SyncFrame.decode(((BinaryMessage) message).getPayload().array()).payload())).isEqualTo("Team/y.md"));
+        }
+}
 }

@@ -22,6 +22,15 @@ public final class FakeFolderRepository implements FolderRepository {
     }
 
     @Override
+    public synchronized List<FolderChild> children(VaultId vaultId, String parent) {
+        var prefix = parent.isEmpty() ? "" : parent + "/";
+        return of(vaultId).stream()
+            .filter(path -> path.startsWith(prefix) && !path.substring(prefix.length()).contains("/"))
+            .map(path -> new FolderChild(path, of(vaultId).stream().anyMatch(other -> other.startsWith(path + "/"))))
+            .toList();
+    }
+
+    @Override
     public synchronized List<String> ensure(VaultId vaultId, String path, String actor) {
         var created = new ArrayList<String>();
         for (var folder : FolderPaths.withParents(path)) {

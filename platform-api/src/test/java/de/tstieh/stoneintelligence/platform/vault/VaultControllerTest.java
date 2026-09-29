@@ -91,6 +91,22 @@ class VaultControllerTest {
     }
 
     @Test
+    void should_letManagersAskAllDevicesToSyncOnlyTheirAreas() {
+        var tom = new org.springframework.security.authentication.TestingAuthenticationToken("tom", null);
+        var created = controller.create(new VaultController.CreateVaultRequest("Konzern"), tom);
+        org.assertj.core.api.Assertions.assertThat(created.selectiveSync()).isFalse();
+
+        var updated = controller.rename(created.id(), new VaultController.RenameVaultRequest(null, true), tom);
+
+        org.assertj.core.api.Assertions.assertThat(updated.selectiveSync()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(updated.name()).isEqualTo("Konzern");
+        org.assertj.core.api.Assertions.assertThat(controller.list(tom)).singleElement()
+            .extracting(VaultController.VaultResponse::selectiveSync).isEqualTo(true);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.rename(created.id(), new VaultController.RenameVaultRequest(null, false),
+            new org.springframework.security.authentication.TestingAuthenticationToken("ben", null))).isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
     void should_renameAVault_onlyForWhoManagesIt() {
         var tom = new org.springframework.security.authentication.TestingAuthenticationToken("tom", null);
         var created = controller.create(new VaultController.CreateVaultRequest("Alt"), tom);

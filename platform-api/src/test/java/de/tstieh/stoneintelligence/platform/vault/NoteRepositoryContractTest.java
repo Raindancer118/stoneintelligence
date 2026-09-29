@@ -86,6 +86,29 @@ public abstract class NoteRepositoryContractTest {
         }
 
         @Test
+        void should_listOnlyTheAreas_byPath_pageByPage() {
+            var repository = repository();
+            var vaultId = newVault();
+            for (var path : java.util.List.of("Team/b.md", "Team/a.md", "Team/Sub/c.md", "Teamraum/x.md", "Kunden/Vertrag.md",
+                    "Kunden/Angebot.md", "Rest.md")) {
+                repository.create(vaultId, path, NoteLevel.of(1), "tom");
+            }
+            repository.create(newVault(), "Team/fremd.md", NoteLevel.of(1), "tom");
+            var scope = SyncScope.of(java.util.List.of("Team", "Kunden/Vertrag.md"));
+
+            var seen = new java.util.ArrayList<String>();
+            var after = "";
+            NoteRepository.ScopedPage page;
+            do {
+                page = repository.listScoped(vaultId, scope, after, 2, java.util.Set.of(NoteKind.NOTE));
+                page.notes().forEach(note -> seen.add(note.path()));
+                after = page.notes().isEmpty() ? after : page.notes().getLast().path();
+            } while (!page.complete());
+
+            assertThat(seen).containsExactly("Kunden/Vertrag.md", "Team/Sub/c.md", "Team/a.md", "Team/b.md");
+        }
+
+        @Test
         void should_beEmpty_when_idIsUnknown() {
             assertThat(repository().findById(newVault(), NoteId.newId())).isEmpty();
         }

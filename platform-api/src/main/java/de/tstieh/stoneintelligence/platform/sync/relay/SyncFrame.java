@@ -87,6 +87,12 @@ public record SyncFrame(byte messageType, NoteId noteId, byte[] payload) {
      * seine Liste und seine Rechte neu.
      */
     public static final byte TYPE_VAULT_ACCESS_CHANGED = 15;
+    /**
+     * Client->Server (NoteId-Feld ohne Bedeutung): die Arbeitsbereiche dieses Geraets (ADR 0013),
+     * UTF-8, ein Pfad je Zeile, leer = ganzer Vault. Ankuendigungen ausserhalb gehen nicht mehr an
+     * diese Verbindung. Jede Meldung ersetzt die vorige.
+     */
+    public static final byte TYPE_SET_SCOPE = 16;
     /** Platzhalter im NoteId-Feld fuer Nachrichten, die keine Notiz betreffen. */
     public static final de.tstieh.stoneintelligence.domain.id.NoteId NO_NOTE =
         de.tstieh.stoneintelligence.domain.id.NoteId.of(new java.util.UUID(0, 0));

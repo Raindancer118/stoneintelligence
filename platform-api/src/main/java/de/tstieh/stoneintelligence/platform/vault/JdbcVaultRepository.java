@@ -12,7 +12,8 @@ public class JdbcVaultRepository implements VaultRepository {
     private static final RowMapper<Vault> VAULT_MAPPER = (rs, rowNum) -> new Vault(
         VaultId.of(rs.getString("id")),
         rs.getString("name"),
-        rs.getTimestamp("created_at").toInstant()
+        rs.getTimestamp("created_at").toInstant(),
+        rs.getBoolean("selective_sync")
     );
 
     private final JdbcClient jdbcClient;
@@ -23,7 +24,7 @@ public class JdbcVaultRepository implements VaultRepository {
 
     @Override
     public Vault create(String name) {
-        return jdbcClient.sql("INSERT INTO platform.vaults (name) VALUES (:name) RETURNING id, name, created_at")
+        return jdbcClient.sql("INSERT INTO platform.vaults (name) VALUES (:name) RETURNING id, name, created_at, selective_sync")
             .param("name", name)
             .query(VAULT_MAPPER)
             .single();
@@ -31,7 +32,7 @@ public class JdbcVaultRepository implements VaultRepository {
 
     @Override
     public Optional<Vault> findById(VaultId id) {
-        return jdbcClient.sql("SELECT id, name, created_at FROM platform.vaults WHERE id = :id")
+        return jdbcClient.sql("SELECT id, name, created_at, selective_sync FROM platform.vaults WHERE id = :id")
             .param("id", id.value())
             .query(VAULT_MAPPER)
             .optional();
@@ -39,9 +40,18 @@ public class JdbcVaultRepository implements VaultRepository {
 
     @Override
     public Optional<Vault> rename(VaultId id, String name) {
-        return jdbcClient.sql("UPDATE platform.vaults SET name = :name WHERE id = :id RETURNING id, name, created_at")
+        return jdbcClient.sql("UPDATE platform.vaults SET name = :name WHERE id = :id RETURNING id, name, created_at, selective_sync")
             .param("id", id.value())
             .param("name", name)
+            .query(VAULT_MAPPER)
+            .optional();
+    }
+
+    @Override
+    public Optional<Vault> setSelectiveSync(VaultId id, boolean selectiveSync) {
+        return jdbcClient.sql("UPDATE platform.vaults SET selective_sync = :on WHERE id = :id RETURNING id, name, created_at, selective_sync")
+            .param("id", id.value())
+            .param("on", selectiveSync)
             .query(VAULT_MAPPER)
             .optional();
     }

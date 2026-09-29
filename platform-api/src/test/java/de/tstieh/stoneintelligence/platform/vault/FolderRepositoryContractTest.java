@@ -33,6 +33,21 @@ public abstract class FolderRepositoryContractTest {
     }
 
     @Test
+    void should_listDirectChildren_andWhetherTheyHaveMore() {
+        folders.ensure(vaultId, "A/B/C", "tom");
+        folders.ensure(vaultId, "A/D", "tom");
+        folders.ensure(vaultId, "A_B%", "tom");
+        folders.ensure(vaultId, "Z", "tom");
+
+        assertThat(folders.children(vaultId, "")).containsExactly(
+            new FolderRepository.FolderChild("A", true), new FolderRepository.FolderChild("A_B%", false),
+            new FolderRepository.FolderChild("Z", false));
+        assertThat(folders.children(vaultId, "A")).containsExactly(
+            new FolderRepository.FolderChild("A/B", true), new FolderRepository.FolderChild("A/D", false));
+        assertThat(folders.children(vaultId, "A_B%")).isEmpty();
+    }
+
+    @Test
     void should_deleteAFolderWithEverythingBelow_butNotSimilarlyNamedSiblings() {
         folders.ensure(vaultId, "A/B/C", "tom");
         folders.ensure(vaultId, "A/BB", "tom");

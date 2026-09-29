@@ -52,6 +52,17 @@ public final class FakeNoteRepository implements NoteRepository {
     }
 
     @Override
+    public synchronized ScopedPage listScoped(VaultId vaultId, SyncScope scope, String afterPath, int pageSize,
+                                              java.util.Set<NoteKind> kinds) {
+        var matching = notes.values().stream()
+            .filter(note -> note.vaultId().equals(vaultId) && kinds.contains(note.kind()) && scope.covers(note.path()))
+            .filter(note -> note.path().compareTo(afterPath) > 0)
+            .sorted(java.util.Comparator.comparing(Note::path))
+            .toList();
+        return new ScopedPage(matching.stream().limit(pageSize).toList(), matching.size() <= pageSize);
+    }
+
+    @Override
     public synchronized java.util.List<Note> findByIds(VaultId vaultId, java.util.Collection<NoteId> ids) {
         return ids.stream().distinct().map(id -> findById(vaultId, id)).flatMap(Optional::stream).toList();
     }

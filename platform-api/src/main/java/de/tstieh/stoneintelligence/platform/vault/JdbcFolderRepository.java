@@ -28,6 +28,24 @@ public class JdbcFolderRepository implements FolderRepository {
     }
 
     @Override
+    public List<FolderChild> children(VaultId vaultId, String parent) {
+        // Praefixvergleich ohne LIKE (Unterstriche/Prozent im Namen); Bereichsscan ueber den Primaerschluessel.
+        return jdbcClient.sql("""
+                SELECT f.path, EXISTS (SELECT 1 FROM platform.folders c
+                                       WHERE c.vault_id = f.vault_id AND left(c.path, length(f.path) + 1) = f.path || '/') AS has_children
+                FROM platform.folders f
+                WHERE f.vault_id = :vaultId
+                  AND (:parent = '' OR left(f.path, length(:parent) + 1) = :parent || '/')
+                  AND strpos(substr(f.path, CASE WHEN :parent = '' THEN 1 ELSE length(:parent) + 2 END), '/') = 0
+                ORDER BY f.path COLLATE "C"
+                """)
+            .param("vaultId", vaultId.value())
+            .param("parent", parent)
+            .query((rs, rowNum) -> new FolderChild(rs.getString("path"), rs.getBoolean("has_children")))
+            .list();
+    }
+
+    @Override
     public List<String> ensure(VaultId vaultId, String path, String actor) {
         var created = new ArrayList<String>();
         for (var folder : FolderPaths.withParents(path)) {

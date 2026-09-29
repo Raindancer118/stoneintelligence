@@ -17,6 +17,7 @@ class RecordingVaultSubscriber implements VaultSubscriber {
     final Set<NoteId> joined = new java.util.HashSet<>();
     boolean contentUpdates = true;
     boolean folderEvents = true;
+    de.tstieh.stoneintelligence.platform.vault.SyncScope scope = de.tstieh.stoneintelligence.platform.vault.SyncScope.wholeVault();
 
     RecordingVaultSubscriber(String id) {
         this(id, null, false);
@@ -50,6 +51,11 @@ class RecordingVaultSubscriber implements VaultSubscriber {
     @Override
     public boolean wantsFolderEvents() {
         return folderEvents;
+    }
+
+    @Override
+    public de.tstieh.stoneintelligence.platform.vault.SyncScope scope() {
+        return scope;
     }
 
     @Override

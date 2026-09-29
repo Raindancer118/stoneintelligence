@@ -51,7 +51,7 @@ class ChangeControllerTest {
     }
 
     private ChangeController.Changes changes(String since) {
-        return controller.changes(vaultId.value().toString(), since, 500, "note,file", new TestingAuthenticationToken("ben", null));
+        return controller.changes(vaultId.value().toString(), since, 500, "note,file", null, new TestingAuthenticationToken("ben", null));
     }
 
     private Note note(String path) {
@@ -108,13 +108,13 @@ class ChangeControllerTest {
         }
         feed.folderChanged("Team");
 
-        var first = controller.changes(vaultId.value().toString(), cursor, 2, "note,file", new TestingAuthenticationToken("ben", null));
+        var first = controller.changes(vaultId.value().toString(), cursor, 2, "note,file", null, new TestingAuthenticationToken("ben", null));
         assertThat(first.more()).isTrue();
         assertThat(first.folders().changed()).isEmpty();
         var seen = new java.util.ArrayList<>(first.entries().stream().map(NoteController.ListedNoteResponse::path).toList());
         var next = first;
         while (next.more()) {
-            next = controller.changes(vaultId.value().toString(), next.cursor(), 2, "note,file", new TestingAuthenticationToken("ben", null));
+            next = controller.changes(vaultId.value().toString(), next.cursor(), 2, "note,file", null, new TestingAuthenticationToken("ben", null));
             next.entries().forEach(entry -> seen.add(entry.path()));
         }
 
@@ -155,7 +155,7 @@ class ChangeControllerTest {
         var file = notes.create(vaultId, "Team/bild.png", NoteLevel.of(1), "tom", NoteKind.FILE);
         feed.changed(file.id());
 
-        var delta = controller.changes(vaultId.value().toString(), cursor, 500, "note", new TestingAuthenticationToken("ben", null));
+        var delta = controller.changes(vaultId.value().toString(), cursor, 500, "note", null, new TestingAuthenticationToken("ben", null));
 
         assertThat(delta.folders().changed()).containsExactly("Team");
         assertThat(delta.entries()).isEmpty();
@@ -163,8 +163,27 @@ class ChangeControllerTest {
     }
 
     @Test
+    void should_limitEverythingToTheDevicesAreas() {
+        var cursor = changes(null).cursor();
+        var inside = note("Team/plan.md");
+        var outside = note("Kunden/vertrag.md");
+        feed.folderChanged("Kunden");
+        feed.folderChanged("Team/Protokolle");
+        feed.access(new ChangeFeed.AccessEvent("EVERYONE", null, "Kunden", null));
+        feed.access(new ChangeFeed.AccessEvent("EVERYONE", null, "Team/Geheim", null));
+
+        var delta = controller.changes(vaultId.value().toString(), cursor, 500, "note,file", java.util.List.of("Team"),
+            new TestingAuthenticationToken("ben", null));
+
+        assertThat(delta.entries()).extracting(NoteController.ListedNoteResponse::path).containsExactly(inside.path());
+        assertThat(delta.removed()).containsExactly(outside.id().value().toString());
+        assertThat(delta.folders().changed()).containsExactly("Team/Protokolle");
+        assertThat(delta.relist()).containsExactly("Team/Geheim");
+    }
+
+    @Test
     void should_refuseStrangersAndBrokenCursors() {
-        assertThatThrownBy(() -> controller.changes(vaultId.value().toString(), null, 500, "note", new TestingAuthenticationToken("eve", null)))
+        assertThatThrownBy(() -> controller.changes(vaultId.value().toString(), null, 500, "note", null, new TestingAuthenticationToken("eve", null)))
             .isInstanceOf(ForbiddenException.class);
         assertThatThrownBy(() -> changes("nonsense"))
             .isInstanceOfSatisfying(ResponseStatusException.class, e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));

@@ -57,6 +57,16 @@ public interface NoteRepository {
      * Eintraege, deren Pfad {@code query} enthaelt (Gross-/Kleinschreibung egal, {@code %}/{@code _} woertlich),
      * nach Pfad sortiert, hoechstens {@code limit}. Keine Sync-Semantik - nur fuer die Suche in der Oberflaeche.
      */
+    /**
+     * Eintraege in diesen Bereichen, nach Pfad geordnet, ab dem Pfad nach {@code afterPath} (exklusiv,
+     * {@code ""} = von vorn). Ohne Epoche: Vollstaendigkeit waehrend des Blaetterns sichert der
+     * Aenderungs-Feed, dessen Cursor ein Geraet vor dem Laden holt (ADR 0013).
+     */
+    ScopedPage listScoped(VaultId vaultId, SyncScope scope, String afterPath, int pageSize, java.util.Set<NoteKind> kinds);
+
+    record ScopedPage(java.util.List<Note> notes, boolean complete) {
+    }
+
     java.util.List<Note> search(VaultId vaultId, String query, java.util.Set<NoteKind> kinds, int limit);
 
     /**

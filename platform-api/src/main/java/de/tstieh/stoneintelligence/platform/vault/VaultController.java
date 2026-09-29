@@ -75,27 +75,37 @@ public class VaultController {
             authentication.getName());
     }
 
+    /** Umbenennen und/oder Arbeitsbereiche fuer alle Geraete vorgeben (ADR 0013) - nur mit Verwalten-Recht. */
     @org.springframework.web.bind.annotation.PatchMapping("/api/v1/vaults/{vaultId}")
     public VaultResponse rename(@org.springframework.web.bind.annotation.PathVariable String vaultId,
                                 @RequestBody RenameVaultRequest request, Authentication authentication) {
         var vId = de.tstieh.stoneintelligence.domain.id.VaultId.of(vaultId);
         access.require(vId, authentication.getName(), Permission.MANAGE);
-        if (request.name() == null || request.name().isBlank()) {
+        if (request.name() == null && request.selectiveSync() == null) {
+            throw new de.tstieh.stoneintelligence.platform.identity.InvalidGrantException("nothing to change");
+        }
+        if (request.name() != null && request.name().isBlank()) {
             throw new de.tstieh.stoneintelligence.platform.identity.InvalidGrantException("a vault needs a name");
         }
-        return vaults.rename(vId, request.name().strip()).map(VaultResponse::from)
-            .orElseThrow(() -> new ForbiddenException("no such vault"));
+        var updated = request.name() == null ? vaults.findById(vId) : vaults.rename(vId, request.name().strip());
+        if (request.selectiveSync() != null) {
+            updated = vaults.setSelectiveSync(vId, request.selectiveSync());
+        }
+        return updated.map(VaultResponse::from).orElseThrow(() -> new ForbiddenException("no such vault"));
     }
 
     public record CreateVaultRequest(String name) {
     }
 
-    public record RenameVaultRequest(String name) {
+    public record RenameVaultRequest(String name, Boolean selectiveSync) {
+        public RenameVaultRequest(String name) {
+            this(name, null);
+        }
     }
 
-    public record VaultResponse(String id, String name, Instant createdAt) {
+    public record VaultResponse(String id, String name, Instant createdAt, boolean selectiveSync) {
         static VaultResponse from(Vault vault) {
-            return new VaultResponse(vault.id().value().toString(), vault.name(), vault.createdAt());
+            return new VaultResponse(vault.id().value().toString(), vault.name(), vault.createdAt(), vault.selectiveSync());
         }
     }
 }

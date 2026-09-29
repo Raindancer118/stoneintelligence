@@ -40,6 +40,19 @@ public class FolderController {
         return access.readablePaths(vId, auth.getName(), folders.list(vId), path -> path + "/");
     }
 
+    /** Direkte, lesbare Unterordner - Baeume laden Ebene fuer Ebene statt aller Ordner auf einmal (ADR 0013). */
+    @GetMapping("/children")
+    public List<FolderRepository.FolderChild> children(@PathVariable String vaultId, @RequestParam(defaultValue = "") String path,
+                                                       Authentication auth) {
+        var vId = VaultId.of(vaultId);
+        access.requireMember(vId, auth.getName());
+        var parent = de.tstieh.stoneintelligence.platform.identity.AccessResolver.normalize(path);
+        var check = access.accessChecker(vId, auth.getName());
+        return folders.children(vId, parent).stream()
+            .filter(child -> check.apply(child.path() + "/").allows(de.tstieh.stoneintelligence.platform.identity.Permission.READ))
+            .toList();
+    }
+
     @PostMapping
     @Transactional
     public FolderResponse create(@PathVariable String vaultId, @RequestBody FolderRequest request, Authentication auth) {

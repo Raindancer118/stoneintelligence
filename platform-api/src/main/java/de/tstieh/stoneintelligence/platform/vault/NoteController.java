@@ -103,14 +103,36 @@ public class NoteController {
         @RequestParam(required = false) String cursor,
         @RequestParam(defaultValue = "100") int pageSize,
         @RequestParam(defaultValue = "note") String kinds,
+        @RequestParam(required = false) List<String> scope,
         Authentication authentication
     ) {
         var vId = VaultId.of(vaultId);
         access.requireMember(vId, authentication.getName());
+        if (scope != null && !scope.isEmpty()) {
+            return scoped(vId, cursor, pageSize, kinds, scope, authentication.getName());
+        }
         var page = notes.list(vId, cursor, pageSize, parseKinds(kinds));
         var readable = access.readableNotes(vId, authentication.getName(), page.notes());
         return new ReconciliationResponse(
             page.epochId(), page.complete(), page.nextCursor().orElse(null), listed(vId, authentication.getName(), readable));
+    }
+
+    /**
+     * Nur diese Arbeitsbereiche (ADR 0013), nach Pfad geblaettert. {@code cursor} ist hier der zuletzt
+     * gelieferte Pfad mit Praefix {@code p:} - fuer den Client weiterhin undurchsichtig.
+     */
+    private ReconciliationResponse scoped(VaultId vId, String cursor, int pageSize, String kinds, List<String> scope, String actor) {
+        SyncScope areas;
+        try {
+            areas = SyncScope.of(scope);
+        } catch (IllegalArgumentException tooMany) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, tooMany.getMessage());
+        }
+        var after = cursor != null && cursor.startsWith("p:") ? cursor.substring(2) : "";
+        var page = notes.listScoped(vId, areas, after, Math.clamp(pageSize, 1, 1000), parseKinds(kinds));
+        var readable = access.readableNotes(vId, actor, page.notes());
+        var next = page.complete() || page.notes().isEmpty() ? null : "p:" + page.notes().getLast().path();
+        return new ReconciliationResponse(java.util.UUID.randomUUID(), next == null, next, listed(vId, actor, readable));
     }
 
     /** Obergrenze der Pfadtreffer, die vor der Rechtepruefung geholt werden - gesperrte Treffer sollen kein Limit aufbrauchen. */
