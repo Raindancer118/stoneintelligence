@@ -73,6 +73,19 @@ public abstract class NoteRepositoryContractTest {
         }
 
         @Test
+        void should_findManyAtOnce_skippingUnknownAndForeignOnes() {
+            var repository = repository();
+            var vaultId = newVault();
+            var a = repository.create(vaultId, "a.md", NoteLevel.of(1), "tom");
+            var b = repository.create(vaultId, "b.md", NoteLevel.of(1), "tom");
+            var foreign = repository.create(newVault(), "c.md", NoteLevel.of(1), "tom");
+
+            assertThat(repository.findByIds(vaultId, java.util.List.of(a.id(), b.id(), foreign.id(), NoteId.newId())))
+                .containsExactlyInAnyOrder(a, b);
+            assertThat(repository.findByIds(vaultId, java.util.List.of())).isEmpty();
+        }
+
+        @Test
         void should_beEmpty_when_idIsUnknown() {
             assertThat(repository().findById(newVault(), NoteId.newId())).isEmpty();
         }

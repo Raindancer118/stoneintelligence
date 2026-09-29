@@ -1,6 +1,7 @@
 import type { AiChangeSet, AiChangeSetView, AiRevertReport } from "../ui/aiChanges";
 import type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
 import { obsidianFetch } from "./obsidianFetch";
+import type { FeedChanges } from "./serverMirror";
 import { withRateLimitRetry } from "./retryFetch";
 
 export type AccessTokenProvider = () => Promise<string>;
@@ -249,6 +250,35 @@ export class NoteApiClient {
   }
 
   /** Ordner des Vaults; `null`, wenn der Server noch keine Ordner-Synchronisation kennt. */
+  /**
+   * Aenderungs-Feed (ADR 0013). Ohne `since` nur ein Start-Cursor. `null`: der Server kennt den Feed
+   * noch nicht - dann weiter mit der vollen Liste.
+   */
+  async changes(vaultId: string, since: string | null, includeFiles: boolean): Promise<FeedChanges | null> {
+    const params = new URLSearchParams({ limit: "1000", kinds: includeFiles ? "note,file" : "note" });
+    if (since !== null) {
+      params.set("since", since);
+    }
+    const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/changes?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${await this.getAccessToken()}` },
+    });
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      throw new HttpError(response.status, "failed to read changes", await problemDetail(response));
+    }
+    return (await response.json()) as FeedChanges;
+  }
+
+  /** Ein Eintrag mit genau diesem Pfad, ueber die Server-Suche statt die ganze Liste. */
+  async findByPath(vaultId: string, path: string): Promise<NoteListItem | null> {
+    const params = new URLSearchParams({ q: path, limit: "200", kinds: "note,file" });
+    const result = await this.json<{ notes: NoteListItem[] }>(`/api/v1/vaults/${vaultId}/notes/search?${params.toString()}`,
+      "failed to search notes");
+    return result.notes.find((note) => note.path === path) ?? null;
+  }
+
   async listFolders(vaultId: string): Promise<string[] | null> {
     const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/folders`, {
       headers: { Authorization: `Bearer ${await this.getAccessToken()}` },

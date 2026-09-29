@@ -33,14 +33,14 @@ class ApiParityTest {
         "/api/v1/vaults/*/folders/rename", "Ordner verschiebt man im Obsidian-Dateibaum, die Webapp hat keinen Ordnerbaum",
         "/api/v1/vaults/*/ai/jobs/from-files", "Die Webapp laedt Dokumente direkt hoch statt aus dem Vault",
         "/api/v1/vaults/*/files", "Dateien legt der Datei-Sync an; die Webapp zeigt und laedt sie nur",
-        "/api/v1/vaults/*/folders", "Ordner verwaltet man im Obsidian-Dateibaum; die Webapp baut ihren Ordnerbaum aus den Pfaden der Notizen");
+        "/api/v1/vaults/*/folders", "Ordner verwaltet man im Obsidian-Dateibaum; die Webapp baut ihren Ordnerbaum aus den Pfaden der Notizen",
+        "/api/v1/vaults/*/changes", "Aenderungs-Feed fuer Geraete, die einen Vault spiegeln; die Webapp zeigt immer den aktuellen Serverstand");
 
     /** Nur in der Webapp noetig - mit Begruendung. */
     private static final Map<String, String> NOT_IN_PLUGIN = Map.of(
         "/api/v1/invitations/*", "Einladungen nimmt man ueber den Link aus der Mail im Browser an",
         "/api/v1/invitations/*/accept", "Einladungen nimmt man ueber den Link aus der Mail im Browser an",
-        "/api/v1/vaults/*/notes/*/content", "Das Plugin uebertraegt Inhalte live ueber die Sync-Verbindung (Yjs)",
-        "/api/v1/vaults/*/notes/search", "In Obsidian sucht Obsidians eigene Suche im lokalen Vault");
+        "/api/v1/vaults/*/notes/*/content", "Das Plugin uebertraegt Inhalte live ueber die Sync-Verbindung (Yjs)");
 
     private static final Pattern CLIENT_PATH = Pattern.compile("/api/v1/[^\"'`\\s?]*");
 

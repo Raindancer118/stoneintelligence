@@ -142,13 +142,9 @@ public class NoteController {
     }
 
     private List<ListedNoteResponse> listed(VaultId vId, String actor, List<Note> readable) {
-        var revisions = snapshots.latestRevisions(readable.stream().filter(note -> !note.isFile()).map(Note::id).toList());
-        var files = fileVersions.current(readable.stream().filter(Note::isFile).map(Note::id).toList());
-        var entryAccess = access.entryAccess(vId, actor, readable);
-        return readable.stream().map(note -> (note.isFile()
-            ? ListedNoteResponse.fromFile(note, files.get(note.id()))
-            : ListedNoteResponse.from(note, revisions.getOrDefault(note.id(), 0L))).with(entryAccess.get(note.id()))).toList();
+        return new EntryListing(snapshots, fileVersions, access).listed(vId, actor, readable);
     }
+
 
     /** {@code note} (Standard, auch fuer aeltere Clients) oder {@code note,file} - ADR 0009 Punkt 5. */
     private static java.util.Set<NoteKind> parseKinds(String kinds) {

@@ -458,4 +458,33 @@ describe("NoteApiClient access (ADR 0011)", () => {
       expect(fakeFetch.mock.calls[2][1]).toEqual(expect.objectContaining({ method: "POST" }));
     });
   });
+  describe("changes", () => {
+    it("asks for a start cursor, then for changes since it, and knows old servers", async () => {
+      const fakeFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ cursor: "7" }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ cursor: "9", entries: [] }) })
+        .mockResolvedValueOnce({ ok: false, status: 404 });
+      const client = new NoteApiClient("https://platform.example", vi.fn().mockResolvedValue("t"), fakeFetch as unknown as typeof fetch);
+
+      expect((await client.changes("v1", null, true))?.cursor).toBe("7");
+      expect((await client.changes("v1", "7", false))?.cursor).toBe("9");
+      expect(await client.changes("v1", "9", false)).toBeNull();
+
+      expect(fakeFetch.mock.calls.map(([url]) => url)).toEqual([
+        "https://platform.example/api/v1/vaults/v1/changes?limit=1000&kinds=note%2Cfile",
+        "https://platform.example/api/v1/vaults/v1/changes?limit=1000&kinds=note&since=7",
+        "https://platform.example/api/v1/vaults/v1/changes?limit=1000&kinds=note&since=9",
+      ]);
+    });
+
+    it("finds an entry by its exact path via the server search", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ notes: [
+        { id: "n1", path: "Team/plan-alt.md" }, { id: "n2", path: "Team/plan.md" },
+      ] }) });
+      const client = new NoteApiClient("https://platform.example", vi.fn().mockResolvedValue("t"), fakeFetch as unknown as typeof fetch);
+
+      expect((await client.findByPath("v1", "Team/plan.md"))?.id).toBe("n2");
+      expect(fakeFetch.mock.calls[0][0]).toBe("https://platform.example/api/v1/vaults/v1/notes/search?q=Team%2Fplan.md&limit=200&kinds=note%2Cfile");
+    });
+  });
 });

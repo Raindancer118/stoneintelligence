@@ -52,6 +52,11 @@ public final class FakeNoteRepository implements NoteRepository {
     }
 
     @Override
+    public synchronized java.util.List<Note> findByIds(VaultId vaultId, java.util.Collection<NoteId> ids) {
+        return ids.stream().distinct().map(id -> findById(vaultId, id)).flatMap(Optional::stream).toList();
+    }
+
+    @Override
     public synchronized Note rename(VaultId vaultId, NoteId noteId, String newPath) {
         var existing = findById(vaultId, noteId).orElseThrow(() -> new NoteNotFoundException(vaultId, noteId));
         var renamed = new Note(existing.id(), existing.vaultId(), newPath, existing.level(),

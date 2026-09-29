@@ -75,6 +75,18 @@ public class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
+    public java.util.List<Note> findByIds(VaultId vaultId, java.util.Collection<NoteId> ids) {
+        if (ids.isEmpty()) {
+            return java.util.List.of();
+        }
+        return jdbcClient.sql("SELECT * FROM platform.notes WHERE vault_id = :vaultId AND id IN (:ids)")
+            .param("vaultId", vaultId.value())
+            .param("ids", ids.stream().map(NoteId::value).toList())
+            .query(NOTE_MAPPER)
+            .list();
+    }
+
+    @Override
     public boolean hasEntriesUnder(VaultId vaultId, String folder) {
         // Praefixvergleich ohne LIKE, damit _ und % im Ordnernamen nichts bedeuten.
         return jdbcClient.sql("""

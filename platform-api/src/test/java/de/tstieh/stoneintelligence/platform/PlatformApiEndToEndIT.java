@@ -289,6 +289,29 @@ class PlatformApiEndToEndIT {
         assertThat(vaults).extracting(node -> node.get("name").asText()).contains("Auto-Vault");
     }
 
+    // ADR 0013: Geraete fragen nur noch, was sich seit ihrem Cursor geaendert hat.
+    @Test
+    void should_deliverOnlyWhatChanged_sinceADevicesCursor() throws Exception {
+        var auth = bearerAuth("feed-reader");
+        var vault = post("/api/v1/vaults", auth, Map.of("name", "Feed"), Map.class);
+        var vaultPath = "/api/v1/vaults/" + vault.get("id");
+        var old = post(vaultPath + "/notes", auth, Map.of("path", "alt.md", "noteLevel", 1), Map.class);
+        var start = json.readTree(get(vaultPath + "/changes", auth).body()).get("cursor").asText();
+
+        var fresh = post(vaultPath + "/notes", auth, Map.of("path", "Team/neu.md", "noteLevel", 1), Map.class);
+        assertThat(postRaw(vaultPath + "/notes/" + old.get("id") + "/content", auth,
+            Map.of("expectedRevision", 0, "update", "AQID")).statusCode()).isEqualTo(200);
+        var delta = json.readTree(get(vaultPath + "/changes?since=" + start + "&kinds=note,file", auth).body());
+
+        var ids = new java.util.HashSet<String>();
+        delta.get("entries").forEach(entry -> ids.add(entry.get("id").asText()));
+        assertThat(ids).containsExactlyInAnyOrder(fresh.get("id").toString(), old.get("id").toString());
+        assertThat(delta.get("folders").get("changed").toString()).contains("Team");
+        var next = delta.get("cursor").asText();
+        assertThat(json.readTree(get(vaultPath + "/changes?since=" + next, auth).body()).get("entries")).isEmpty();
+        assertThat(get(vaultPath + "/changes", bearerAuth("stranger")).statusCode()).isEqualTo(403);
+    }
+
     @Test
     void should_reportContentRevision_perNote_inReconciliationList() throws Exception {
         var auth = bearerAuth("revision-reader");

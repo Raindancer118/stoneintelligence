@@ -24,6 +24,9 @@ public interface NoteRepository {
      */
     Optional<Note> findById(VaultId vaultId, NoteId id);
 
+    /** Die noch existierenden dieser Eintraege, Reihenfolge beliebig (Aenderungs-Feed, ADR 0013). */
+    java.util.List<Note> findByIds(VaultId vaultId, java.util.Collection<NoteId> ids);
+
     /** Liegt irgendeine Notiz oder Datei unterhalb dieses Ordners? */
     boolean hasEntriesUnder(VaultId vaultId, String folder);
 
