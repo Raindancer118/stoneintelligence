@@ -82,7 +82,7 @@ class LinkingServiceTest {
 
     private NoteId note(String path, String text) {
         var note = notes.create(vaultId, path, NoteLevel.of(1), "tom");
-        relay.saveIfCurrent(note.id(), 0, yjs.change(List.of(), text).orElseThrow());
+        relay.saveIfCurrent(note.id(), 0, yjs.change(List.of(), text).orElseThrow(), "tom");
         return note.id();
     }
 

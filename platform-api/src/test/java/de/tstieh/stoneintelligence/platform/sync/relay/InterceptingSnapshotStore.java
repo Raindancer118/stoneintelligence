@@ -23,13 +23,23 @@ final class InterceptingSnapshotStore implements SnapshotStore {
     }
 
     @Override
-    public UpdateRecord append(NoteId noteId, byte[] payload, boolean ciphertext) {
-        return delegate.append(noteId, payload, ciphertext);
+    public UpdateRecord append(NoteId noteId, byte[] payload, boolean ciphertext, String actor) {
+        return delegate.append(noteId, payload, ciphertext, actor);
     }
 
     @Override
-    public java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload) {
-        return delegate.appendIfCurrent(noteId, expectedRevision, payload);
+    public java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload, String actor) {
+        return delegate.appendIfCurrent(noteId, expectedRevision, payload, actor);
+    }
+
+    @Override
+    public List<UpdateRecord> listUpTo(NoteId noteId, long serverSequence) {
+        return delegate.listUpTo(noteId, serverSequence);
+    }
+
+    @Override
+    public List<UpdateInfo> log(NoteId noteId) {
+        return delegate.log(noteId);
     }
 
     @Override

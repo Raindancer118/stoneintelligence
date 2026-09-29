@@ -403,7 +403,7 @@ public class AiWriteService {
                 return before;
             }
             var revision = history.isEmpty() ? 0 : history.getLast().serverSequence();
-            var saved = relay.saveIfCurrent(note.id(), revision, update.get());
+            var saved = relay.saveIfCurrent(note.id(), revision, update.get(), actor);
             if (saved.isPresent()) {
                 audit.record(note.vaultId(), note.id(), actor, "note.content-updated", Map.of("revision", saved.get().serverSequence()));
                 notes.markEdited(note.vaultId(), note.id(), actor, clock.get());

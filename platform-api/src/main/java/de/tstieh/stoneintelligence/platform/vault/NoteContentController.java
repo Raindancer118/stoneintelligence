@@ -74,7 +74,7 @@ public class NoteContentController {
                 || request.update().length < 2 || request.update().length > 2 * 1024 * 1024) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid update or revision");
         }
-        var saved = relay.saveIfCurrent(note.id(), request.expectedRevision(), request.update())
+        var saved = relay.saveIfCurrent(note.id(), request.expectedRevision(), request.update(), auth.getName())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Note changed; reload before saving"));
         audit.record(note.vaultId(), note.id(), auth.getName(), "note.content-updated",
             java.util.Map.of("revision", saved.serverSequence()));
