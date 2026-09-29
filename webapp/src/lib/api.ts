@@ -81,6 +81,7 @@ export interface AiRevertReport { reverted: number; conflicts: { path: string; r
 export type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
 export type { HistoryEvent, NoteActivity, NoteHistory } from "./historyText";
 import type { HistoryEvent, NoteHistory } from "./historyText";
+import type { Restored, VersionList, VersionText } from "./versionText";
 import type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
 export interface VaultMember { subject: string; groups: { id: string; name: string }[]; permissions: Permission[]; }
 /** `permissions === null` heisst "wie im Vault", eine leere Liste "nichts". */
@@ -165,6 +166,12 @@ export const api = {
   saveContent: (vaultId: string, noteId: string, expectedRevision: number, update: string) => request<{ revision: number }>(
     `/api/v1/vaults/${vaultId}/notes/${noteId}/content`, { method: "POST", body: JSON.stringify({ expectedRevision, update }) }),
   noteHistory: (vaultId: string, noteId: string) => request<NoteHistory>(`/api/v1/vaults/${vaultId}/notes/${noteId}/history`),
+  noteVersions: (vaultId: string, noteId: string, limit = 100) =>
+    request<VersionList>(`/api/v1/vaults/${vaultId}/notes/${noteId}/versions?limit=${limit}`),
+  noteVersion: (vaultId: string, noteId: string, revision: number) =>
+    request<VersionText>(`/api/v1/vaults/${vaultId}/notes/${noteId}/versions/${revision}`),
+  restoreVersion: (vaultId: string, noteId: string, revision: number) =>
+    request<Restored>(`/api/v1/vaults/${vaultId}/notes/${noteId}/versions/${revision}/restore`, { method: "POST" }),
   vaultLog: (vaultId: string, path = "", limit = 100) =>
     request<HistoryEvent[]>(`/api/v1/vaults/${vaultId}/audit?${new URLSearchParams({ path, limit: String(limit) })}`),
   listVaults: () => request<Vault[]>("/api/v1/vaults"),

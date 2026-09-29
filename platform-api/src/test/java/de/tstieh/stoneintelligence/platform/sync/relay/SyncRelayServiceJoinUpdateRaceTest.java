@@ -36,7 +36,7 @@ class SyncRelayServiceJoinUpdateRaceTest {
         // gelaufen, sonst wuerde er den Broadcast unten gar nicht erst sehen koennen). Ein echtes
         // Update fuer dieselbe Notiz trifft genau in diesem Fenster ein.
         var updateThread = new Thread(
-            () -> relay.onUpdate(noteId, updater, concurrentPayload, false), "update-thread");
+            () -> relay.onUpdate(noteId, updater, concurrentPayload, false, "tom"), "update-thread");
         updateThread.start();
         // Kurzes Zeitfenster geben, damit das Update - OHNE Fix - tatsaechlich die Chance hat,
         // fertig zu laufen, waehrend der Join noch blockiert ist (mit Fix kann es das nicht: es

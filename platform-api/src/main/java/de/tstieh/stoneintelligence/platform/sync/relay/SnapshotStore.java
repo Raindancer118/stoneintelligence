@@ -10,11 +10,18 @@ import de.tstieh.stoneintelligence.domain.id.NoteId;
  */
 public interface SnapshotStore {
 
-    UpdateRecord append(NoteId noteId, byte[] payload, boolean ciphertext);
+    /** {@code actor}: wer das Update geschrieben hat (Person, {@code ki:…}); Grundlage des Versionsverlaufs. */
+    UpdateRecord append(NoteId noteId, byte[] payload, boolean ciphertext, String actor);
 
-    java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload);
+    java.util.Optional<UpdateRecord> appendIfCurrent(NoteId noteId, long expectedRevision, byte[] payload, String actor);
 
     List<UpdateRecord> listSince(NoteId noteId, long afterServerSequence);
+
+    /** Updates bis einschliesslich {@code serverSequence} - der Stand der Notiz zu dieser Revision. */
+    List<UpdateRecord> listUpTo(NoteId noteId, long serverSequence);
+
+    /** Wer wann geschrieben hat, ohne die Inhalte, aelteste zuerst. */
+    List<UpdateInfo> log(NoteId noteId);
 
     /**
      * Hoechste {@code server_sequence} je Note (noch ohne Updates = 0) - EINE Abfrage fuer eine

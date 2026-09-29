@@ -58,13 +58,13 @@ class AiWriteServiceTest {
     /** Wie ein Mensch schreibt: ueber den normalen Yjs-Weg, nicht ueber den KI-Dienst. */
     private NoteId humanNote(String path, String text) {
         var note = notes.create(vaultId, path, NoteLevel.of(1), "tom");
-        relay.saveIfCurrent(note.id(), 0, yjs.change(List.of(), text).orElseThrow());
+        relay.saveIfCurrent(note.id(), 0, yjs.change(List.of(), text).orElseThrow(), "tom");
         return note.id();
     }
 
     private void humanEdit(NoteId noteId, String text) {
         var history = snapshots.listSince(noteId, 0);
-        relay.saveIfCurrent(noteId, history.size(), yjs.change(history.stream().map(r -> r.payload()).toList(), text).orElseThrow());
+        relay.saveIfCurrent(noteId, history.size(), yjs.change(history.stream().map(r -> r.payload()).toList(), text).orElseThrow(), "tom");
     }
 
     private static LinkingSettings linking(boolean humans, Integer max) {
@@ -236,7 +236,7 @@ class AiWriteServiceTest {
         @Test
         void should_letEachServiceReadOnlyItsLevels() {
             var intern = notes.create(vaultId, "Intern.md", NoteLevel.of(2), "tom");
-            relay.saveIfCurrent(intern.id(), 0, yjs.change(List.of(), "intern\n").orElseThrow());
+            relay.saveIfCurrent(intern.id(), 0, yjs.change(List.of(), "intern\n").orElseThrow(), "tom");
 
             assertThat(service.readText(vaultId, intern.id(), LOKAL)).isEqualTo("intern\n");
             assertThatThrownBy(() -> service.readText(vaultId, intern.id(), EXTERN)).isInstanceOf(AiWriteRefusedException.class);
@@ -297,7 +297,7 @@ class AiWriteServiceTest {
             var humanUpdate = yjs.change(history.stream().map(r -> r.payload()).toList(), "Mensch: Absatz A\n\nAbsatz B\n").orElseThrow();
 
             service.updateNote(vaultId, changeSet.id(), created.noteId(), "Absatz A\n\nAbsatz B, von der KI\n");
-            relay.saveIfCurrent(created.noteId(), snapshots.listSince(created.noteId(), 0).size(), humanUpdate);
+            relay.saveIfCurrent(created.noteId(), snapshots.listSince(created.noteId(), 0).size(), humanUpdate, "tom");
 
             assertThat(service.readText(vaultId, created.noteId(), EXTERN)).isEqualTo("Mensch: Absatz A\n\nAbsatz B, von der KI\n");
         }
