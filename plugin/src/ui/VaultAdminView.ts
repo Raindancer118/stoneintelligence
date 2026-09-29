@@ -16,6 +16,9 @@ export interface VaultAdminHost {
   accountName(): string | null;
   openInvite(): void;
   vaultRenamed(name: string): void;
+  /** Vorgabe „nur Arbeitsbereiche" (ADR 0013), wie zuletzt vom Server gelesen. */
+  selectiveSync(): boolean;
+  selectiveSyncChanged(enabled: boolean): void;
 }
 
 export type Tab = "members" | "groups" | "roles" | "invitations" | "ai" | "log";
@@ -148,6 +151,14 @@ export class VaultAdminView extends ItemView {
               this.host.vaultRenamed(renamed.name);
             }, `Der Vault heißt jetzt „${name.trim()}“.`);
           }
+        }));
+      new Setting(root).setName("Nur Arbeitsbereiche synchronisieren")
+        .setDesc("Für große Vaults: Jedes Gerät lädt nur die Ordner, die seine Person wählt, statt des ganzen Vaults. Einzelne Geräte können es trotzdem umstellen.")
+        .addToggle((toggle) => toggle.setValue(this.host.selectiveSync()).setDisabled(this.busy).onChange((enabled) => {
+          void this.run(async (api, vaultId) => {
+            const updated = await api.setSelectiveSync(vaultId, enabled);
+            this.host.selectiveSyncChanged(updated.selectiveSync ?? enabled);
+          }, enabled ? "Geräte synchronisieren jetzt nur ihre Arbeitsbereiche." : "Geräte synchronisieren wieder den ganzen Vault.");
         }));
     }
     const tabs = root.createDiv({ cls: "stoneintelligence-admin-tabs" });

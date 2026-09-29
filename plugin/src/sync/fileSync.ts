@@ -29,6 +29,8 @@ export interface FileSyncPorts {
   /** Anderswo geloescht, hier aber veraendert: nachfragen (behalten → {@link FileSync.keepAfterDeletion}). */
   askDeletionDecision(path: string): void;
   contentType(path: string): string;
+  /** Vermisst, aber noch da (etwa ausserhalb der Arbeitsbereiche, ADR 0013): weiter aktuell halten. */
+  stillThere?(path: string): void;
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -327,6 +329,8 @@ export class FileSync {
       this.unmap(id);
       this.state.blockedPaths[path] = "Kein Zugriff mehr auf diese Datei.";
       this.ports.report(path, "Kein Zugriff mehr auf diese Datei. Die lokale Datei bleibt unverändert.");
+    } else {
+      this.ports.stillThere?.(path);
     }
   }
 

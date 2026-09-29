@@ -740,4 +740,28 @@ describe("MultiplexedTransport", () => {
       await waitUntilConnecting(socket);
     });
   });
+  describe("work areas", () => {
+    it("reports the device's areas on every connection and whenever they change", async () => {
+      const first = new FakeRealSocket();
+      const second = new FakeRealSocket();
+      const sockets = [first, second];
+      const transport = new MultiplexedTransport(async () => "wss://example.invalid", () => sockets.shift() as FakeRealSocket, {
+        sleep: vi.fn().mockResolvedValue(undefined),
+      });
+      const scopeFrames = (socket: FakeRealSocket) => socket.sent.filter((bytes) => bytes[0] === 16)
+        .map((bytes) => new TextDecoder().decode(bytes.slice(1 + 36)));
+      transport.setScope(["Team", "Kunden/Vertrag.md"]);
+      transport.start();
+      await waitUntilConnecting(first);
+      first.open();
+
+      transport.setScope(null);
+      first.close();
+      await waitUntilConnecting(second);
+      second.open();
+
+      expect(scopeFrames(first)).toEqual(["Team\nKunden/Vertrag.md", ""]);
+      expect(scopeFrames(second)).toEqual([]);
+    });
+  });
 });

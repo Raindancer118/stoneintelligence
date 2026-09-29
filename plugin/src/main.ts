@@ -51,7 +51,11 @@ import { type Tab as VaultAdminTab, VaultAdminView, VIEW_TYPE_VAULT_ADMIN } from
 import { AiReadModal, type AiReadTarget } from "./ui/AiReadModal";
 import { canReadWithAi } from "./sync/aiJobText";
 import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
+import { FolderPickerModal } from "./ui/FolderPickerModal";
+import { FetchFromVaultModal } from "./ui/FetchFromVaultModal";
+import { confirmAction } from "./ui/ConfirmModal";
 import { ServerMirror } from "./sync/serverMirror";
+import { effectiveScope, inScope, isAreasMode, outOfScope, scopeKey } from "./sync/workAreas";
 import { presentStatus, type StatusPresentation } from "./ui/statusPresentation";
 import { type Collaborator, type LiveNote, StatusView, VIEW_TYPE_STATUS } from "./ui/StatusView";
 
@@ -245,6 +249,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       this.askDeletionDecision(path);
     },
     contentType: contentTypeFor,
+    stillThere: (path) => this.pinIfOutsideAreas(path),
   });
   private settingsSaveTimer: number | null = null;
   /** Loeschkonflikte werden nacheinander gefragt, nie mehrere Dialoge uebereinander. */
@@ -296,6 +301,11 @@ export default class StoneIntelligencePlugin extends Plugin {
       vaultName: () => this.vaultName(),
       accountName: () => this.accountName(),
       openInvite: () => this.openInvite(),
+      selectiveSync: () => this.settings.vaultId ? this.vaultState().vaultSelectiveSync ?? false : false,
+      selectiveSyncChanged: (enabled) => {
+        this.vaultState().vaultSelectiveSync = enabled;
+        this.scopeChanged();
+      },
       vaultRenamed: (name) => {
         this.settings.vaultName = name;
         void this.saveSettings();
@@ -768,6 +778,10 @@ export default class StoneIntelligencePlugin extends Plugin {
         await this.saveSettings();
         this.activity.touch();
       }
+      if (vault && (vault.selectiveSync ?? false) !== (this.vaultState().vaultSelectiveSync ?? false)) {
+        this.vaultState().vaultSelectiveSync = vault.selectiveSync ?? false;
+        this.scopeChanged();
+      }
     } catch {
       // Nur Anzeige - der Sync haengt nicht davon ab.
     }
@@ -944,6 +958,8 @@ export default class StoneIntelligencePlugin extends Plugin {
     // Befehls-IDs der Vorversion beibehalten - sonst verlieren Nutzer ihre Tastenkuerzel.
     this.addCommand({ id: "stoneintelligence-resync-all", name: "Jetzt synchronisieren", callback: () => this.syncNow() });
     this.addCommand({ id: "stoneintelligence-show-status", name: "Sync-Übersicht öffnen", callback: () => void this.activateStatusView() });
+    this.addCommand({ id: "stoneintelligence-fetch-from-vault", name: "Aus dem Vault holen…", callback: () => this.openFetchFromVault() });
+    this.addCommand({ id: "stoneintelligence-add-area", name: "Arbeitsbereich hinzufügen…", callback: () => this.openAreaPicker() });
     this.addCommand({
       id: "stoneintelligence-login",
       name: "Anmelden",
@@ -1311,6 +1327,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         subscribeFileEvents: true,
         subscribeAccessEvents: true,
       });
+      this.transport.setScope(this.currentScope());
     }
     return this.transport;
   }
@@ -1417,20 +1434,207 @@ export default class StoneIntelligencePlugin extends Plugin {
   private async serverEntries(vaultId: string, includeFiles: boolean): Promise<NoteListItem[]> {
     if (!this.feedUnsupported) {
       await this.dedupeServerRefresh(() => this.refreshServer(vaultId, includeFiles));
-      if (!this.feedUnsupported && this.mirror.isReadyFor(vaultId, kindsFor(includeFiles))) {
+      if (!this.feedUnsupported && this.mirror.isReadyFor(vaultId, this.mirrorKey(includeFiles))) {
         return this.mirror.entries();
       }
     }
-    return includeFiles ? this.noteApiClient.listAllEntries(vaultId) : this.noteApiClient.listAllNotes(vaultId);
+    const scope = this.currentScope();
+    return includeFiles ? this.noteApiClient.listAllEntries(vaultId, scope) : this.noteApiClient.listAllNotes(vaultId, scope);
+  }
+
+  /** Fuer den Einstellungs-Tab: `null` ohne verbundenen Vault. */
+  areaSummary(): { enabled: boolean; vaultDefault: boolean; areas: string[]; pinned: number } | null {
+    if (!this.settings.vaultId) {
+      return null;
+    }
+    const state = this.vaultState();
+    return {
+      enabled: isAreasMode(state, state.vaultSelectiveSync ?? false),
+      vaultDefault: state.vaultSelectiveSync ?? false,
+      areas: [...(state.areas ?? [])].sort(),
+      pinned: (state.pinned ?? []).length,
+    };
+  }
+
+  async setAreasMode(enabled: boolean): Promise<void> {
+    this.vaultState().areasMode = enabled;
+    this.scopeChanged();
+    if (enabled) {
+      await this.offerAreaCleanup();
+    }
+  }
+
+  openAreaPicker(): void {
+    if (!this.isReady()) {
+      new Notice("StoneIntelligence: Erst anmelden und einen Vault verbinden.");
+      return;
+    }
+    const state = this.vaultState();
+    new FolderPickerModal(this.app, (path) => this.noteApiClient.folderChildren(this.settings.vaultId, path),
+      (path) => {
+        state.areas = [...new Set([...(state.areas ?? []), path])];
+        if (!isAreasMode(state, state.vaultSelectiveSync ?? false)) {
+          state.areasMode = true;
+        }
+        this.scopeChanged();
+        new Notice(`StoneIntelligence: „${path}“ wird jetzt auf diesem Gerät synchronisiert.`);
+      },
+      (path) => (state.areas ?? []).some((area) => path === area || path.startsWith(`${area}/`)),
+    ).open();
+  }
+
+  async removeArea(path: string): Promise<void> {
+    const state = this.vaultState();
+    state.areas = (state.areas ?? []).filter((area) => area !== path);
+    this.scopeChanged();
+    await this.offerAreaCleanup();
+  }
+
+  async releasePinned(): Promise<void> {
+    this.vaultState().pinned = [];
+    this.scopeChanged();
+    await this.offerAreaCleanup();
+  }
+
+  /** „Aus dem Vault holen…": Notiz suchen, anheften, holen und oeffnen, sobald sie da ist. */
+  openFetchFromVault(): void {
+    if (!this.isReady()) {
+      new Notice("StoneIntelligence: Erst anmelden und einen Vault verbinden.");
+      return;
+    }
+    new FetchFromVaultModal(this.app, (query) => this.noteApiClient.searchNotes(this.settings.vaultId, query),
+      (item) => void this.fetchFromVault(item.path)).open();
+  }
+
+  private async fetchFromVault(path: string): Promise<void> {
+    const state = this.vaultState();
+    if (!inScope(path, this.currentScope())) {
+      state.pinned = [...new Set([...(state.pinned ?? []), path])];
+      this.scopeChanged();
+    } else {
+      this.requestPass();
+    }
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) {
+        await this.app.workspace.getLeaf(false).openFile(file);
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+    }
+    new Notice(`StoneIntelligence: „${path}“ wird geholt – das dauert gerade länger.`);
+  }
+
+  /**
+   * Nach dem Verkleinern der Bereiche: Kopien ausserhalb duerfen weg, wenn die Person zustimmt. Was
+   * hier geaendert und noch nicht uebertragen ist, bleibt immer und wird angeheftet.
+   */
+  private async offerAreaCleanup(): Promise<void> {
+    const scope = this.currentScope();
+    if (scope === null) {
+      return;
+    }
+    const state = this.vaultState();
+    const notes = outOfScope(Object.keys(state.noteIds), scope);
+    const files = outOfScope(Object.keys(state.fileIds), scope);
+    if (notes.length + files.length === 0) {
+      return;
+    }
+    const remove = await confirmAction(this.app, "Außerhalb der Arbeitsbereiche",
+      `${notes.length + files.length} Notizen und Dateien auf diesem Gerät liegen außerhalb deiner Arbeitsbereiche. `
+      + "Sollen diese Kopien hier entfernt werden (in den Papierkorb)? Auf dem Server und bei allen anderen bleibt alles, "
+      + "und was du hier geändert und noch nicht übertragen hast, bleibt ebenfalls. Ohne Entfernen bleiben sie angeheftet und aktuell.",
+      "Vom Gerät entfernen");
+    const keep: string[] = [];
+    if (!remove) {
+      keep.push(...notes, ...files);
+    } else {
+      for (const path of notes) {
+        const noteId = state.noteIds[path];
+        if (!noteId || await this.hasUnsyncedEdits(noteId, path) || state.pendingOps.some((op) => "noteId" in op && op.noteId === noteId)) {
+          keep.push(path);
+          continue;
+        }
+        this.detachLive(path);
+        this.unmapNote(noteId);
+        await this.removeLocalCopy(path);
+      }
+      for (const path of files) {
+        const id = state.fileIds[path];
+        const meta = id ? state.fileMeta[id] : undefined;
+        const file = this.app.vault.getAbstractFileByPath(path);
+        const changed = !meta || (file instanceof TFile && (file.stat.mtime !== meta.mtime || file.stat.size !== meta.size));
+        if (!id || changed) {
+          keep.push(path);
+          continue;
+        }
+        delete state.fileIds[path];
+        delete state.fileMeta[id];
+        await this.removeLocalCopy(path);
+      }
+    }
+    if (keep.length > 0) {
+      state.pinned = [...new Set([...(state.pinned ?? []), ...keep])];
+    }
+    this.scopeChanged();
+  }
+
+  private async removeLocalCopy(path: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      return;
+    }
+    this.serverDrivenPaths.add(path);
+    try {
+      await this.app.fileManager.trashFile(file);
+      this.activity.log("deleted", path, "Außerhalb der Arbeitsbereiche, vom Gerät entfernt");
+    } finally {
+      this.serverDrivenPaths.delete(path);
+    }
+  }
+
+  /** Arbeitsbereiche dieses Geraets (ADR 0013); `null` = der ganze Vault. */
+  currentScope(): string[] | null {
+    if (!this.settings.vaultId) {
+      return null;
+    }
+    const state = this.vaultState();
+    return effectiveScope(state, state.vaultSelectiveSync ?? false);
+  }
+
+  private mirrorKey(includeFiles: boolean): string {
+    return `${kindsFor(includeFiles)}|${scopeKey(this.currentScope())}`;
+  }
+
+  /** Bereiche geaendert: Server erfaehrt es sofort, die Liste wird fuer die neuen Bereiche neu geladen. */
+  private scopeChanged(): void {
+    this.transport?.setScope(this.currentScope());
+    this.requestSettingsSave();
+    this.requestPass();
+  }
+
+  /**
+   * Eine Notiz oder Datei ausserhalb der Bereiche ist hier vorhanden (selbst angelegt, geholt, von
+   * frueher): sie bleibt aktuell, statt stillschweigend nicht mehr abgeglichen zu werden.
+   */
+  private pinIfOutsideAreas(path: string): void {
+    const scope = this.currentScope();
+    if (scope === null || inScope(path, scope)) {
+      return;
+    }
+    const state = this.vaultState();
+    state.pinned = [...new Set([...(state.pinned ?? []), path])];
+    this.scopeChanged();
   }
 
   private async refreshServer(vaultId: string, includeFiles: boolean): Promise<void> {
-    const kinds = kindsFor(includeFiles);
+    const kinds = this.mirrorKey(includeFiles);
+    const scope = this.currentScope();
     if (this.mirror.isReadyFor(vaultId, kinds) && this.mirror.cursor !== null) {
       try {
         let page;
         do {
-          page = await this.noteApiClient.changes(vaultId, this.mirror.cursor, includeFiles);
+          page = await this.noteApiClient.changes(vaultId, this.mirror.cursor, includeFiles, scope);
           if (page === null) {
             this.feedUnsupported = true;
             this.mirror.reset();
@@ -1452,13 +1656,13 @@ export default class StoneIntelligencePlugin extends Plugin {
         this.mirror.reset();
       }
     }
-    const start = await this.noteApiClient.changes(vaultId, null, includeFiles);
+    const start = await this.noteApiClient.changes(vaultId, null, includeFiles, scope);
     if (start === null) {
       this.feedUnsupported = true;
       this.mirror.reset();
       return;
     }
-    const entries = includeFiles ? await this.noteApiClient.listAllEntries(vaultId) : await this.noteApiClient.listAllNotes(vaultId);
+    const entries = includeFiles ? await this.noteApiClient.listAllEntries(vaultId, scope) : await this.noteApiClient.listAllNotes(vaultId, scope);
     const folders = this.folderSyncUnsupported ? null : await this.noteApiClient.listFolders(vaultId);
     if (vaultId === this.settings.vaultId) {
       this.mirror.load(vaultId, kinds, start.cursor, entries, folders);
@@ -1470,7 +1674,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     if (!this.feedUnsupported) {
       const includeFiles = (await this.currentFileLimits()) !== null;
       await this.dedupeServerRefresh(() => this.refreshServer(vaultId, includeFiles));
-      const folders = this.mirror.isReadyFor(vaultId, kindsFor(includeFiles)) ? this.mirror.folders() : null;
+      const folders = this.mirror.isReadyFor(vaultId, this.mirrorKey(includeFiles)) ? this.mirror.folders() : null;
       if (folders !== null) {
         return folders;
       }
@@ -1619,6 +1823,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     }
     state.noteIds[path] = noteId;
     this.requestSettingsSave();
+    this.pinIfOutsideAreas(path);
   }
 
   private unmapNote(noteId: string): void {
@@ -1729,10 +1934,14 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     const state = this.vaultState();
+    // Mit Arbeitsbereichen: Ordner ausserhalb gehoeren nicht diesem Geraet - weder anlegen noch entfernen.
+    const scope = this.currentScope();
+    const managed = (path: string): boolean => scope === null || touchesFolder(path, scope);
     const plan = planFolders({
-      serverFolders: serverFolders.filter((path) => this.isTrackableFolder(path)),
-      knownFolders: state.knownFolders,
-      localFolders: this.localFolders().map((folder) => ({ path: folder.path, hasFiles: this.hasFilesInside(folder) })),
+      serverFolders: serverFolders.filter((path) => this.isTrackableFolder(path) && managed(path)),
+      knownFolders: state.knownFolders === null ? null : state.knownFolders.filter(managed),
+      localFolders: this.localFolders().filter((folder) => managed(folder.path))
+        .map((folder) => ({ path: folder.path, hasFiles: this.hasFilesInside(folder) })),
       busyPaths: state.pendingOps.flatMap((op) => op.kind === "folderRename" ? [op.path, op.to]
         : op.kind === "folderCreate" || op.kind === "folderDelete" ? [op.path] : []),
     });
@@ -2001,6 +2210,8 @@ export default class StoneIntelligencePlugin extends Plugin {
       // ADR 0011: wer das Leserecht verliert, verliert die Notiz wie bei einer Loeschung anderswo -
       // eigene, nie uebertragene Aenderungen fuehren zur bekannten Rueckfrage statt verloren zu gehen.
       await this.applyRemoteDeletion(noteId, path, await this.hasUnsyncedEdits(noteId, path), "Kein Zugriff mehr, im Papierkorb");
+    } else {
+      this.pinIfOutsideAreas(path);
     }
   }
 
@@ -2706,4 +2917,9 @@ export default class StoneIntelligencePlugin extends Plugin {
 
 function kindsFor(includeFiles: boolean): string {
   return includeFiles ? "note,file" : "note";
+}
+
+/** Ordner in einem Bereich oder darueber (sonst fehlte lokal der Weg dorthin). */
+function touchesFolder(folder: string, scope: string[]): boolean {
+  return scope.some((area) => folder === area || folder.startsWith(`${area}/`) || area.startsWith(`${folder}/`));
 }

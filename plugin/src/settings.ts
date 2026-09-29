@@ -1,3 +1,4 @@
+import type { AreaState } from "./sync/workAreas";
 import type { StoredTokens } from "./sync/AuthentikAuthClient";
 import type { ConnectLink } from "./sync/connectLink";
 import type { FileMeta } from "./sync/filePlan";
@@ -19,7 +20,9 @@ export function isNoteOp(op: PendingOp): op is NoteOp {
 }
 
 /** Alles, was zu EINEM Vault gehoert - ein Vault-Wechsel darf keine fremden NoteIds weiterverwenden. */
-export interface VaultSyncState {
+export interface VaultSyncState extends AreaState {
+  /** Vorgabe des Vaults (ADR 0013), zuletzt vom Server gelesen. */
+  vaultSelectiveSync?: boolean;
   /** Pfad -> NoteId. */
   noteIds: Record<string, string>;
   /** NoteId -> Stand beim letzten erfolgreichen Abgleich. */

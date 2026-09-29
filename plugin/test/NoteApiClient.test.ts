@@ -487,4 +487,23 @@ describe("NoteApiClient access (ADR 0011)", () => {
       expect(fakeFetch.mock.calls[0][0]).toBe("https://platform.example/api/v1/vaults/v1/notes/search?q=Team%2Fplan.md&limit=200&kinds=note%2Cfile");
     });
   });
+  describe("work areas", () => {
+    it("sends areas with list and feed, and loads one folder level", async () => {
+      const fakeFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ complete: true, nextCursor: null, notes: [] }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ cursor: "3" }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => [{ path: "Team", hasChildren: true }] });
+      const client = new NoteApiClient("https://platform.example", vi.fn().mockResolvedValue("t"), fakeFetch as unknown as typeof fetch);
+
+      await client.listAllEntries("v1", ["Team", "Wiki/Start.md"]);
+      await client.changes("v1", "2", true, ["Team"]);
+      expect(await client.folderChildren("v1", "")).toEqual([{ path: "Team", hasChildren: true }]);
+
+      expect(fakeFetch.mock.calls.map(([url]) => url)).toEqual([
+        "https://platform.example/api/v1/vaults/v1/notes?pageSize=500&kinds=note%2Cfile&scope=Team&scope=Wiki%2FStart.md",
+        "https://platform.example/api/v1/vaults/v1/changes?limit=1000&kinds=note%2Cfile&since=2&scope=Team",
+        "https://platform.example/api/v1/vaults/v1/folders/children?path=",
+      ]);
+    });
+  });
 });
