@@ -1,6 +1,6 @@
 # ADR 0013: Ein Vault für einen ganzen Konzern
 
-Status: Angenommen (2026-09-29), Umsetzung in Schritten (s. u.)
+Status: Angenommen (2026-09-29), Schritte 1–4 umgesetzt (s. Nachtrag)
 
 ## Kontext
 
@@ -137,3 +137,32 @@ Liste eines Bereichs mit 1.000 Einträgen < 200 ms, Rechteprüfung < 50 µs.
 
 Mandantenfähigkeit mehrerer Firmen auf einer Instanz über Vaults hinaus, Datenresidenz, E2EE
 (Level 101) und Aufbewahrungsregeln (Legal Hold) folgen eigenen ADRs.
+
+## Nachtrag: Schritte 1–4 (29.09.2026)
+
+- **Schritt 1 (V19):** `GrantIndex` + Cache je Vault im `VaultAccessGuard`, gültig bis sich
+  `vaults.access_version` ändert (Trigger auf Freigaben, Gruppen, Rollen, Mitgliedschaften und
+  Pfadänderungen von Notizen mit Eintrags-Freigabe). Andere Instanzen sehen Änderungen nach
+  höchstens 1 s. Ein Zufallstest vergleicht 16.000 Fälle mit der linearen Auflösung.
+- **Schritt 2 (V20):** Feed wie beschrieben. `access_events` statt einer Zugriffs-Version für
+  Geräte: Eine Person bekommt nur Ereignisse, die sie selbst, eine ihrer Gruppen oder alle
+  betreffen, als `relist` (äußerste Ordner). Die Zugriffs-Version bleibt für den Rechte-Cache.
+  Die Liste im Plugin ist ein Spiegel im Speicher (`ServerMirror`); der Abgleichsplan bleibt unverändert.
+- **Schritt 3 (V21):** Arbeitsbereiche. Abweichend vom Entwurf gibt es keine feste Schwelle:
+  Verwaltende schalten „Nur Arbeitsbereiche" je Vault ein (`vaults.selective_sync`), jedes Gerät
+  kann es überstimmen. Gefilterte Listen blättern nach Pfad (`COLLATE "C"`, je Bereich ein
+  Bereichsscan); die Vollständigkeit während des Ladens sichert der Feed-Cursor, der vorher geholt wird.
+  Geräte melden ihre Bereiche über die Sync-Verbindung (Frame 16); Ankündigungen außerhalb
+  gehen nicht mehr an sie. Notizen außerhalb, die ein Gerät hat (geholt, selbst angelegt,
+  verschoben), werden angeheftet statt ignoriert; gelöscht wird lokal nur nach Rückfrage und nur,
+  was unverändert ist.
+- **Schritt 4:** Webapp-Baum Ebene für Ebene (`GET …/folders/children`, `GET …/notes?folder=`
+  über die berechnete Spalte `notes.parent`).
+- **E2E-Befund:** Ein Bereichswechsel darf erst gelten, wenn entschieden ist, was mit Kopien
+  außerhalb passiert, und während des Wechsels ruhen die Abgleiche. Sonst hält ein Durchlauf
+  die Kopien für „fehlt auf dem Server" und heftet sie an. Geprüft mit echtem Obsidian 1.13.7,
+  lokalem `platform-api` und Postgres 18.
+
+Bekannte Grenzen: Rechteänderungen senden weiter Frame 15 an alle Verbindungen des Vaults (die
+Geräte fragen dann den Feed, der meist leer ist). Jedes Anheften lädt die Liste der Bereiche einmal
+neu. Für Postgres-Transaktions-IDs gilt: Eine lang laufende Transaktion (Backup) verzögert den Feed.
