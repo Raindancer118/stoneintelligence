@@ -32,6 +32,8 @@ export function describeEvent(event: HistoryEvent): string {
       return `${who} hat „${name}“ angelegt`;
     case "note.content-updated":
       return `${who} hat „${name}“ bearbeitet`;
+    case "note.version-restored":
+      return `${who} hat eine frühere Version von „${name}“ wiederhergestellt`;
     case "note.deleted":
       return `${who} hat „${name}“ gelöscht`;
     case "note.renamed": {
