@@ -1,116 +1,269 @@
 <div align="center">
-  <img src="webapp/public/logo.png" alt="StoneIntelligence-Logo" width="112" height="112">
 
-  # StoneIntelligence
+<a href="https://kb.tstieh.de">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/readme/hero-dark.svg">
+    <img src="docs/readme/hero-light.svg" alt="StoneIntelligence: zwei Personen schreiben gleichzeitig in dieselbe Obsidian-Notiz" width="100%">
+  </picture>
+</a>
 
-  **Gemeinsam denken. In Obsidian schreiben. Überall weiterarbeiten.**
+<br>
 
-  Live synchronisierte Notizen, gemeinsame Vaults und klare Zugriffsrechte —
-  mit einem Arbeitsplatz im Browser und einem Plugin für Obsidian.
+[![CI](https://img.shields.io/github/actions/workflow/status/Raindancer118/stoneintelligence/ci.yml?branch=main&style=flat-square&label=CI&labelColor=27292b&color=394658)](https://github.com/Raindancer118/stoneintelligence/actions/workflows/ci.yml)
+[![Obsidian-Plugin](https://img.shields.io/github/v/release/Raindancer118/stoneintelligence?style=flat-square&label=Obsidian-Plugin&labelColor=27292b&color=394658)](https://github.com/Raindancer118/stoneintelligence/releases)
+[![Obsidian](https://img.shields.io/badge/Obsidian-1.6.6%2B%20·%20Desktop%20%26%20Mobil-394658?style=flat-square&labelColor=27292b)](https://obsidian.md)
+[![Java](https://img.shields.io/badge/Java-25-394658?style=flat-square&labelColor=27292b)](platform-api/)
 
-  [Dashboard](https://kb.tstieh.de) · [Obsidian einrichten](https://kb.tstieh.de/setup) · [Plugin-Releases](https://github.com/Raindancer118/stoneintelligence/releases) · [Architektur](Plan.md)
+**[Dashboard öffnen](https://kb.tstieh.de)** &nbsp;·&nbsp; **[Obsidian einrichten](https://kb.tstieh.de/setup)** &nbsp;·&nbsp; [Releases](https://github.com/Raindancer118/stoneintelligence/releases) &nbsp;·&nbsp; [Architektur](Plan.md)
 
-  [![CI](https://github.com/Raindancer118/stoneintelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/Raindancer118/stoneintelligence/actions/workflows/ci.yml)
-  [![Latest release](https://img.shields.io/github/v/release/Raindancer118/stoneintelligence?label=Obsidian-Plugin)](https://github.com/Raindancer118/stoneintelligence/releases)
 </div>
 
----
+<br>
 
-StoneIntelligence verbindet einen Obsidian-Vault mit einem gemeinsamen Server. Änderungen an
-geöffneten Notizen erscheinen live bei anderen; der restliche Vault wird im Hintergrund
-abgeglichen. Im Browser lassen sich Notizen lesen und bearbeiten sowie Mitglieder und Rechte
-verwalten.
+Obsidian ist wunderbar, solange man allein schreibt. StoneIntelligence macht aus einem Vault einen
+gemeinsamen Ort: Wer eine Notiz öffnet, sieht die Cursor der anderen und ihre Änderungen in dem
+Moment, in dem sie tippen. Der Rest des Vaults gleicht sich im Hintergrund ab, auch nach Tagen
+offline. Wer was lesen darf, entscheidet ihr bis hinunter zur einzelnen Notiz. Und nichts, was einmal
+geschrieben war, ist verloren.
 
-| In Obsidian | Im Browser | Im Team |
-| :--- | :--- | :--- |
-| Live-Bearbeitung mit sichtbaren Cursorn | Notizen lesen, bearbeiten und organisieren | Vaults, Einladungen und Mitglieder verwalten |
-| Hintergrundabgleich für Notizen und Ordner | Änderungen speichern und Konflikte erkennen | Rollen und Pfadrechte vergeben |
-| Offline weiterarbeiten und später abgleichen | Plugin direkt aus dem Vault heraus verbinden | Änderungen im Audit nachvollziehen |
+Dazu gibt es einen Arbeitsplatz im Browser für alle, die gerade kein Obsidian zur Hand haben, und eine
+KI, die Vorlesungsfolien, Verträge oder Protokolle in verlinkte Notizen verwandelt, ohne dass sie dir
+dabei das letzte Wort nimmt.
 
-> **Projektstand:** Sync, Dashboard und Rechteverwaltung sind nutzbar. Die KI-Ingestion wird
-> derzeit entwickelt; Worker und MCP-Adapter sind noch keine fertigen, produktiv betriebenen
-> Funktionen. Die geplanten Bausteine stehen in [Plan.md](Plan.md).
+<br>
 
-## In Obsidian starten
+<table>
+<tr>
+<td width="56%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/versions-dark.svg">
+  <img src="docs/readme/versions-light.svg" alt="Versionsverlauf mit Vergleich und Wiederherstellen" width="100%">
+</picture>
+</td>
+<td width="44%">
 
-1. [Obsidian installieren](https://obsidian.md/download) und einen Vault öffnen. Für einen
-   gemeinsamen Vault empfiehlt sich ein neuer, leerer Obsidian-Vault: Inhalte eines bestehenden
-   Vaults werden beim Verbinden mit den anderen Mitgliedern geteilt.
-2. Die [Einrichtungsseite](https://kb.tstieh.de/setup) öffnen. Sie führt durch die Installation
-   von [BRAT](https://github.com/TfTHacker/obsidian42-brat) und des StoneIntelligence-Plugins.
-3. Im [Dashboard](https://kb.tstieh.de) anmelden, einen Vault anlegen oder eine Einladung
-   annehmen und im Vault den Reiter **„In Obsidian“** öffnen. Dort verbindet ein Klick den
-   Obsidian-Vault.
+### Jede Fassung bleibt
 
-Das Plugin ist auf die gehostete Instanz voreingestellt. Die Knöpfe der Einrichtungsseite einer
-selbst gehosteten Instanz geben deren Server mit; das Plugin nennt den neuen Server und stellt erst
-nach Bestätigung um. Von Hand geht das unter **Einstellungen → StoneIntelligence → Erweitert**.
-Obsidian **1.6.6 oder neuer** wird benötigt; das Plugin läuft auch auf Mobilgeräten.
+Der Server bewahrt jede Änderung auf. Daraus entstehen Versionen, eine je Person und Sitzung. Du
+siehst Zeile für Zeile, was eine alte Fassung anders macht, und holst sie mit einem Klick zurück.
 
-Wer BRAT manuell einrichtet, trägt dort `Raindancer118/stoneintelligence` als Plugin-Repository
-ein. Die [GitHub-Releases](https://github.com/Raindancer118/stoneintelligence/releases) enthalten
-`manifest.json`, `main.js` und `styles.css` für eine manuelle Installation unter
-`.obsidian/plugins/stoneintelligence/`.
+Das Zurückholen ist selbst eine neue Änderung: Was dazwischen geschrieben wurde, bleibt als Version
+erhalten, und wer die Notiz gerade offen hat, sieht den Wechsel sofort.
 
-## Für die Entwicklung
+</td>
+</tr>
+<tr>
+<td width="44%">
 
-Das Repository enthält eine Java-API, ein Obsidian-Plugin und eine Svelte-Webapp. Für die
-Java-Module werden **JDK 25** und Maven (`./mvnw`) benötigt, für Plugin und Webapp **Node.js 22**.
-Integrationstests verwenden PostgreSQL über Testcontainers und brauchen Docker.
+### Rechte, wo sie hingehören
 
-```bash
-# Java: Unit- und Integrationstests
-./mvnw verify
+Rollen und Gruppen legt ihr selbst an. Freigaben gelten für den ganzen Vault, einen Ordner oder eine
+einzelne Notiz, direkt aus dem Kontextmenü in Obsidian.
 
-# Obsidian-Plugin: Tests und Bundle
-cd plugin
-npm ci
-npm test
-npm run build
+Der Dateibaum zeigt mit einem Schloss, was nur lesbar ist. Entzieht jemand das Leserecht, verschwindet
+die Notiz auf dem Gerät der betroffenen Person, noch während sie verbunden ist.
 
-# Webapp: siehe webapp/README.md für die lokale Konfiguration
-cd ../webapp
-npm ci
-npm run check
-npm test
-npm run dev
+</td>
+<td width="56%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/access-dark.svg">
+  <img src="docs/readme/access-light.svg" alt="Freigaben für Ordner und Notizen mit Kennzeichen im Dateibaum" width="100%">
+</picture>
+</td>
+</tr>
+<tr>
+<td width="56%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/linking-dark.svg">
+  <img src="docs/readme/linking-light.svg" alt="Notizen werden automatisch und typisiert verlinkt" width="100%">
+</picture>
+</td>
+<td width="44%">
+
+### Wissen, das sich selbst verknüpft
+
+Lade ein PDF hoch, und die KI legt daraus einzelne Notizen nach Themen an, jede mit Quelle.
+Nachts sucht StoneIntelligence Verbindungen: wörtliche Erwähnungen, ähnliche Inhalte über ein lokales
+Modell und, wenn ihr wollt, eine KI-Prüfung mit Beziehungstyp.
+
+Jeder KI-Lauf lässt sich komplett rückgängig machen. An einen externen Anbieter geht eine Notiz nur,
+wenn die Person, die sie geschrieben hat, eingewilligt hat.
+
+</td>
+</tr>
+</table>
+
+<br>
+
+## In fünf Minuten verbunden
+
+> [!TIP]
+> Für einen gemeinsamen Vault nimm einen neuen, leeren Obsidian-Vault. Was beim Verbinden schon drin
+> liegt, sehen danach alle Mitglieder.
+
+1. **[Obsidian](https://obsidian.md/download)** installieren, mindestens Version 1.6.6. Das Plugin läuft
+   auch auf Mobilgeräten.
+2. Die **[Einrichtungsseite](https://kb.tstieh.de/setup)** öffnen. Ihre Knöpfe führen durch die
+   Installation von [BRAT](https://github.com/TfTHacker/obsidian42-brat) und des StoneIntelligence-Plugins.
+3. Im **[Dashboard](https://kb.tstieh.de)** anmelden, einen Vault anlegen oder eine Einladung annehmen,
+   dann im Reiter **„In Obsidian"** auf Verbinden. Fertig.
+
+Das Plugin ist auf die gehostete Instanz voreingestellt. Die Einrichtungsseite einer selbst gehosteten
+Instanz gibt deren Server mit; das Plugin nennt ihn und stellt erst nach deiner Bestätigung um. Von Hand
+geht das unter **Einstellungen → StoneIntelligence → Erweitert**.
+
+<details>
+<summary><b>Ohne Einrichtungsseite installieren</b></summary>
+<br>
+
+In BRAT `Raindancer118/stoneintelligence` als Plugin-Repository eintragen. Oder aus einem
+[Release](https://github.com/Raindancer118/stoneintelligence/releases) `manifest.json`, `main.js` und
+`styles.css` nach `.obsidian/plugins/stoneintelligence/` kopieren.
+
+</details>
+
+<br>
+
+## Was drinsteckt
+
+<table>
+<tr>
+<td valign="top" width="33%">
+
+**In Obsidian**
+
+- Live-Bearbeitung mit Cursorn und Namen
+- ganzer Vault im Hintergrund aktuell, auch Ordner, PDFs und Bilder
+- offline weiterschreiben, konfliktfrei zusammenführen (Yjs)
+- Freigaben, Verwaltung, Verlauf und Versionen im Kontextmenü
+- „Mit KI einlesen" für vorhandene Dateien
+
+</td>
+<td valign="top" width="33%">
+
+**Im Browser**
+
+- Notizen lesen, schreiben, umbenennen
+- Ordnerbaum, Serversuche, Schnellsprung mit <kbd>Strg</kbd>+<kbd>K</kbd>
+- Dateien ansehen und herunterladen
+- Uploads für die KI mit Fortschritt und Kontingent
+- Mitglieder, Rollen, Gruppen, Einladungen, Protokoll
+
+</td>
+<td valign="top" width="33%">
+
+**Auf dem Server**
+
+- Anmeldung über OIDC (Authentik), PKCE
+- Rechte je Vault, Ordner und Notiz
+- Audit-Protokoll getrennt von Betriebslogs
+- Rate-Limits, stabile IDs, Tombstones
+- lokale Embeddings mit pgvector
+
+</td>
+</tr>
+</table>
+
+<br>
+
+## Wie es zusammenhängt
+
+```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Georgia, serif", "primaryColor": "#e6e9ed", "primaryTextColor": "#27292b", "primaryBorderColor": "#394658", "lineColor": "#71829a", "secondaryColor": "#f5f3ed", "tertiaryColor": "#faf9f5", "clusterBkg": "#faf9f5", "clusterBorder": "#deded3"}}}%%
+flowchart LR
+    subgraph Clients
+        O["Obsidian-Plugin<br/><small>Yjs · CodeMirror 6</small>"]
+        W["Webapp<br/><small>Svelte 5</small>"]
+    end
+    subgraph Server
+        A["platform-api<br/><small>Spring Boot 4 · Java 25</small>"]
+        K["intelligence-worker<br/><small>stoneai-core · ONNX</small>"]
+        P[("PostgreSQL<br/><small>pgvector</small>")]
+        F[("Dateispeicher")]
+    end
+    I["Authentik<br/><small>OIDC</small>"]
+    L["KI-Anbieter<br/><small>über ai-gateway</small>"]
+
+    O <-- "WebSocket · ein Kanal für alle Notizen" --> A
+    W <-- REST --> A
+    O & W -. Anmeldung .-> I
+    A --- P
+    A --- F
+    K -- "Aufträge holen, Ergebnisse schreiben" --> A
+    K -. "nur mit Einwilligung" .-> L
 ```
 
-Für lokale Builds der Java-Module werden die privaten Maven-Abhängigkeiten aus
-`packages.tstieh.de` benötigt. Der CI-Workflow zeigt die dafür verwendete Maven-Konfiguration.
+Notizen sind Yjs-Dokumente. Der Server speichert und verteilt ihre Änderungen, ohne sie zu deuten, und
+kennt jede Notiz unter einer festen ID, auch nach Umbenennen oder Verschieben. Die KI hat keinen
+Datenbankzugang: Der Worker holt sich Aufträge über dieselbe API wie alle anderen und schreibt mit den
+Rechten der Person, die ihn beauftragt hat. Die Entscheidungen dahinter stehen in
+[`docs/adr/`](docs/adr/).
 
-Der mitgelieferte [`docker-compose.yml`](docker-compose.yml) definiert PostgreSQL, API, Worker
-und MCP-Adapter. Für eine eigene API-Instanz sind mindestens ein Datenbankpasswort und ein
-passender OIDC-Issuer nötig. Der Worker und der MCP-Adapter befinden sich noch im Aufbau; für
-die aktuelle Sync-Anwendung reichen PostgreSQL und `platform-api`.
+<br>
 
-Für die Webapp einer eigenen Instanz:
+## Selbst bauen
+
+<details>
+<summary><b>Entwicklung: Java 25, Node.js 22, Docker für die Integrationstests</b></summary>
+<br>
+
+```bash
+# Java: Unit- und Integrationstests (Testcontainers braucht Docker)
+./mvnw verify
+
+# Obsidian-Plugin
+cd plugin && npm ci && npm test && npm run build
+
+# Webapp (lokale Konfiguration: webapp/README.md)
+cd webapp && npm ci && npm run check && npm test && npm run dev
+```
+
+Die Java-Module brauchen private Maven-Pakete aus `packages.tstieh.de`; die Maven-Konfiguration dafür
+steht im CI-Workflow.
+
+</details>
+
+<details>
+<summary><b>Eigene Instanz betreiben</b></summary>
+<br>
+
+[`docker-compose.yml`](docker-compose.yml) enthält PostgreSQL, API, Worker und MCP-Adapter. Für den
+Sync reichen PostgreSQL und `platform-api`, dazu ein Datenbankpasswort und ein OIDC-Issuer.
 
 - `STONEINTELLIGENCE_WEBAPP_URL` der API auf die Adresse der Webapp setzen (CORS, Einladungslinks).
-- In `webapp/.env` die `VITE_*`-Werte vor dem Build auf die eigene API und den eigenen OIDC-Client
-  setzen. Die Einrichtungsseite gibt genau diese Werte an das Plugin weiter.
-- Der OIDC-Client (öffentlich, PKCE) wird von Webapp und Plugin gemeinsam genutzt und braucht die
-  Redirect-URIs `<webapp>/callback`, `http://127.0.0.1:42813/callback` (Obsidian Desktop) und
-  `obsidian://stoneintelligence-auth` (Obsidian Mobile).
+- In `webapp/.env` die `VITE_*`-Werte vor dem Build auf die eigene API und den OIDC-Client setzen. Die
+  Einrichtungsseite gibt genau diese Werte an das Plugin weiter.
+- Der OIDC-Client (öffentlich, PKCE) gilt für Webapp und Plugin und braucht die Redirect-URIs
+  `<webapp>/callback`, `http://127.0.0.1:42813/callback` (Desktop) und
+  `obsidian://stoneintelligence-auth` (Mobil).
 
-## Was wo liegt
+</details>
+
+<details>
+<summary><b>Was wo liegt</b></summary>
+<br>
 
 | Pfad | Aufgabe |
 | :--- | :--- |
-| [`platform-api/`](platform-api/) | REST-API, Yjs-Relay, Rechte, Audit und persistierte Notizen |
+| [`platform-api/`](platform-api/) | REST-API, Yjs-Relay, Rechte, Audit, Versionen, Dateien |
 | [`plugin/`](plugin/) | Obsidian-Plugin für Live- und Hintergrund-Sync |
-| [`webapp/`](webapp/) | Dashboard, Notizeditor und Verwaltung |
-| [`domain-core/`](domain-core/) | Gemeinsame Domänenregeln ohne Framework-Abhängigkeit |
-| [`stoneai-core/`](stoneai-core/), [`intelligence-worker/`](intelligence-worker/) | KI-Ingestion im Aufbau |
-| [`mcp-adapter/`](mcp-adapter/) | Geplanter Agent-Zugang |
+| [`webapp/`](webapp/) | Dashboard, Editor und Verwaltung ([Design](webapp/Design.md)) |
+| [`intelligence-worker/`](intelligence-worker/), [`stoneai-core/`](stoneai-core/) | KI-Einlesen und nächtliche Verlinkung |
+| [`domain-core/`](domain-core/) | Domänenregeln ohne Framework, z. B. wo ein Link stehen darf |
+| [`yjs-bridge/`](yjs-bridge/) | Yjs für die Java-API, läuft in GraalJS |
+| [`mcp-adapter/`](mcp-adapter/) | Zugang für Agenten, noch nicht in Betrieb |
 | [`docs/adr/`](docs/adr/) | Architekturentscheidungen |
 
-Die vollständigen Ziele und Architekturentscheidungen stehen in [Anforderungen.md](Anforderungen.md)
-und [Plan.md](Plan.md). Die Webapp hat eine eigene [Entwickleranleitung](webapp/README.md).
+Ziele und Planung: [Anforderungen.md](Anforderungen.md), [Plan.md](Plan.md). Die Grafiken dieser Seite
+erzeugt [`docs/readme/render.py`](docs/readme/render.py).
 
-## Lizenz
+</details>
 
-© 2026 Raindancer118. Alle Rechte vorbehalten. Offizielle Releases dürfen privat und
-nichtkommerziell genutzt werden. Für geschäftliche Nutzung oder andere Verwendungen ist eine
-ausdrückliche individuelle Erlaubnis erforderlich. Die Einzelheiten stehen in der
-[Lizenzdatei](LICENSE.md).
+<br>
+
+<div align="center">
+<sub>
+© 2026 Raindancer118 · Offizielle Releases dürfen privat und nichtkommerziell genutzt werden; alles andere nur mit
+ausdrücklicher Erlaubnis. Einzelheiten in der <a href="LICENSE.md">Lizenz</a>.
+</sub>
+</div>
