@@ -186,6 +186,25 @@ public class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
+    public ScopedPage listFolder(VaultId vaultId, String folder, String afterPath, int pageSize, java.util.Set<NoteKind> kinds) {
+        var rows = jdbcClient.sql("""
+                SELECT * FROM platform.notes
+                WHERE vault_id = :vaultId AND parent = :folder AND kind IN (:kinds) AND path COLLATE "C" > :after
+                ORDER BY path COLLATE "C"
+                LIMIT :limit
+                """)
+            .param("vaultId", vaultId.value())
+            .param("folder", folder)
+            .param("kinds", kinds.stream().map(NoteKind::name).toList())
+            .param("after", afterPath)
+            .param("limit", pageSize + 1)
+            .query(NOTE_WITH_SEQUENCE_MAPPER)
+            .list().stream().map(NoteWithSequence::note).toList();
+        var complete = rows.size() <= pageSize;
+        return new ScopedPage(complete ? rows : rows.subList(0, pageSize), complete);
+    }
+
+    @Override
     public List<Note> search(VaultId vaultId, String query, java.util.Set<NoteKind> kinds, int limit) {
         // strpos statt LIKE: Nutzereingaben mit % oder _ bleiben woertlich, ohne Escaping.
         return jdbcClient.sql("""

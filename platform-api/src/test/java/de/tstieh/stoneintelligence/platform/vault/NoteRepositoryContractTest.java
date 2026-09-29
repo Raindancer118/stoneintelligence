@@ -109,6 +109,23 @@ public abstract class NoteRepositoryContractTest {
         }
 
         @Test
+        void should_listOnlyWhatLiesDirectlyInAFolder() {
+            var repository = repository();
+            var vaultId = newVault();
+            for (var path : java.util.List.of("Start.md", "Team/a.md", "Team/b.md", "Team/Sub/c.md", "Teamraum/x.md")) {
+                repository.create(vaultId, path, NoteLevel.of(1), "tom");
+            }
+            var kinds = java.util.Set.of(NoteKind.NOTE);
+
+            assertThat(repository.listFolder(vaultId, "", "", 10, kinds).notes()).extracting(Note::path).containsExactly("Start.md");
+            var first = repository.listFolder(vaultId, "Team", "", 1, kinds);
+            assertThat(first.complete()).isFalse();
+            assertThat(repository.listFolder(vaultId, "Team", first.notes().getLast().path(), 10, kinds).notes())
+                .extracting(Note::path).containsExactly("Team/b.md");
+            assertThat(repository.listFolder(vaultId, "Team/Sub", "", 10, kinds).notes()).extracting(Note::path).containsExactly("Team/Sub/c.md");
+        }
+
+        @Test
         void should_beEmpty_when_idIsUnknown() {
             assertThat(repository().findById(newVault(), NoteId.newId())).isEmpty();
         }

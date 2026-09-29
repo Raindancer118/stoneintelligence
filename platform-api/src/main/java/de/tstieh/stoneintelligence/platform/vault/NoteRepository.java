@@ -67,6 +67,9 @@ public interface NoteRepository {
     record ScopedPage(java.util.List<Note> notes, boolean complete) {
     }
 
+    /** Eintraege DIREKT in diesem Ordner ({@code ""} = oberste Ebene), nach Pfad geblaettert wie {@link #listScoped}. */
+    ScopedPage listFolder(VaultId vaultId, String folder, String afterPath, int pageSize, java.util.Set<NoteKind> kinds);
+
     java.util.List<Note> search(VaultId vaultId, String query, java.util.Set<NoteKind> kinds, int limit);
 
     /**

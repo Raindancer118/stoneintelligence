@@ -9,35 +9,41 @@
   import Icon from "./Icon.svelte";
   import { withTransition } from "../motion";
   let { vault, onDirtyChange, onPermissions = () => {}, requestedNote = null }: { vault: Vault; onDirtyChange: (dirty: boolean) => void; onPermissions?: (permissions: string[]) => void; requestedNote?: Note | null } = $props();
-  let closedFolders = $state<string[]>([]);
   let lastRequest: Note | null = null;
   $effect(() => { if (requestedNote && requestedNote !== lastRequest) { lastRequest = requestedNote; select(requestedNote); } });
-  function toggleFolder(path: string) { closedFolders = closedFolders.includes(path) ? closedFolders.filter(p => p !== path) : [...closedFolders, path]; }
-  /** Ordnerbaum einmal pro Änderung aufbauen - nicht für jeden Ordner die ganze Liste durchsuchen (große Vaults). */
-  const index = $derived.by(() => {
-    const folders = new Map<string, Set<string>>(), entries = new Map<string, Note[]>(), counts = new Map<string, number>();
-    for (const note of visible) {
-      const parts = note.path.split("/");
-      let prefix = "";
-      for (const part of parts.slice(0, -1)) {
-        const path = prefix + part;
-        if (!folders.has(prefix)) folders.set(prefix, new Set());
-        folders.get(prefix)!.add(path);
-        counts.set(path, (counts.get(path) ?? 0) + 1);
-        prefix = path + "/";
-      }
-      if (!entries.has(prefix)) entries.set(prefix, []);
-      entries.get(prefix)!.push(note);
+  /** Eine geladene Ebene des Baums: Unterordner und die Einträge direkt darin (ADR 0013). */
+  interface Level { folders: import("../api").FolderChild[]; entries: Note[]; cursor: string | null; loading: boolean }
+  let levels = $state<Record<string, Level>>({});
+  let open = $state<string[]>([]);
+  /** Zuletzt geöffneter Ordner - Ziel von "Ordner freigeben". */
+  let folder = $state("");
+  async function loadLevel(path: string, more = false) {
+    const current = levels[path];
+    if (current?.loading || (current && !more)) return;
+    levels[path] = { folders: current?.folders ?? [], entries: current?.entries ?? [], cursor: current?.cursor ?? null, loading: true };
+    try {
+      const [children, page] = await Promise.all([more ? Promise.resolve(current!.folders) : api.folderChildren(vault.id, path),
+        api.listFolder(vault.id, path, more ? current!.cursor ?? undefined : undefined)]);
+      if (!alive) return;
+      levels[path] = { folders: children, entries: [...(more ? current!.entries : []), ...page.notes], cursor: page.complete ? null : page.nextCursor, loading: false };
+    } catch (e) {
+      if (!alive) return;
+      error = e instanceof Error ? e.message : "Der Ordner konnte nicht geladen werden.";
+      if (current) levels[path] = { ...current, loading: false }; else delete levels[path];
     }
-    return { folders, entries, counts };
-  });
-  function childFolders(prefix: string): string[] { return [...(index.folders.get(prefix) ?? [])].sort((a, b) => a.localeCompare(b, "de")); }
-  function directNotes(prefix: string): Note[] { return index.entries.get(prefix) ?? []; }
-  let notes = $state<Note[]>([]);
+  }
+  function toggleFolder(path: string) {
+    folder = path;
+    if (open.includes(path)) { open = open.filter(p => p !== path); return; }
+    open = [...open, path];
+    void loadLevel(path);
+  }
+  function sorted(list: Note[]) { return [...list].sort((a, b) => sort === "recent" ? b.createdAt.localeCompare(a.createdAt) : a.path.localeCompare(b.path, "de", { numeric: true })); }
+  const loaded = $derived(Object.values(levels).flatMap(level => level.entries));
+  const notes = $derived(loaded);
   let permissions = $state<string[]>([]);
   let selected = $state<Note | null>(null);
   let search = $state("");
-  let folder = $state("");
   let sort = $state("path");
   let loading = $state(true);
   let error = $state("");
@@ -55,9 +61,7 @@
   let similarLoading = $state(false);
   let sharing = $state<{ kind: "entry"; noteId: string; path: string } | { kind: "folder"; path: string } | null>(null);
   let alive = true;
-  const folders = $derived([...new Set(notes.flatMap(n => { const parts = n.path.split("/"); return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/")); }))].sort());
-  const visible = $derived((search.trim() ? hits ?? [] : notes).filter(n => !folder || n.path.startsWith(`${folder}/`))
-    .sort((a, b) => sort === "recent" ? b.createdAt.localeCompare(a.createdAt) : a.path.localeCompare(b.path, "de", { numeric: true })));
+  const visible = $derived(sorted(search.trim() ? hits ?? [] : notes));
 
   function setDirty(value: boolean) { dirty = value; onDirtyChange(value || creating); }
   function mayLeave() { return !dirty || window.confirm("Ungespeicherte Änderungen verwerfen? Du kannst die Notiz vorher speichern oder als Markdown exportieren."); }
@@ -77,26 +81,16 @@
     else if (related) select({ id: related.noteId, vaultId: vault.id, path: related.path, noteLevel: 1, createdBy: "", createdAt: new Date().toISOString() });
   }
 
-  /** Lädt die ganze Übersicht (nur Pfade und Metadaten, keine Inhalte) Seite für Seite und zeigt sie schon während des Ladens. */
+  /** Lädt die oberste Ebene neu und die geöffneten Ordner mit - nie den ganzen Vault. */
   async function load() {
     loading = true; error = ""; complete = false;
     try {
       const rights = api.permissions(vault.id);
-      const all = new Map<string, Note>();
-      let cursor: string | undefined;
-      let epoch: string | null = null;
-      for (;;) {
-        const page = await api.listNotes(vault.id, cursor);
-        if (!alive) return;
-        if (epoch && page.epochId !== epoch) throw new Error("Die Liste hat sich während des Ladens geändert. Bitte aktualisiere sie.");
-        if (!page.complete && (!page.nextCursor || page.nextCursor === cursor)) throw new Error("Die Liste konnte nicht vollständig geladen werden. Bitte aktualisiere sie.");
-        if (epoch === null) { permissions = await rights; if (!alive) return; onPermissions(permissions); }
-        epoch = page.epochId;
-        for (const note of page.notes) all.set(note.id, note);
-        notes = [...all.values()];
-        if (page.complete) break;
-        cursor = page.nextCursor!;
-      }
+      levels = {};
+      await Promise.all(["", ...open].map(path => loadLevel(path)));
+      permissions = await rights;
+      if (!alive) return;
+      onPermissions(permissions);
       complete = true;
     } catch (e) { if (alive) error = e instanceof Error ? e.message : "Notizen konnten nicht geladen werden."; }
     finally { if (alive) loading = false; }
@@ -126,7 +120,9 @@
       if (notes.some(n => n.path === path)) throw new Error("Eine Notiz mit diesem Pfad ist bereits vorhanden.");
       const note = await api.createNote(vault.id, path);
       if (!alive) return;
-      notes = [note, ...notes]; selected = note; showCreate = false; newPath = ""; search = ""; folder = ""; dirty = false;
+      const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+      if (levels[parent]) levels[parent] = { ...levels[parent], entries: [note, ...levels[parent].entries] };
+      selected = note; showCreate = false; newPath = ""; search = ""; dirty = false;
     } catch (e) { if (alive) error = e instanceof Error ? e.message : "Die Notiz konnte nicht angelegt werden."; }
     finally { if (alive) { creating = false; onDirtyChange(dirty); } }
   }
@@ -137,26 +133,41 @@
     const noteText = `${count} ${count === 1 ? "Notiz" : "Notizen"}`;
     return files ? `${noteText}, ${files} ${files === 1 ? "Datei" : "Dateien"}` : noteText;
   }
-  function changed(note: Note) { notes = notes.map(n => n.id === note.id ? note : n); selected = note; }
-  function deleted() { notes = notes.filter(n => n.id !== selected?.id); selected = null; setDirty(false); }
+  function changed(note: Note) {
+    for (const [path, level] of Object.entries(levels)) levels[path] = { ...level, entries: level.entries.filter(n => n.id !== note.id) };
+    const parent = note.path.includes("/") ? note.path.slice(0, note.path.lastIndexOf("/")) : "";
+    if (levels[parent]) levels[parent] = { ...levels[parent], entries: [...levels[parent].entries, note] };
+    selected = note;
+  }
+  function deleted() {
+    for (const [path, level] of Object.entries(levels)) levels[path] = { ...level, entries: level.entries.filter(n => n.id !== selected?.id) };
+    selected = null; setDirty(false);
+  }
   onMount(() => { void load(); return () => { alive = false; }; });
 </script>
 
 
-{#snippet tree(prefix: string, depth: number)}
-  {#each childFolders(prefix) as path (path)}
-    <div class="folder-branch">
-      <button class="folder-toggle" style={`--depth:${depth}`} aria-label={`Ordner ${path}`} aria-expanded={!closedFolders.includes(path) || !!search} onclick={() => toggleFolder(path)}><span class="chevron" aria-hidden="true">›</span><Icon name="folder" size={17} /><span>{path.split("/").pop()}</span><small>{index.counts.get(path) ?? 0}</small></button>
-      {#if !closedFolders.includes(path) || search}{@render tree(path + "/", depth + 1)}{/if}
-    </div>
-  {/each}
-  {#each directNotes(prefix) as note (note.id)}
-    <button class="note-row" style={`--depth:${depth}`} class:active={selected?.id === note.id} aria-current={selected?.id === note.id ? "true" : undefined} onclick={() => select(note)}><Icon name="notes" size={17} /><span class="note-row-text"><span class="note-name">{note.kind === "FILE" ? note.path.split("/").pop() : note.path.split("/").pop()?.replace(/\.md$/i, "")}</span>{#if note.kind === "FILE"}<span class="file-kind">{fileKindLabel(note.path)}</span>{/if}<span class="note-path">{note.path.includes("/") ? note.path.slice(0, note.path.lastIndexOf("/")) : "Ohne Ordner"}</span>{#if note.noteLevel === 101}<span class="locked">Verschlüsselt</span>{/if}</span></button>
-  {/each}
+{#snippet row(note: Note, depth: number)}
+  <button class="note-row" style={`--depth:${depth}`} class:active={selected?.id === note.id} aria-current={selected?.id === note.id ? "true" : undefined} onclick={() => select(note)}><Icon name="notes" size={17} /><span class="note-row-text"><span class="note-name">{note.kind === "FILE" ? note.path.split("/").pop() : note.path.split("/").pop()?.replace(/\.md$/i, "")}</span>{#if note.kind === "FILE"}<span class="file-kind">{fileKindLabel(note.path)}</span>{/if}<span class="note-path">{note.path.includes("/") ? note.path.slice(0, note.path.lastIndexOf("/")) : "Ohne Ordner"}</span>{#if note.noteLevel === 101}<span class="locked">Verschlüsselt</span>{/if}</span></button>
+{/snippet}
+
+{#snippet tree(path: string, depth: number)}
+  {@const level = levels[path]}
+  {#if level}
+    {#each level.folders as child (child.path)}
+      <div class="folder-branch">
+        <button class="folder-toggle" style={`--depth:${depth}`} aria-label={`Ordner ${child.path}`} aria-expanded={open.includes(child.path)} onclick={() => toggleFolder(child.path)}><span class="chevron" aria-hidden="true">›</span><Icon name="folder" size={17} /><span>{child.path.split("/").pop()}</span></button>
+        {#if open.includes(child.path)}{@render tree(child.path, depth + 1)}{/if}
+      </div>
+    {/each}
+    {#each sorted(level.entries) as note (note.id)}{@render row(note, depth)}{/each}
+    {#if level.cursor}<button class="quiet load-more" style={`--depth:${depth}`} disabled={level.loading} onclick={() => loadLevel(path, true)}>Weitere laden</button>{/if}
+    {#if level.loading}<p class="list-empty" style={`--depth:${depth}`} role="status">Wird geladen…</p>{/if}
+  {/if}
 {/snippet}
 
 <div class="workspace-tools" class:note-open={selected !== null}>
-  <div><h2 class="section-title">Notizen & Dateien</h2><p class="hint">{loading && !notes.length ? "Übersicht wird geladen…" : `${loadedSummary(notes)} geladen${complete ? "" : " · weitere werden geladen…"}`}</p></div>
+  <div><h2 class="section-title">Notizen & Dateien</h2><p class="hint">{loading && !notes.length ? "Übersicht wird geladen…" : `${loadedSummary(notes)} in den geöffneten Ordnern`}</p></div>
   <div class="tool-actions"><button class="secondary" disabled={loading || creating} onclick={() => load()}>Liste aktualisieren</button>{#if permissions.includes("CREATE")}<button class="primary" aria-expanded={showCreate} onclick={() => showCreate = !showCreate}>Neue Notiz</button>{/if}</div>
 </div>
 {#if error}<div class="feedback error" role="alert"><p>{error}</p><button class="secondary" disabled={loading} onclick={() => load()}>Erneut versuchen</button></div>{/if}
@@ -164,11 +175,12 @@
 <div class="notes-layout" class:has-selection={selected !== null}>
   <section class="note-index" aria-label="Notizliste">
     <label for="note-search">Notizen finden</label><input id="note-search" type="search" bind:value={search} placeholder="Titel oder Pfad suchen" />
-    <div class="filters"><label>Ordner<select bind:value={folder}><option value="">Alle Ordner</option>{#each folders as path}<option value={path}>{path}</option>{/each}</select></label><label>Sortierung<select bind:value={sort}><option value="path">Name A–Z</option><option value="recent">Neu angelegt</option></select></label></div>
+    <div class="filters"><label>Sortierung<select bind:value={sort}><option value="path">Name A–Z</option><option value="recent">Neu angelegt</option></select></label></div>
     <button class="quiet share-folder" onclick={() => sharing = { kind: "folder", path: folder }}>{folder ? `Ordner „${folder.split("/").pop()}“ freigeben` : "Freigaben für den ganzen Vault"}</button>
     <div class="note-rows" aria-busy={loading}>
-      {@render tree("", 0)}
-      {#if !visible.length && !loading && !searching}<p class="list-empty">{search.trim() || folder ? "Keine passenden Notizen." : "Noch keine Notizen vorhanden."}</p>{/if}
+      {#if search.trim()}{#each visible as note (note.id)}{@render row(note, 0)}{/each}{:else}{@render tree("", 0)}{/if}
+      {#if search.trim() && !visible.length && !searching}<p class="list-empty">Keine passenden Notizen.</p>{/if}
+      {#if !search.trim() && !loading && levels[""] && !levels[""].folders.length && !levels[""].entries.length}<p class="list-empty">Noch keine Notizen vorhanden.</p>{/if}
       {#if search.trim() && truncated && !searching}<p class="hint">Weitere Treffer vorhanden. Gib mehr vom Titel oder Pfad ein.</p>{/if}
       {#if searching}<p class="list-empty" role="status">Suche läuft…</p>{:else if loading}<p class="list-empty" role="status">Notizen werden geladen…</p>{/if}
     </div>

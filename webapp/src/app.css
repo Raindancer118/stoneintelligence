@@ -2986,3 +2986,12 @@ input[type="checkbox"]:checked {
   text-align: center;
   text-indent: 0;
 }
+
+/* Baum lädt Ebene für Ebene (ADR 0013) */
+.note-rows .load-more,
+.note-rows .list-empty[style] {
+  display: block;
+  margin: 4px 0;
+  padding-left: calc(8px + var(--depth) * 12px);
+  text-align: start;
+}

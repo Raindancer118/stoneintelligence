@@ -104,10 +104,19 @@ public class NoteController {
         @RequestParam(defaultValue = "100") int pageSize,
         @RequestParam(defaultValue = "note") String kinds,
         @RequestParam(required = false) List<String> scope,
+        @RequestParam(required = false) String folder,
         Authentication authentication
     ) {
         var vId = VaultId.of(vaultId);
         access.requireMember(vId, authentication.getName());
+        if (folder != null) {
+            var after = cursor != null && cursor.startsWith("p:") ? cursor.substring(2) : "";
+            var page = notes.listFolder(vId, de.tstieh.stoneintelligence.platform.identity.AccessResolver.normalize(folder), after,
+                Math.clamp(pageSize, 1, 1000), parseKinds(kinds));
+            var readable = access.readableNotes(vId, authentication.getName(), page.notes());
+            var next = page.complete() || page.notes().isEmpty() ? null : "p:" + page.notes().getLast().path();
+            return new ReconciliationResponse(java.util.UUID.randomUUID(), next == null, next, listed(vId, authentication.getName(), readable));
+        }
         if (scope != null && !scope.isEmpty()) {
             return scoped(vId, cursor, pageSize, kinds, scope, authentication.getName());
         }
