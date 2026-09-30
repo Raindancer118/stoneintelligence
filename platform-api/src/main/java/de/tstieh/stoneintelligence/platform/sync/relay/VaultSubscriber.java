@@ -34,6 +34,11 @@ public interface VaultSubscriber {
         return false;
     }
 
+    /** Arbeitsbereiche dieser Verbindung (SyncFrame Typ 16, ADR 0013) - ohne Meldung der ganze Vault. */
+    default de.tstieh.stoneintelligence.platform.vault.SyncScope scope() {
+        return de.tstieh.stoneintelligence.platform.vault.SyncScope.wholeVault();
+    }
+
     /** Ob diese Verbindung die Notiz gerade gejoint hat (und Updates damit ohnehin direkt bekommt). */
     default boolean hasJoined(NoteId noteId) {
         return false;

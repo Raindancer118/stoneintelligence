@@ -28,6 +28,8 @@ const TYPE_SUBSCRIBE_FILE_EVENTS = 13;
 export const VAULT_FOLDERS_CHANGED = 12;
 /** Client->Server: "ich verstehe VAULT_ACCESS_CHANGED" (ADR 0011). */
 const TYPE_SUBSCRIBE_ACCESS_EVENTS = 14;
+/** Client->Server: Arbeitsbereiche dieses Geraets (ADR 0013), ein Pfad je Zeile, leer = ganzer Vault. */
+const TYPE_SET_SCOPE = 16;
 /** Rechte im Vault haben sich geaendert - ohne Pfad; Anlass, Liste und Rechte neu zu holen. */
 export const VAULT_ACCESS_CHANGED = 15;
 const NIL_NOTE_ID = "00000000-0000-0000-0000-000000000000";
@@ -143,6 +145,8 @@ export type WsUrlProvider = () => Promise<string>;
 export class MultiplexedTransport {
   private realSocket: WebSocketLike | null = null;
   private isOpen = false;
+  /** Zuletzt gemeldete Bereiche - nach jedem (Re-)Connect erneut, der Server vergisst sie mit der Verbindung. */
+  private scope: string[] | null = null;
   private everConnected = false;
   private connecting = false;
   private readonly virtualSockets = new Map<string, VirtualSocket>();
@@ -286,6 +290,9 @@ export class MultiplexedTransport {
         if (this.subscribeAccessEvents) {
           this.sendFramed(TYPE_SUBSCRIBE_ACCESS_EVENTS, NIL_NOTE_ID, new Uint8Array(0));
         }
+        if (this.scope !== null) {
+          this.sendScope();
+        }
         if (this.everConnected) {
           // RECONNECT (nicht der allererste Connect): der Server kennt keine alten Joins einer
           // vorherigen, jetzt toten Verbindung mehr - ALLE aktuell registrierten Notizen muessen
@@ -427,6 +434,23 @@ export class MultiplexedTransport {
     if (this.isOpen) {
       this.sendFramed(TYPE_LEAVE, noteId, new Uint8Array(0));
     }
+  }
+
+  /** `null` = ganzer Vault. Aendert sich nichts, wird nichts gesendet. */
+  setScope(scope: string[] | null): void {
+    const same = scope === null ? this.scope === null : this.scope !== null && scope.join("\n") === this.scope.join("\n");
+    if (same) {
+      return;
+    }
+    const wasReported = this.scope !== null;
+    this.scope = scope === null ? null : [...scope];
+    if (this.scope !== null || wasReported) {
+      this.sendScope();
+    }
+  }
+
+  private sendScope(): void {
+    this.sendFramed(TYPE_SET_SCOPE, NIL_NOTE_ID, textEncoder.encode((this.scope ?? []).join("\n")));
   }
 
   sendFramed(type: number, noteId: string, payload: Uint8Array): void {

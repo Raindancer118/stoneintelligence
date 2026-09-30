@@ -5,7 +5,7 @@ import { api } from "../src/lib/api";
 vi.mock("../src/lib/api", async (original) => ({ ...(await original<typeof import("../src/lib/api")>()), api: {
   listRoles: vi.fn(), listGroups: vi.fn(), listMembers: vi.fn(), createGroup: vi.fn(), createRole: vi.fn(),
   listInvitations: vi.fn(), searchPeople: vi.fn(), removeFromVault: vi.fn(), deleteRole: vi.fn(), updateRole: vi.fn(),
-  renameGroup: vi.fn(), deleteGroup: vi.fn(), vaultLog: vi.fn(),
+  renameGroup: vi.fn(), deleteGroup: vi.fn(), vaultLog: vi.fn(), setSelectiveSync: vi.fn(),
 } }));
 const group = { id: "group", name: "Team", memberSubjects: [], roleIds: [] };
 beforeEach(() => {
@@ -72,5 +72,21 @@ describe("vault members and management", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Letzte Ereignisse anzeigen" }));
 
     expect(await screen.findByText("tom hat ben aus dem Vault genommen")).toBeTruthy();
+  });
+});
+
+describe("large vaults", () => {
+  it("lets managers make every device sync only its work areas", async () => {
+    const vault = { id: "vault", name: "Konzern", createdAt: "", selectiveSync: false };
+    vi.mocked(api.setSelectiveSync).mockResolvedValue({ ...vault, selectiveSync: true });
+    const renamed = vi.fn();
+    render(VaultDetail, { vault, me: "tom", onRenamed: renamed });
+    await screen.findByText("tom (du)");
+    await fireEvent.click(screen.getByRole("button", { name: "Vault-Einstellungen" }));
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: /Nur Arbeitsbereiche synchronisieren/ }));
+
+    await waitFor(() => expect(api.setSelectiveSync).toHaveBeenCalledWith("vault", true));
+    expect(renamed).toHaveBeenCalledWith({ ...vault, selectiveSync: true });
   });
 });

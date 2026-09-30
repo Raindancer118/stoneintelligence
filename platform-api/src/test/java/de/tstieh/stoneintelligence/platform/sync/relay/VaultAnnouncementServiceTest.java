@@ -78,6 +78,28 @@ class VaultAnnouncementServiceTest {
         }
     }
 
+    // ADR 0013: ein Konzern-Vault soll nicht jede Aenderung an jedes verbundene Geraet melden.
+    @Nested
+    class Areas {
+
+        @Test
+        void should_announceOnlyWithinADevicesAreas() {
+            var sales = new RecordingVaultSubscriber("sales");
+            sales.scope = de.tstieh.stoneintelligence.platform.vault.SyncScope.of(java.util.List.of("Vertrieb"));
+            var everything = new RecordingVaultSubscriber("everything");
+            announcements.subscribe(vaultId, sales);
+            announcements.subscribe(vaultId, everything);
+
+            announcements.announceNoteCreated(vaultId, noteId, "Einkauf/Liste.md");
+            announcements.announceNoteCreated(vaultId, NoteId.newId(), "Vertrieb/Kunden.md");
+            announcements.announceFoldersChanged(vaultId, "Einkauf");
+            announcements.announceFoldersChanged(vaultId, "Vertrieb/Nord");
+
+            assertThat(sales.received).extracting(RecordingVaultSubscriber.Received::path).containsExactly("Vertrieb/Kunden.md", "Vertrieb/Nord");
+            assertThat(everything.received).hasSize(4);
+        }
+    }
+
     @Nested
     class Authorization {
 

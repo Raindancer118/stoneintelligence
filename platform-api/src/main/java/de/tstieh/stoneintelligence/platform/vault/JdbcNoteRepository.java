@@ -152,6 +152,58 @@ public class JdbcNoteRepository implements NoteRepository {
         return new ReconciliationPage(epochId, complete, nextCursor, page.stream().map(NoteWithSequence::note).toList());
     }
 
+    /**
+     * Je Bereich ein Bereichsscan ueber {@code (vault_id, path COLLATE "C")} statt den ganzen Vault zu
+     * durchlaufen. "C": Byte-Reihenfolge, wie Java Strings vergleicht - sonst sprangen Seitengrenzen.
+     * {@code path >= area || '/' AND path < area || '0'}: alles unter dem Ordner ('0' folgt direkt auf '/').
+     */
+    @Override
+    public ScopedPage listScoped(VaultId vaultId, SyncScope scope, String afterPath, int pageSize, java.util.Set<NoteKind> kinds) {
+        var parts = new java.util.ArrayList<String>();
+        var params = new java.util.HashMap<String, Object>();
+        params.put("vaultId", vaultId.value());
+        params.put("after", afterPath);
+        params.put("kinds", kinds.stream().map(NoteKind::name).toList());
+        params.put("limit", pageSize + 1);
+        var select = "SELECT * FROM platform.notes WHERE vault_id = :vaultId AND kind IN (:kinds) AND path COLLATE \"C\" > :after";
+        if (scope.isWholeVault()) {
+            parts.add("(" + select + " ORDER BY path COLLATE \"C\" LIMIT :limit)");
+        }
+        for (var i = 0; i < scope.areas().size(); i++) {
+            var area = scope.areas().get(i);
+            params.put("exact" + i, area);
+            params.put("from" + i, area + "/");
+            params.put("to" + i, area + "0");
+            parts.add("(" + select + " AND (path = :exact" + i + " OR (path COLLATE \"C\" >= :from" + i
+                + " AND path COLLATE \"C\" < :to" + i + ")) ORDER BY path COLLATE \"C\" LIMIT :limit)");
+        }
+        var rows = jdbcClient.sql("SELECT * FROM (" + String.join(" UNION ALL ", parts) + ") scoped ORDER BY path COLLATE \"C\" LIMIT :limit")
+            .params(params)
+            .query(NOTE_WITH_SEQUENCE_MAPPER)
+            .list().stream().map(NoteWithSequence::note).toList();
+        var complete = rows.size() <= pageSize;
+        return new ScopedPage(complete ? rows : rows.subList(0, pageSize), complete);
+    }
+
+    @Override
+    public ScopedPage listFolder(VaultId vaultId, String folder, String afterPath, int pageSize, java.util.Set<NoteKind> kinds) {
+        var rows = jdbcClient.sql("""
+                SELECT * FROM platform.notes
+                WHERE vault_id = :vaultId AND parent = :folder AND kind IN (:kinds) AND path COLLATE "C" > :after
+                ORDER BY path COLLATE "C"
+                LIMIT :limit
+                """)
+            .param("vaultId", vaultId.value())
+            .param("folder", folder)
+            .param("kinds", kinds.stream().map(NoteKind::name).toList())
+            .param("after", afterPath)
+            .param("limit", pageSize + 1)
+            .query(NOTE_WITH_SEQUENCE_MAPPER)
+            .list().stream().map(NoteWithSequence::note).toList();
+        var complete = rows.size() <= pageSize;
+        return new ScopedPage(complete ? rows : rows.subList(0, pageSize), complete);
+    }
+
     @Override
     public List<Note> search(VaultId vaultId, String query, java.util.Set<NoteKind> kinds, int limit) {
         // strpos statt LIKE: Nutzereingaben mit % oder _ bleiben woertlich, ohne Escaping.

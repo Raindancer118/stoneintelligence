@@ -51,6 +51,8 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     private final Set<String> folderEventSessions = ConcurrentHashMap.newKeySet();
     private final Set<String> fileEventSessions = ConcurrentHashMap.newKeySet();
     private final Set<String> accessEventSessions = ConcurrentHashMap.newKeySet();
+    /** Arbeitsbereiche je Verbindung (Frame 16, ADR 0013). */
+    private final java.util.Map<String, de.tstieh.stoneintelligence.platform.vault.SyncScope> scopesBySession = new ConcurrentHashMap<>();
     /**
      * Pro Session die gejointen Notizen, fuer die der Actor zusaetzlich {@link Permission#WRITE}
      * hat - getrennt von {@link #joinedNotesBySession} (das nur READ voraussetzt), weil sonst
@@ -97,6 +99,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
             case SyncFrame.TYPE_SUBSCRIBE_FOLDER_EVENTS -> folderEventSessions.add(session.getId());
             case SyncFrame.TYPE_SUBSCRIBE_FILE_EVENTS -> fileEventSessions.add(session.getId());
             case SyncFrame.TYPE_SUBSCRIBE_ACCESS_EVENTS -> accessEventSessions.add(session.getId());
+            case SyncFrame.TYPE_SET_SCOPE -> setScope(session, frame.payload());
             case SyncFrame.TYPE_AWARENESS -> {
                 if (hasJoined(session, frame.noteId())) {
                     relay.onAwarenessUpdate(frame.noteId(), syncSession, frame.payload());
@@ -145,6 +148,17 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         activity.opened(vaultId, noteId, actor);
     }
 
+    /** Unlesbare oder zu viele Bereiche: die alte Meldung bleibt, die Verbindung laeuft weiter. */
+    private void setScope(WebSocketSession session, byte[] payload) {
+        var text = new String(payload, StandardCharsets.UTF_8);
+        var areas = text.isBlank() ? java.util.List.<String>of() : java.util.List.of(text.split("\n"));
+        try {
+            scopesBySession.put(session.getId(), de.tstieh.stoneintelligence.platform.vault.SyncScope.of(areas));
+        } catch (IllegalArgumentException invalid) {
+            // bleibt beim bisherigen Stand
+        }
+    }
+
     private void handleLeave(WebSocketSession session, NoteId noteId, SyncSession syncSession) {
         var joined = joinedNotesBySession.get(session.getId());
         var writable = writableNotesBySession.get(session.getId());
@@ -183,6 +197,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         folderEventSessions.remove(session.getId());
         fileEventSessions.remove(session.getId());
         accessEventSessions.remove(session.getId());
+        scopesBySession.remove(session.getId());
         var joined = joinedNotesBySession.remove(session.getId());
         if (joined == null) {
             return;
@@ -279,6 +294,11 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         @Override
         public boolean wantsFolderEvents() {
             return folderEventSessions.contains(session.getId());
+        }
+
+        @Override
+        public de.tstieh.stoneintelligence.platform.vault.SyncScope scope() {
+            return scopesBySession.getOrDefault(session.getId(), de.tstieh.stoneintelligence.platform.vault.SyncScope.wholeVault());
         }
 
         @Override

@@ -13,6 +13,12 @@ public interface FolderRepository {
     /** Alle Ordnerpfade, sortiert. */
     List<String> list(VaultId vaultId);
 
+    /** Direkte Unterordner ({@code ""} = oberste Ebene), nach Pfad sortiert - fuer Baeume, die Ebene fuer Ebene laden (ADR 0013). */
+    List<FolderChild> children(VaultId vaultId, String parent);
+
+    record FolderChild(String path, boolean hasChildren) {
+    }
+
     /** Legt den Ordner samt fehlender Elternordner an; liefert nur die tatsaechlich neuen. */
     List<String> ensure(VaultId vaultId, String path, String actor);
 

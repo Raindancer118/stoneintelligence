@@ -6,6 +6,8 @@ export interface Vault {
   id: string;
   name: string;
   createdAt: string;
+  /** Geräte synchronisieren nur ihre Arbeitsbereiche (ADR 0013); fehlt bei älteren Servern. */
+  selectiveSync?: boolean;
 }
 
 export interface Role {
@@ -28,6 +30,7 @@ export interface Note {
   kind?: "NOTE" | "FILE"; sha256?: string | null; size?: number | null; revision?: number;
 }
 export interface NoteSearch { notes: Note[]; truncated: boolean }
+export interface FolderChild { path: string; hasChildren: boolean }
 export interface NotePage { epochId: string; complete: boolean; nextCursor: string | null; notes: Note[]; }
 export interface NoteContent { revision: number; updates: string[]; }
 export interface PersonSuggestion { username: string; name: string; maskedEmail: string; alreadyMember: boolean; }
@@ -145,6 +148,12 @@ export const api = {
   permissions: (vaultId: string) => request<string[]>(`/api/v1/vaults/${vaultId}/permissions`),
   listNotes: (vaultId: string, cursor?: string) => request<NotePage>(
     `/api/v1/vaults/${vaultId}/notes?${new URLSearchParams({ pageSize: "500", kinds: "note,file", ...(cursor ? { cursor } : {}) })}`),
+  /** Einträge direkt in einem Ordner ("" = oberste Ebene), seitenweise (ADR 0013: Bäume laden Ebene für Ebene). */
+  listFolder: (vaultId: string, folder: string, cursor?: string) => request<NotePage>(
+    `/api/v1/vaults/${vaultId}/notes?${new URLSearchParams({ folder, pageSize: "500", kinds: "note,file", ...(cursor ? { cursor } : {}) })}`),
+  /** Direkte, lesbare Unterordner. */
+  folderChildren: (vaultId: string, path: string) => request<FolderChild[]>(
+    `/api/v1/vaults/${vaultId}/folders/children?${new URLSearchParams({ path })}`),
   /** Titel-/Pfadsuche auf dem Server; {@code truncated}: es gibt mehr Treffer als angezeigt. */
   searchNotes: (vaultId: string, q: string, limit = 50) => request<NoteSearch>(
     `/api/v1/vaults/${vaultId}/notes/search?${new URLSearchParams({ q, limit: String(limit), kinds: "note,file" })}`),
@@ -260,4 +269,6 @@ export const api = {
   deleteGroup: (vaultId: string, groupId: string) => request<void>(`/api/v1/vaults/${vaultId}/groups/${groupId}`, { method: "DELETE" }),
   renameVault: (vaultId: string, name: string) =>
     request<Vault>(`/api/v1/vaults/${vaultId}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  setSelectiveSync: (vaultId: string, selectiveSync: boolean) =>
+    request<Vault>(`/api/v1/vaults/${vaultId}`, { method: "PATCH", body: JSON.stringify({ selectiveSync }) }),
 };

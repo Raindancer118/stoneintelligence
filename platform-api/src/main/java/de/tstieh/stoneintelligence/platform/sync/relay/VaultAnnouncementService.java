@@ -182,7 +182,9 @@ public class VaultAnnouncementService {
                 if (messageType == SyncFrame.TYPE_VAULT_FOLDERS_CHANGED && !subscriber.wantsFolderEvents()) {
                     continue;
                 }
-                if (!subscriber.mayRead(path)) {
+                var inScope = messageType == SyncFrame.TYPE_VAULT_FOLDERS_CHANGED
+                    ? subscriber.scope().touchesFolder(path) : subscriber.scope().covers(path);
+                if (!inScope || !subscriber.mayRead(path)) {
                     continue;
                 }
                 subscriber.sendVaultEvent(messageType, noteId, path);

@@ -69,7 +69,11 @@ export interface VaultSummary {
   id: string;
   name: string;
   createdAt: string;
+  /** Verwaltende haben festgelegt: Geraete synchronisieren nur ihre Arbeitsbereiche (ADR 0013). Fehlt bei aelteren Servern. */
+  selectiveSync?: boolean;
 }
+
+export interface FolderChild { path: string; hasChildren: boolean; }
 
 export type InviteAccess = "EDIT" | "READ";
 export interface PersonSuggestion { username: string; name: string; maskedEmail: string; alreadyMember: boolean; }
@@ -145,11 +149,13 @@ export class NoteApiClient {
    * `complete === true` - ein `nextCursor` OHNE `complete` darf niemals als Grundlage fuer lokale
    * Loeschungen/Vollstaendigkeitsannahmen dienen. `listAllNotes` (unten) kapselt das Paging.
    */
-  async listNotes(vaultId: string, cursor?: string, pageSize = 100, includeFiles = false): Promise<ReconciliationPage> {
+  async listNotes(vaultId: string, cursor?: string, pageSize = 100, includeFiles = false,
+                  scope: string[] | null = null): Promise<ReconciliationPage> {
     const params = new URLSearchParams({ pageSize: String(pageSize), ...(includeFiles ? { kinds: "note,file" } : {}) });
     if (cursor) {
       params.set("cursor", cursor);
     }
+    (scope ?? []).forEach((area) => params.append("scope", area));
     const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/notes?${params.toString()}`, {
       headers: { Authorization: `Bearer ${await this.getAccessToken()}` },
     });
@@ -160,20 +166,21 @@ export class NoteApiClient {
   }
 
   /** Laeuft `listNotes` bis `complete === true` durch und gibt alle Notizen des Vaults zurueck. */
-  async listAllNotes(vaultId: string): Promise<NoteListItem[]> {
-    return this.listAll(vaultId, false);
+  async listAllNotes(vaultId: string, scope: string[] | null = null): Promise<NoteListItem[]> {
+    return this.listAll(vaultId, false, scope);
   }
 
   /** Notizen UND Dateien; ein Server ohne Dateien liefert einfach nur Notizen (ohne `kind`). */
-  async listAllEntries(vaultId: string): Promise<NoteListItem[]> {
-    return this.listAll(vaultId, true);
+  async listAllEntries(vaultId: string, scope: string[] | null = null): Promise<NoteListItem[]> {
+    return this.listAll(vaultId, true, scope);
   }
 
-  private async listAll(vaultId: string, includeFiles: boolean): Promise<NoteListItem[]> {
+  /** `scope`: nur diese Arbeitsbereiche (ADR 0013), `null` = der ganze Vault. */
+  private async listAll(vaultId: string, includeFiles: boolean, scope: string[] | null = null): Promise<NoteListItem[]> {
     const all: NoteListItem[] = [];
     let cursor: string | undefined;
     for (;;) {
-      const page = await this.listNotes(vaultId, cursor, 100, includeFiles);
+      const page = await this.listNotes(vaultId, cursor, scope ? 500 : 100, includeFiles, scope);
       all.push(...page.notes);
       if (page.complete) {
         return all;
@@ -254,11 +261,12 @@ export class NoteApiClient {
    * Aenderungs-Feed (ADR 0013). Ohne `since` nur ein Start-Cursor. `null`: der Server kennt den Feed
    * noch nicht - dann weiter mit der vollen Liste.
    */
-  async changes(vaultId: string, since: string | null, includeFiles: boolean): Promise<FeedChanges | null> {
+  async changes(vaultId: string, since: string | null, includeFiles: boolean, scope: string[] | null = null): Promise<FeedChanges | null> {
     const params = new URLSearchParams({ limit: "1000", kinds: includeFiles ? "note,file" : "note" });
     if (since !== null) {
       params.set("since", since);
     }
+    (scope ?? []).forEach((area) => params.append("scope", area));
     const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/changes?${params.toString()}`, {
       headers: { Authorization: `Bearer ${await this.getAccessToken()}` },
     });
@@ -271,12 +279,21 @@ export class NoteApiClient {
     return (await response.json()) as FeedChanges;
   }
 
+  /** Titel und Pfad, auf dem Server gesucht - nur was ich lesen darf. */
+  async searchNotes(vaultId: string, query: string, limit = 30): Promise<NoteListItem[]> {
+    const params = new URLSearchParams({ q: query, limit: String(limit), kinds: "note,file" });
+    return (await this.json<{ notes: NoteListItem[] }>(`/api/v1/vaults/${vaultId}/notes/search?${params.toString()}`,
+      "failed to search notes")).notes;
+  }
+
   /** Ein Eintrag mit genau diesem Pfad, ueber die Server-Suche statt die ganze Liste. */
   async findByPath(vaultId: string, path: string): Promise<NoteListItem | null> {
-    const params = new URLSearchParams({ q: path, limit: "200", kinds: "note,file" });
-    const result = await this.json<{ notes: NoteListItem[] }>(`/api/v1/vaults/${vaultId}/notes/search?${params.toString()}`,
-      "failed to search notes");
-    return result.notes.find((note) => note.path === path) ?? null;
+    return (await this.searchNotes(vaultId, path, 200)).find((note) => note.path === path) ?? null;
+  }
+
+  /** Direkte, lesbare Unterordner (`""` = oberste Ebene) - fuer Ordnerauswahl ohne alle Ordner zu laden. */
+  async folderChildren(vaultId: string, path: string): Promise<FolderChild[]> {
+    return this.json<FolderChild[]>(`/api/v1/vaults/${vaultId}/folders/children?${new URLSearchParams({ path })}`, "failed to list folders");
   }
 
   async listFolders(vaultId: string): Promise<string[] | null> {
@@ -484,6 +501,11 @@ export class NoteApiClient {
   /** Jemanden ganz aus dem Vault nehmen - oder, mit dem eigenen Namen, den Vault verlassen. */
   async removeFromVault(vaultId: string, subject: string): Promise<void> {
     await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/members/${encodeURIComponent(subject)}`, "failed to remove member");
+  }
+
+  /** Nur Verwaltende: alle Geraete synchronisieren nur ihre Arbeitsbereiche (ADR 0013). */
+  async setSelectiveSync(vaultId: string, selectiveSync: boolean): Promise<VaultSummary> {
+    return this.send<VaultSummary>("PATCH", `/api/v1/vaults/${vaultId}`, "failed to change vault", { selectiveSync });
   }
 
   async renameVault(vaultId: string, name: string): Promise<VaultSummary> {

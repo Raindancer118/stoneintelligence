@@ -30,6 +30,17 @@ public abstract class VaultRepositoryContractTest {
     }
 
     @Test
+    void should_rememberWhetherDevicesSyncOnlyTheirAreas() {
+        var repository = repository();
+        var created = repository.create("Konzern");
+
+        assertThat(created.selectiveSync()).isFalse();
+        assertThat(repository.setSelectiveSync(created.id(), true)).get().extracting(Vault::selectiveSync).isEqualTo(true);
+        assertThat(repository.rename(created.id(), "Konzern AG")).get().extracting(Vault::selectiveSync).isEqualTo(true);
+        assertThat(repository.setSelectiveSync(de.tstieh.stoneintelligence.domain.id.VaultId.newId(), true)).isEmpty();
+    }
+
+    @Test
     void should_beEmpty_when_vaultDoesNotExist() {
         var repository = repository();
 

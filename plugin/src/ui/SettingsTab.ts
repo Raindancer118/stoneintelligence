@@ -25,6 +25,13 @@ export interface SettingsHost {
   applyConnectionConfig(json: string): Promise<void>;
   canInvite(): boolean;
   openInvite(): void;
+  /** Arbeitsbereiche (ADR 0013); `null` ohne verbundenen Vault. */
+  areaSummary(): { enabled: boolean; vaultDefault: boolean; areas: string[]; pinned: number } | null;
+  setAreasMode(enabled: boolean): Promise<void>;
+  openAreaPicker(): void;
+  removeArea(path: string): Promise<void>;
+  releasePinned(): Promise<void>;
+  openFetchFromVault(): void;
   /** null = diese Obsidian-Version erlaubt es nicht. */
   propertiesHidden(): boolean | null;
   setPropertiesHidden(hidden: boolean): void;
@@ -57,6 +64,7 @@ export class StoneIntelligenceSettingTab extends PluginSettingTab {
     this.renderAccount(containerEl);
     this.renderVault(containerEl);
     this.renderSync(containerEl);
+    this.renderAreas(containerEl);
     this.renderDisplay(containerEl);
     this.renderAdvanced(containerEl);
 
@@ -234,6 +242,54 @@ export class StoneIntelligenceSettingTab extends PluginSettingTab {
           await this.host.saveSettings();
         });
       });
+  }
+
+  /**
+   * Arbeitsbereiche (ADR 0013): in grossen Vaults haelt ein Geraet nur gewaehlte Ordner und einzeln
+   * geholte Notizen aktuell. Ein- und Ausblenden der Liste ohne neu zu rendern waere schoener, der
+   * Tab rendert aber ohnehin bei jeder Aenderung neu.
+   */
+  private renderAreas(containerEl: HTMLElement): void {
+    const summary = this.host.areaSummary();
+    if (!summary) {
+      return;
+    }
+    new Setting(containerEl).setName("Arbeitsbereiche").setHeading();
+    new Setting(containerEl)
+      .setName("Nur Arbeitsbereiche synchronisieren")
+      .setDesc(summary.vaultDefault
+        ? "Für diesen Vault vorgegeben: Er ist zu groß, um ihn ganz auf jedes Gerät zu laden. Wähle die Ordner, mit denen du arbeitest."
+        : "Für große Vaults: Dieses Gerät hält nur die gewählten Ordner und einzeln geholte Notizen aktuell.")
+      .addToggle((toggle) => toggle.setValue(summary.enabled).onChange(async (enabled) => {
+        await this.host.setAreasMode(enabled);
+        this.display();
+      }));
+    if (!summary.enabled) {
+      return;
+    }
+    if (summary.areas.length === 0) {
+      new Setting(containerEl).setDesc("Noch kein Ordner gewählt – dieses Gerät synchronisiert gerade nichts außer einzeln geholten Notizen.");
+    }
+    for (const area of summary.areas) {
+      new Setting(containerEl)
+        .setName(area)
+        .addExtraButton((button) => button.setIcon("x").setTooltip("Nicht mehr auf diesem Gerät").onClick(async () => {
+          await this.host.removeArea(area);
+          this.display();
+        }));
+    }
+    new Setting(containerEl)
+      .addButton((button) => button.setButtonText("Ordner hinzufügen…").setCta().onClick(() => this.host.openAreaPicker()))
+      .addButton((button) => button.setButtonText("Einzelne Notiz holen…").onClick(() => this.host.openFetchFromVault()));
+    if (summary.pinned > 0) {
+      new Setting(containerEl)
+        .setName(`${summary.pinned} einzeln gehaltene Notizen und Dateien`)
+        .setDesc("Geholt, selbst angelegt oder schon vorher auf dem Gerät – sie bleiben aktuell, obwohl sie außerhalb der Bereiche liegen.")
+        .addButton((button) => button.setButtonText("Loslassen…").onClick(async () => {
+          await this.host.releasePinned();
+          this.display();
+        }));
+    }
   }
 
   private renderDisplay(containerEl: HTMLElement): void {

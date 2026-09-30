@@ -4,6 +4,7 @@ test.beforeEach(async ({ page }) => { await mockWorkspace(page); });
 
 async function openNote(page: import("@playwright/test").Page) {
   await page.goto("/");
+  await page.getByRole("button", { name: "Ordner Projekte" }).click();
   await page.getByRole("button", { name: "Kundenportal Projekte" }).click();
   await expect(page.getByText("Hier sammeln wir Entscheidungen", { exact: false })).toBeVisible();
 }
@@ -17,6 +18,7 @@ test("read, edit, save and reopen a note", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(page.getByText(/Gespeichert um/)).toBeVisible();
   await page.reload();
+  await page.getByRole("button", { name: "Ordner Projekte" }).click();
   await page.getByRole("button", { name: "Kundenportal Projekte" }).click();
   await expect(page.getByText("Im Browser gespeichert.")).toBeVisible();
   expect(errors).toEqual([]);
@@ -54,7 +56,7 @@ test("rename and confirmed deletion update the note list", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Abschluss Archiv" })).toBeVisible();
   page.once("dialog", dialog => dialog.accept());
   await page.getByRole("button", { name: "Notiz löschen" }).click();
-  await expect(page.getByText("Noch keine Notizen vorhanden.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Abschluss Archiv" })).toHaveCount(0);
 });
 
 
@@ -69,6 +71,7 @@ test("create a note in a folder and save its first content", async ({ page }) =>
   await page.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(page.getByText(/Gespeichert um/)).toBeVisible();
   await page.reload();
+  await page.getByRole("button", { name: "Ordner Ideen" }).click();
   await page.getByRole("button", { name: "Neue Notiz Ideen" }).click();
   await expect(page.getByText("Meine erste Notiz", { exact: true })).toBeVisible();
 });

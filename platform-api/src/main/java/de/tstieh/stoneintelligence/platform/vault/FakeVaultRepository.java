@@ -24,6 +24,11 @@ public class FakeVaultRepository implements VaultRepository {
 
     @Override
     public Optional<Vault> rename(VaultId id, String name) {
-        return Optional.ofNullable(vaults.computeIfPresent(id, (key, vault) -> new Vault(key, name, vault.createdAt())));
+        return Optional.ofNullable(vaults.computeIfPresent(id, (key, vault) -> new Vault(key, name, vault.createdAt(), vault.selectiveSync())));
+    }
+
+    @Override
+    public Optional<Vault> setSelectiveSync(VaultId id, boolean selectiveSync) {
+        return Optional.ofNullable(vaults.computeIfPresent(id, (key, vault) -> new Vault(key, vault.name(), vault.createdAt(), selectiveSync)));
     }
 }

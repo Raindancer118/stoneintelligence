@@ -28,6 +28,10 @@ public class FolderRegistry {
         return folders.list(vaultId);
     }
 
+    public List<FolderRepository.FolderChild> children(VaultId vaultId, String parent) {
+        return folders.children(vaultId, parent);
+    }
+
     public void create(VaultId vaultId, String path, String actor) {
         announce(vaultId, folders.ensure(vaultId, path, actor));
     }
@@ -57,7 +61,7 @@ public class FolderRegistry {
         if (hasEntries || !folders.creator(vaultId, path).map(creator::equals).orElse(false)) {
             return false;
         }
-        if (folders.list(vaultId).stream().anyMatch(other -> other.startsWith(path + "/"))) {
+        if (!folders.children(vaultId, path).isEmpty()) {
             return false;
         }
         delete(vaultId, path);

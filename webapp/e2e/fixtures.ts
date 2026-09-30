@@ -105,6 +105,22 @@ export async function mockWorkspace(page: Page) {
       const q = (new URL(request.url()).searchParams.get("q") ?? "").toLocaleLowerCase();
       return json({ notes: notes.filter(n => n.path.toLocaleLowerCase().includes(q)), truncated: false });
     }
+    if (path.endsWith("/folders/children")) {
+      const parent = new URL(request.url()).searchParams.get("path") ?? "";
+      const prefix = parent ? `${parent}/` : "";
+      const children = new Set<string>();
+      for (const n of notes) {
+        if (!n.path.startsWith(prefix)) continue;
+        const rest = n.path.slice(prefix.length);
+        if (rest.includes("/")) children.add(prefix + rest.slice(0, rest.indexOf("/")));
+      }
+      return json([...children].sort().map(child => ({ path: child, hasChildren: notes.some(n => n.path.startsWith(`${child}/`) && n.path.slice(child.length + 1).includes("/")) })));
+    }
+    if (path.endsWith("/notes") && request.method() === "GET" && new URL(request.url()).searchParams.has("folder")) {
+      const folder = new URL(request.url()).searchParams.get("folder") ?? "";
+      return json({ epochId: "test-epoch", complete: true, nextCursor: null,
+        notes: notes.filter(n => (n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : "") === folder) });
+    }
     if (path.endsWith("/notes")) {
       if (request.method() === "POST") { const note = { ...notes[0]!, id: "b0000000-0000-4000-8000-000000000002", path: request.postDataJSON().path }; notes.push(note); documents.set(note.id, new Y.Doc()); revisions.set(note.id, 0); return json(note); }
       return json({ epochId: "test-epoch", complete: true, nextCursor: null, notes });

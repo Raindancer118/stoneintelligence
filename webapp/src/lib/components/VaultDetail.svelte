@@ -21,6 +21,14 @@
     catch (e) { error = (e as Error).message; }
     finally { renamingVault = false; }
   }
+  let savingAreas = $state(false);
+  async function setSelectiveSync(enabled: boolean) {
+    if (savingAreas) return;
+    savingAreas = true;
+    try { onRenamed(await api.setSelectiveSync(vault.id, enabled)); error = null; }
+    catch (e) { error = (e as Error).message; }
+    finally { savingAreas = false; }
+  }
   const ALL_PERMISSIONS = ["READ", "WRITE", "DELETE", "CREATE", "MANAGE"];
 
   let roles = $state<Role[]>([]);
@@ -208,6 +216,7 @@
 {#if !members.length && !loading}<p class="hint">Noch keine Mitglieder sichtbar.</p>{/if}
 {/if}
 {#if page === "settings"}
+<section class="admin-section"><h3>Große Vaults</h3><label class="toggle"><input type="checkbox" checked={vault.selectiveSync ?? false} disabled={savingAreas} onchange={e => setSelectiveSync(e.currentTarget.checked)} /> Nur Arbeitsbereiche synchronisieren</label><p class="hint">Jedes Obsidian lädt dann nur die Ordner, die seine Person wählt, statt des ganzen Vaults. Einzelne Geräte können es trotzdem umstellen.</p></section>
 <section class="admin-section"><h3>Vault umbenennen</h3><form onsubmit={e => { e.preventDefault(); void renameVault(); }}><label for="rename-vault">Neuer Vault-Name</label><input id="rename-vault" placeholder={vault.name} bind:value={vaultName} required maxlength="100" /><button class="primary" disabled={renamingVault}>Vault umbenennen</button></form></section>
 <section>
   <h3>Plugin-Verbindung</h3>
