@@ -74,7 +74,9 @@ class JdbcAccessGrantRepositoryIT extends AccessGrantRepositoryContractTest {
             var flyway = Flyway.configure().dataSource(fresh.getJdbcUrl(), fresh.getUsername(), fresh.getPassword())
                 .schemas("platform").locations("classpath:db/migration/platform");
             flyway.target("13").load().migrate();
-            var vault = new JdbcVaultRepository(client).create("Bestand").id();
+            // Mit dem Schema von damals, nicht mit dem heutigen Repository (das kennt schon neuere Spalten).
+            var vault = de.tstieh.stoneintelligence.domain.id.VaultId.of(client.sql("INSERT INTO platform.vaults (name) VALUES ('Bestand') RETURNING id")
+                .query(UUID.class).single());
             var note = client.sql("""
                     INSERT INTO platform.notes (vault_id, path, note_level, created_by) VALUES (:vault, 'Team/plan.md', 1, 'tom')
                     RETURNING id""").param("vault", vault.value()).query(UUID.class).single();

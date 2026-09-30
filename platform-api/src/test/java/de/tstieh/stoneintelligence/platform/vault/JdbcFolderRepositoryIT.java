@@ -1,5 +1,6 @@
 package de.tstieh.stoneintelligence.platform.vault;
 
+import java.util.UUID;
 import de.tstieh.stoneintelligence.domain.id.VaultId;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
@@ -57,7 +58,9 @@ class JdbcFolderRepositoryIT extends FolderRepositoryContractTest {
             var flyway = Flyway.configure().dataSource(fresh.getJdbcUrl(), fresh.getUsername(), fresh.getPassword())
                 .schemas("platform").locations("classpath:db/migration/platform");
             flyway.target("8").load().migrate();
-            var vault = new JdbcVaultRepository(client).create("Bestand").id();
+            // Mit dem Schema von damals, nicht mit dem heutigen Repository (das kennt schon neuere Spalten).
+            var vault = de.tstieh.stoneintelligence.domain.id.VaultId.of(client.sql("INSERT INTO platform.vaults (name) VALUES ('Bestand') RETURNING id")
+                .query(UUID.class).single());
             // Mit dem Schema von damals (V8), nicht mit dem heutigen Repository.
             for (var path : java.util.List.of("Studium/Mathe/Analysis.md", "Wurzel.md")) {
                 client.sql("INSERT INTO platform.notes (vault_id, path, note_level, created_by) VALUES (:vault, :path, 1, 'tom')")

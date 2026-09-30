@@ -38,6 +38,14 @@
     open = [...open, path];
     void loadLevel(path);
   }
+  /** Zeigt eine Notiz im Baum: lädt die Ebenen bis zu ihr neu und öffnet ihre Ordner (nach Anlegen oder Verschieben). */
+  async function reveal(path: string) {
+    const parts = path.split("/").slice(0, -1);
+    const chain = ["", ...parts.map((_, i) => parts.slice(0, i + 1).join("/"))];
+    open = [...new Set([...open, ...chain.slice(1)])];
+    for (const level of chain) delete levels[level];
+    await Promise.all(chain.map(level => loadLevel(level)));
+  }
   function sorted(list: Note[]) { return [...list].sort((a, b) => sort === "recent" ? b.createdAt.localeCompare(a.createdAt) : a.path.localeCompare(b.path, "de", { numeric: true })); }
   const loaded = $derived(Object.values(levels).flatMap(level => level.entries));
   const notes = $derived(loaded);
@@ -120,9 +128,8 @@
       if (notes.some(n => n.path === path)) throw new Error("Eine Notiz mit diesem Pfad ist bereits vorhanden.");
       const note = await api.createNote(vault.id, path);
       if (!alive) return;
-      const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-      if (levels[parent]) levels[parent] = { ...levels[parent], entries: [note, ...levels[parent].entries] };
       selected = note; showCreate = false; newPath = ""; search = ""; dirty = false;
+      void reveal(note.path);
     } catch (e) { if (alive) error = e instanceof Error ? e.message : "Die Notiz konnte nicht angelegt werden."; }
     finally { if (alive) { creating = false; onDirtyChange(dirty); } }
   }
@@ -135,9 +142,8 @@
   }
   function changed(note: Note) {
     for (const [path, level] of Object.entries(levels)) levels[path] = { ...level, entries: level.entries.filter(n => n.id !== note.id) };
-    const parent = note.path.includes("/") ? note.path.slice(0, note.path.lastIndexOf("/")) : "";
-    if (levels[parent]) levels[parent] = { ...levels[parent], entries: [...levels[parent].entries, note] };
     selected = note;
+    void reveal(note.path);
   }
   function deleted() {
     for (const [path, level] of Object.entries(levels)) levels[path] = { ...level, entries: level.entries.filter(n => n.id !== selected?.id) };
