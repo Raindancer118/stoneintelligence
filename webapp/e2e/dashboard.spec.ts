@@ -126,3 +126,24 @@ test("reads a document with AI and undoes the result", async ({ page }, testInfo
   await page.screenshot({ path: testInfo.outputPath("ai-mobile.png"), fullPage: true });
   expect(errors).toEqual([]);
 });
+
+// ADR 0013: eine Gruppe mit dem Firmen-Login verknüpfen statt jede Person einzuladen.
+test("links a group to the identity provider and unlinks it again", async ({ page }, testInfo) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Mitglieder & Rechte", exact: true }).click();
+  await page.getByRole("button", { name: "Gruppen", exact: true }).click();
+  await expect(page.getByText("Gruppe aus dem Firmen-Login verknüpfen", { exact: false })).toBeVisible();
+
+  await page.getByRole("textbox", { name: "Gruppe beim Identitätsanbieter für Lerngruppe" }).fill("alle-mitarbeitenden");
+  await page.getByRole("button", { name: "Verknüpfen" }).click();
+
+  await expect(page.getByText("Verknüpft mit „alle-mitarbeitenden“ beim Identitätsanbieter – 3 Personen")).toBeVisible();
+  await expect(page.getByText("Außerdem direkt eingetragen:")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("idp-link.png"), fullPage: true });
+
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Verknüpfung lösen" }).click();
+  await expect(page.getByText("Gruppe aus dem Firmen-Login verknüpfen", { exact: false })).toBeVisible();
+  expect(errors).toEqual([]);
+});

@@ -15,7 +15,9 @@
   <section>
     <h2>2. Welche Daten verarbeitet werden</h2>
     <ul>
-      <li><strong>Konto:</strong> Benutzername, Name und E-Mail-Adresse aus der Anmeldung.</li>
+      <li><strong>Konto:</strong> Benutzername, Name und E-Mail-Adresse aus der Anmeldung. Dein Anzeigename wird gespeichert, damit andere Mitglieder dich erkennen.</li>
+      <li><strong>Gruppen aus der Anmeldung:</strong> Ist ein Vault mit einer Gruppe deines Identitätsanbieters verknüpft (etwa „alle Beschäftigten“ einer Firma), wird bei der Anmeldung gespeichert, in welchen dieser verknüpften Gruppen du bist. Andere Gruppen aus deiner Anmeldung werden nicht gespeichert.</li>
+      <li><strong>Firmenverzeichnis (SCIM):</strong> Bindet eine Organisation ihr Verzeichnis an, übermittelt ihr Identitätsanbieter Benutzername, Anzeigename, eine Kennung, ob dein Konto aktiv ist, und deine Gruppen. Daraus ergibt sich, auf welche Vaults du zugreifen darfst; ein deaktiviertes Konto verliert den Zugriff sofort.</li>
       <li><strong>Inhalte:</strong> deine Notizen (einschließlich ihres Bearbeitungsverlaufs), Dateien wie PDFs und Bilder, Ordner, Vaults, Mitgliedschaften und Rechte.</li>
       <li><strong>Versionen:</strong> zu jeder Änderung an einer Notiz, wer sie wann geschrieben hat. Daraus entstehen die früheren Versionen einer Notiz; wer die Notiz lesen darf, sieht sie mit Namen und Zeitpunkt und kann sie mit Schreibrecht wiederherstellen.</li>
       <li><strong>Änderungsprotokoll:</strong> wer eine Notiz wann angelegt, umbenannt, gespeichert oder gelöscht hat.</li>
@@ -30,6 +32,7 @@
     <ul>
       <li>Bereitstellen des Dienstes – Anmeldung, Speichern, Synchronisieren und Teilen deiner Inhalte, Einladungen, die du verschickst: Art. 6 Abs. 1 lit. b DSGVO.</li>
       <li>Sicherer Betrieb, Fehlersuche und Schutz vor Missbrauch (technische Zugriffsdaten, Änderungsprotokoll): Art. 6 Abs. 1 lit. f DSGVO. Das berechtigte Interesse liegt darin, den Dienst stabil und nachvollziehbar zu betreiben.</li>
+      <li>Gruppen aus der Anmeldung und Firmenverzeichnis: Art. 6 Abs. 1 lit. b DSGVO, soweit es um deinen Zugang zu den Vaults geht; im Übrigen Art. 6 Abs. 1 lit. f DSGVO – das Interesse deiner Organisation, Zugänge zentral zu verwalten und beim Ausscheiden sofort zu beenden.</li>
       <li>Einladungs-E-Mail an eine Person ohne Konto: Art. 6 Abs. 1 lit. f DSGVO – das Interesse des Einladenden, eine bestimmte Person zur Zusammenarbeit einzuladen. Die Adresse wird nur dafür verwendet.</li>
       <li>KI-Verarbeitung (Abschnitt 6): deine ausdrückliche Anforderung und Einwilligung, Art. 6 Abs. 1 lit. a und b sowie Art. 49 Abs. 1 lit. a DSGVO.</li>
     </ul>
@@ -70,6 +73,8 @@
       <li>Zum Einlesen hochgeladene Dokumente: bis die Verarbeitung abgeschlossen ist; Angaben zur Verarbeitung und die Aufzeichnung der KI-Änderungen (für „Rückgängig"): 90 Tage.</li>
       <li>Ähnlichkeitsvektoren, gesetzte und abgelehnte Verknüpfungen: solange die beteiligten Notizen bestehen; Einwilligungen zur KI-Prüfung: bis zum Widerruf; sie wirken nur, solange du Mitglied des Vaults bist.</li>
       <li>Einladungen: 30 Tage nach Annahme, Widerruf oder Ablauf.</li>
+      <li>Gruppen aus der Anmeldung: 7 Tage nach der letzten Anmeldung. Anzeigename aus der Anmeldung: 13 Monate nach der letzten Anmeldung.</li>
+      <li>Firmenverzeichnis: solange die Organisation das Konto übermittelt. Löscht sie es, werden Name und Kennung sofort entfernt; Benutzername und Sperrvermerk bleiben 30 Tage, damit der Zugriff sicher beendet bleibt.</li>
       <li>Änderungsprotokoll: solange der Vault besteht.</li>
       <li>Technische Zugriffsdaten: werden fortlaufend überschrieben.</li>
       <li>Sicherungen: tägliche Datenbanksicherungen 30 Tage, Monatsstände 12 Monate; gelöschte Dateien bleiben höchstens 30 Tage in der Sicherung.</li>
@@ -86,5 +91,5 @@
     <p>Du hast das Recht auf Auskunft (Art. 15), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung der Verarbeitung (Art. 18), Datenübertragbarkeit (Art. 20) und Widerspruch gegen Verarbeitungen auf Grundlage berechtigter Interessen (Art. 21 DSGVO). Eine Einwilligung kannst du jederzeit mit Wirkung für die Zukunft widerrufen – für die KI-Funktion genügt es, sie nicht mehr zu nutzen. Wende dich dafür an die im Impressum genannten Kontaktwege. Du kannst dich außerdem bei einer Datenschutz-Aufsichtsbehörde beschweren, insbesondere in deinem Bundesland.</p>
   </section>
 
-  <p class="hint">Stand: 23. September 2026</p>
+  <p class="hint">Stand: 20. Oktober 2026</p>
 </article>

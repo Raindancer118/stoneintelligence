@@ -6,6 +6,7 @@ import {
   type AiJob, type HistoryEvent, HttpError, type LinkingSettings, type NoteApiClient, type PendingInvitation, type VaultGroup, type VaultMember, type VaultRole,
 } from "../sync/NoteApiClient";
 import { confirmAction } from "./ConfirmModal";
+import { idpLinkText, personLabel } from "./peopleText";
 
 export const VIEW_TYPE_VAULT_ADMIN = "stoneintelligence-vault-admin";
 
@@ -209,7 +210,8 @@ export class VaultAdminView extends ItemView {
     }
     const me = this.host.accountName();
     for (const member of this.members) {
-      const row = new Setting(root).setName(member.subject === me ? `${member.subject} (du)` : member.subject)
+      const label = personLabel(member.subject, member.displayName);
+      const row = new Setting(root).setName(member.subject === me ? `${label} (du)` : label)
         .setDesc(`${permissionsLabel(member.permissions)}${member.groups.length ? ` · ${member.groups.map((g) => g.name).join(", ")}` : ""}`);
       if (member.subject === me) {
         row.addButton((button) => button.setButtonText("Vault verlassen").setWarning().setDisabled(this.busy).onClick(async () => {
@@ -242,10 +244,17 @@ export class VaultAdminView extends ItemView {
       root.createEl("h4", { text: group.name });
       const roleNames = this.roles.filter((role) => group.roleIds.includes(role.id)).map((role) => role.name);
       new Setting(root).setName("Rollen").setDesc(roleNames.length ? roleNames.join(", ") : "keine");
+      const linkText = idpLinkText({ idpGroup: group.idpGroup ?? null, idpMemberCount: group.idpMemberCount ?? null });
+      const nameOf = (subject: string) => personLabel(subject, group.memberNames?.[subject]);
       if (!this.manage) {
-        new Setting(root).setName("Mitglieder").setDesc(group.memberSubjects.join(", ") || "niemand");
+        if (linkText) {
+          new Setting(root).setName("Identitätsanbieter").setDesc(linkText);
+        }
+        new Setting(root).setName(linkText ? "Außerdem direkt" : "Mitglieder")
+          .setDesc(group.memberSubjects.map(nameOf).join(", ") || "niemand");
         continue;
       }
+      this.renderIdpLink(root, group, linkText);
       for (const role of this.roles) {
         new Setting(root).setName(`Rolle „${role.name}“`).setDesc(permissionsLabel(role.permissions))
           .addToggle((toggle) => toggle.setValue(group.roleIds.includes(role.id)).setDisabled(this.busy).onChange((on) => {
@@ -254,7 +263,7 @@ export class VaultAdminView extends ItemView {
           }));
       }
       for (const subject of group.memberSubjects) {
-        new Setting(root).setName(subject).setDesc("Mitglied")
+        new Setting(root).setName(nameOf(subject)).setDesc("Mitglied")
           .addExtraButton((button) => button.setIcon("x").setTooltip("Aus der Gruppe nehmen").setDisabled(this.busy)
             .onClick(() => void this.run((api, vaultId) => api.removeGroupMember(vaultId, group.id, subject), `${subject} ist nicht mehr in „${group.name}“.`)));
       }
@@ -283,6 +292,32 @@ export class VaultAdminView extends ItemView {
             await this.run((api, vaultId) => api.deleteGroup(vaultId, group.id), `Gruppe „${group.name}“ gelöscht.`);
           }
         }));
+    }
+  }
+
+  /**
+   * ADR 0013: statt jede Person einzuladen, eine Gruppe des Identitaetsanbieters verknuepfen - etwa
+   * "alle Beschaeftigten" lesen, jede Abteilung schreibt ihren Ordner.
+   */
+  private renderIdpLink(root: HTMLElement, group: VaultGroup, linkText: string | null): void {
+    let idpGroup = group.idpGroup ?? "";
+    const setting = new Setting(root).setName("Identitätsanbieter")
+      .setDesc(linkText ?? "Gruppe aus dem Firmen-Login verknüpfen: Wer dort Mitglied ist, ist es hier auch – ohne Einladung.")
+      .addText((text) => text.setPlaceholder("Name wie im Login, z. B. alle-mitarbeitenden").setValue(idpGroup)
+        .onChange((value) => (idpGroup = value)))
+      .addButton((button) => button.setButtonText(group.idpGroup ? "Ändern" : "Verknüpfen").setDisabled(this.busy).onClick(() => {
+        if (idpGroup.trim() && idpGroup.trim() !== group.idpGroup) {
+          void this.run((api, vaultId) => api.linkIdpGroup(vaultId, group.id, idpGroup.trim()),
+            `„${group.name}“ ist jetzt mit „${idpGroup.trim()}“ verknüpft.`);
+        }
+      }));
+    if (group.idpGroup) {
+      setting.addButton((button) => button.setButtonText("Lösen").setWarning().setDisabled(this.busy).onClick(async () => {
+        if (await confirmAction(this.app, `Verknüpfung von „${group.name}“ lösen?`,
+          `Wer nur über „${group.idpGroup}“ dazugehört, verliert die Rechte aus dieser Gruppe. Direkt eingetragene Mitglieder bleiben.`, "Lösen")) {
+          await this.run((api, vaultId) => api.unlinkIdpGroup(vaultId, group.id), `„${group.name}“ ist nicht mehr verknüpft.`);
+        }
+      }));
     }
   }
 

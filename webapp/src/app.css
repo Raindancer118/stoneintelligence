@@ -1269,6 +1269,33 @@ kbd {
   border-bottom: 1px solid var(--line);
   padding: 8px 0;
 }
+/* ADR 0013: Verknüpfung mit dem Identitätsanbieter - eine ruhige Fläche, verknüpft mit Akzentleiste. */
+.group .idp-link {
+  margin: 16px 0;
+  padding: 14px 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 4px;
+  transition: border-color 260ms var(--ease-out);
+}
+.group .idp-link.linked {
+  border-left-color: var(--slate);
+  background: var(--slate-soft);
+}
+.group .idp-link .eyebrow {
+  margin: 0 0 4px;
+}
+.group .idp-link > p:not(.eyebrow) {
+  margin: 0 0 12px;
+  color: var(--ink-dim);
+}
+.group .idp-link.linked > p:not(.eyebrow) {
+  color: var(--ink);
+}
+.group .idp-link input {
+  flex: 1 1 260px;
+}
 .row-form {
   display: flex;
   gap: 10px;

@@ -506,4 +506,18 @@ describe("NoteApiClient access (ADR 0011)", () => {
       ]);
     });
   });
+  describe("IdP-Gruppen (ADR 0013)", () => {
+    it("should_linkAndUnlinkAGroup", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, text: async () => "" });
+      const client = new NoteApiClient("https://platform.example", async () => "t", fakeFetch as unknown as typeof fetch);
+
+      await client.linkIdpGroup("v", "g", "sales");
+      await client.unlinkIdpGroup("v", "g");
+
+      expect(fakeFetch).toHaveBeenNthCalledWith(1, "https://platform.example/api/v1/vaults/v/groups/g/idp-group",
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ idpGroup: "sales" }) }));
+      expect(fakeFetch).toHaveBeenNthCalledWith(2, "https://platform.example/api/v1/vaults/v/groups/g/idp-group",
+        expect.objectContaining({ method: "DELETE" }));
+    });
+  });
 });
