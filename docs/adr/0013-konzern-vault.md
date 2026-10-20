@@ -1,6 +1,6 @@
 # ADR 0013: Ein Vault für einen ganzen Konzern
 
-Status: Angenommen (2026-09-29), Schritte 1–4 umgesetzt (s. Nachtrag)
+Status: Angenommen (2026-09-29), Schritte 1–5 umgesetzt (s. Nachträge)
 
 ## Kontext
 
@@ -166,3 +166,33 @@ Mandantenfähigkeit mehrerer Firmen auf einer Instanz über Vaults hinaus, Daten
 Bekannte Grenzen: Rechteänderungen senden weiter Frame 15 an alle Verbindungen des Vaults (die
 Geräte fragen dann den Feed, der meist leer ist). Jedes Anheften lädt die Liste der Bereiche einmal
 neu. Für Postgres-Transaktions-IDs gilt: Eine lang laufende Transaktion (Backup) verzögert den Feed.
+
+## Nachtrag: Schritt 5 (20.10.2026)
+
+- **V22:** `groups.idp_group` (je Vault eindeutig), `subject_idp_groups` (nur verknüpfte Gruppen aus dem
+  Token, 7 Tage gültig), SCIM-Tabellen `directory_users`/`directory_groups`/`directory_group_members`,
+  `people` (Anzeigenamen) und die Sicht `effective_group_members`, die alle Rechteabfragen statt
+  `group_members` lesen. Trigger zählen die Zugriffs-Version hoch und schreiben `access_events`.
+- **Vorrang:** Für ein per SCIM bekanntes Konto zählt allein SCIM, sonst hielte ein altes Token jemanden
+  bis zu 7 Tage in einer Gruppe, aus der der IdP ihn genommen hat. Gesperrte Konten fallen aus jeder
+  Mitgliedschaft, auch der direkten.
+- **Sofort:** `IdentityFilter` lehnt gesperrte Konten mit 401 ab (`BlockedSubjects`, im Speicher, auf
+  anderen Instanzen nach höchstens 5 s), `SubjectBlocked` schließt ihre Sync-Verbindungen (4401).
+  Mitgliedschaftsänderungen aus Token oder SCIM werden den Vaults angekündigt; offene Verbindungen
+  prüfen ihre Notizen neu.
+- **Abgelaufenes:** Eine Token-Gruppe, die 7 Tage niemand bestätigt, löscht ein Lauf alle 10 Minuten.
+  Ohne Löschen änderte sich keine Zugriffs-Version, und die Caches hielten die Person weiter für ein
+  Mitglied. Wer nach Ablauf wiederkommt, tritt für die Trigger neu bei.
+- **Geschrieben** wird beim Anmelden nur, wenn sich Gruppen oder Name ändern oder die letzte Sichtung eine
+  Stunde zurückliegt.
+- **Anzeigenamen** aus Token (`name`) oder SCIM, 13 Monate nach der letzten Anmeldung gelöscht. Webapp und
+  Plugin zeigen sie statt nichtssagender IDs.
+- **SCIM** (`docs/scim.md`): eigenes Bearer-Token, Filter werden in SQL übersetzt, PATCH so tolerant wie
+  Entra ID und Okta es brauchen. Gelöschte Konten verlieren Name und externalId sofort und verschwinden
+  nach 30 Tagen.
+- Verknüpfen in Webapp und Plugin (ADR 0011). Die Gruppenliste zeigt verknüpfte Mitglieder nur als Zahl.
+
+Bekannte Grenzen: Die Prüfung „mindestens eine verwaltende Person" zählt nur direkte Mitglieder. Sperrt
+SCIM die letzte direkt eingetragene verwaltende Person, hat der Vault keine Verwaltung mehr, bis jemand
+mit Datenbankzugriff eine einträgt. Die Gruppen-Schlüssel richten sich nach der Einstellung zum
+Zeitpunkt des Schreibens; wer sie ändert, lässt den IdP einmal vollständig abgleichen.
