@@ -1,5 +1,7 @@
 package de.tstieh.stoneintelligence.platform.identity;
 
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -89,11 +91,11 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
             .forEach(entry -> membersByGroupId
                 .computeIfAbsent(entry.getKey(), id -> new LinkedHashSet<>()).add(entry.getValue()));
 
-        return jdbcClient.sql("SELECT id, name FROM platform.groups WHERE vault_id = :vaultId ORDER BY name")
+        return jdbcClient.sql("SELECT id, name, idp_group FROM platform.groups WHERE vault_id = :vaultId ORDER BY name")
             .param("vaultId", vaultId.value())
             .query((rs, rowNum) -> {
                 var id = (UUID) rs.getObject("id");
-                return new Group(id, vaultId, rs.getString("name"), membersByGroupId.getOrDefault(id, Set.of()));
+                return new Group(id, vaultId, rs.getString("name"), membersByGroupId.getOrDefault(id, Set.of()), rs.getString("idp_group"));
             })
             .list();
     }
@@ -135,7 +137,7 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
     @Override
     public Set<VaultId> listAccessibleVaultIds(String subject) {
         var ids = jdbcClient.sql("""
-                SELECT DISTINCT g.vault_id FROM platform.group_members gm
+                SELECT DISTINCT g.vault_id FROM platform.effective_group_members gm
                 JOIN platform.groups g ON g.id = gm.group_id
                 WHERE gm.subject = :subject
                 """)
@@ -211,7 +213,7 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
     public Set<Permission> effectivePermissions(VaultId vaultId, String subject) {
         var names = jdbcClient.sql("""
                 SELECT DISTINCT rp.permission
-                FROM platform.group_members gm
+                FROM platform.effective_group_members gm
                 JOIN platform.groups g ON g.id = gm.group_id AND g.vault_id = :vaultId
                 JOIN platform.group_roles gr ON gr.group_id = g.id
                 JOIN platform.roles r ON r.id = gr.role_id AND r.vault_id = :vaultId
@@ -246,7 +248,7 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
         var permissions = java.util.EnumSet.noneOf(Permission.class);
         jdbcClient.sql("""
                 SELECT gm.group_id, rp.permission
-                FROM platform.group_members gm
+                FROM platform.effective_group_members gm
                 JOIN platform.groups g ON g.id = gm.group_id AND g.vault_id = :vaultId
                 LEFT JOIN platform.group_roles gr ON gr.group_id = g.id
                 LEFT JOIN platform.roles r ON r.id = gr.role_id AND r.vault_id = :vaultId
@@ -343,5 +345,101 @@ public class JdbcAuthorizationRepository implements AuthorizationRepository {
 
     private static String scopeSubjectOf(RuleScope scope) {
         return scope instanceof RuleScope.User user ? user.subject() : null;
+    }
+
+    @Override
+    public void linkIdpGroup(UUID groupId, String idpGroup) {
+        try {
+            jdbcClient.sql("UPDATE platform.groups SET idp_group = :idpGroup WHERE id = :groupId")
+                .param("groupId", groupId)
+                .param("idpGroup", idpGroup)
+                .update();
+        } catch (org.springframework.dao.DuplicateKeyException duplicate) {
+            throw new IdpGroupAlreadyLinkedException(idpGroup);
+        }
+    }
+
+    @Override
+    public Set<String> linkedIdpGroups() {
+        return Set.copyOf(jdbcClient.sql("SELECT DISTINCT idp_group FROM platform.groups WHERE idp_group IS NOT NULL")
+            .query(String.class).list());
+    }
+
+    /**
+     * Nur geaenderte Zeilen anfassen: Einfuegen/Loeschen loest Trigger aus (Rechte-Cache, Feed), Auffrischen nicht.
+     * Abgelaufene Zeilen zaehlen als nicht vorhanden - wer nach Ablauf wiederkommt, tritt neu bei.
+     */
+    @Override
+    @Transactional
+    public Set<VaultId> rememberTokenGroups(String subject, Set<String> idpGroups, Instant seenAt) {
+        var cutoff = Timestamp.from(Instant.now().minus(TOKEN_GROUPS_VALID_FOR));
+        var before = Set.copyOf(jdbcClient.sql("""
+                SELECT idp_group FROM platform.subject_idp_groups WHERE subject = :subject AND seen_at > :cutoff
+                """)
+            .param("subject", subject).param("cutoff", cutoff).query(String.class).list());
+        var linked = linkedIdpGroups();
+        var remembered = idpGroups.stream().filter(linked::contains).toList();
+        jdbcClient.sql("DELETE FROM platform.subject_idp_groups WHERE subject = :subject AND NOT (idp_group = ANY (:groups))")
+            .param("subject", subject)
+            .param("groups", remembered.toArray(String[]::new))
+            .update();
+        for (var group : remembered) {
+            jdbcClient.sql("""
+                    INSERT INTO platform.subject_idp_groups (subject, idp_group, seen_at) VALUES (:subject, :group, :seenAt)
+                    ON CONFLICT (subject, idp_group) DO UPDATE SET seen_at = EXCLUDED.seen_at
+                    """)
+                .param("subject", subject)
+                .param("group", group)
+                .param("seenAt", Timestamp.from(seenAt))
+                .update();
+        }
+        var after = Set.copyOf(jdbcClient.sql("""
+                SELECT idp_group FROM platform.subject_idp_groups WHERE subject = :subject AND seen_at > :cutoff
+                """)
+            .param("subject", subject).param("cutoff", cutoff).query(String.class).list());
+        var changed = new java.util.HashSet<>(before);
+        changed.addAll(after);
+        changed.removeIf(group -> before.contains(group) && after.contains(group));
+        if (changed.isEmpty() || isDirectoryManaged(subject)) {
+            return Set.of();
+        }
+        return vaultsLinking(changed);
+    }
+
+    @Override
+    public Set<VaultId> forgetTokenGroupsSeenBefore(Instant before) {
+        var forgotten = jdbcClient.sql("DELETE FROM platform.subject_idp_groups WHERE seen_at < :before RETURNING idp_group")
+            .param("before", Timestamp.from(before))
+            .query(String.class).list();
+        return forgotten.isEmpty() ? Set.of() : vaultsLinking(Set.copyOf(forgotten));
+    }
+
+    @Override
+    public Map<UUID, Integer> countIdpMembers(VaultId vaultId) {
+        var counts = new java.util.HashMap<UUID, Integer>();
+        jdbcClient.sql("""
+                SELECT g.id, count(e.subject) AS members FROM platform.groups g
+                  LEFT JOIN platform.effective_group_members e ON e.group_id = g.id
+                   AND NOT EXISTS (SELECT 1 FROM platform.group_members gm WHERE gm.group_id = g.id AND gm.subject = e.subject)
+                 WHERE g.vault_id = :vaultId AND g.idp_group IS NOT NULL
+                 GROUP BY g.id
+                """)
+            .param("vaultId", vaultId.value())
+            .query((rs, rowNum) -> counts.put((UUID) rs.getObject("id"), rs.getInt("members")))
+            .list();
+        return counts;
+    }
+
+    private boolean isDirectoryManaged(String subject) {
+        return jdbcClient.sql("SELECT EXISTS (SELECT 1 FROM platform.directory_users WHERE subject = :subject)")
+            .param("subject", subject).query(Boolean.class).single();
+    }
+
+    @Override
+    public Set<VaultId> vaultsLinking(Set<String> idpGroups) {
+        return jdbcClient.sql("SELECT DISTINCT vault_id FROM platform.groups WHERE idp_group = ANY (:groups)")
+            .param("groups", idpGroups.toArray(String[]::new))
+            .query((rs, rowNum) -> VaultId.of(rs.getObject("vault_id").toString()))
+            .list().stream().collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 }

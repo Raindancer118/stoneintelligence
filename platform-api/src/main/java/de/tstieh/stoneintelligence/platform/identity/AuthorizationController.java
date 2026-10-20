@@ -41,10 +41,12 @@ public class AuthorizationController {
     private final NoteRepository notes;
     private final AuditRecorder audit;
     private final VaultAnnouncementService announcements;
+    private final PeopleDirectory people;
 
     public AuthorizationController(AuthorizationRepository authorization, VaultAccessGuard access,
                                    AccessGrantRepository grants, NoteRepository notes, AuditRecorder audit,
-                                   VaultAnnouncementService announcements) {
+                                   VaultAnnouncementService announcements, PeopleDirectory people) {
+        this.people = people;
         this.authorization = authorization;
         this.access = access;
         this.grants = grants;
@@ -103,8 +105,13 @@ public class AuthorizationController {
         var vId = VaultId.of(vaultId);
         access.requireMember(vId, authentication.getName());
         var rolesByGroup = authorization.listRoleIdsByGroup(vId);
-        return authorization.listGroups(vId).stream()
-            .map(group -> GroupResponse.from(group, rolesByGroup.getOrDefault(group.id(), Set.of())))
+        var groups = authorization.listGroups(vId);
+        var idpMembers = groups.stream().anyMatch(group -> group.idpGroup() != null)
+            ? authorization.countIdpMembers(vId) : Map.<UUID, Integer>of();
+        var names = people.displayNames(groups.stream().flatMap(group -> group.memberSubjects().stream()).distinct().toList());
+        return groups.stream()
+            .map(group -> GroupResponse.from(group, rolesByGroup.getOrDefault(group.id(), Set.of()),
+                idpMembers.get(group.id()), names))
             .toList();
     }
 
@@ -115,7 +122,7 @@ public class AuthorizationController {
         var vId = VaultId.of(vaultId);
         access.require(vId, authentication.getName(), Permission.MANAGE);
         var group = authorization.createGroup(vId, request.name());
-        return GroupResponse.from(group, Set.of());
+        return GroupResponse.from(group, Set.of(), null, Map.of());
     }
 
     @PatchMapping("/api/v1/vaults/{vaultId}/groups/{groupId}")
@@ -127,6 +134,31 @@ public class AuthorizationController {
             authorization.renameGroup(groupId, request.name());
             audit.record(vId, null, authentication.getName(), "GROUP_CHANGED", Map.of("groupId", groupId.toString()));
         }
+    }
+
+    /**
+     * Verknuepft die Gruppe mit einer Gruppe des Identitaetsanbieters (ADR 0013): wer dort ist, ist hier
+     * Mitglied - ohne Einladung. Eine verwaltende Person bleibt immer direkt eingetragen (s. {@link
+     * AuthorizationSnapshot}), deshalb kann keine Verknuepfung den Vault ohne Verwaltung zuruecklassen.
+     */
+    @org.springframework.web.bind.annotation.PutMapping("/api/v1/vaults/{vaultId}/groups/{groupId}/idp-group")
+    @Transactional
+    public void linkIdpGroup(@PathVariable String vaultId, @PathVariable UUID groupId,
+                             @RequestBody IdpGroupRequest request, Authentication authentication) {
+        var vId = VaultId.of(vaultId);
+        requireGroupAccess(vId, groupId, authentication);
+        var idpGroup = IdpGroupRequest.validated(request);
+        authorization.linkIdpGroup(groupId, idpGroup);
+        changed(vId, authentication, "GROUP_IDP_LINKED", Map.of("groupId", groupId.toString(), "idpGroup", idpGroup));
+    }
+
+    @DeleteMapping("/api/v1/vaults/{vaultId}/groups/{groupId}/idp-group")
+    @Transactional
+    public void unlinkIdpGroup(@PathVariable String vaultId, @PathVariable UUID groupId, Authentication authentication) {
+        var vId = VaultId.of(vaultId);
+        requireGroupAccess(vId, groupId, authentication);
+        authorization.linkIdpGroup(groupId, null);
+        changed(vId, authentication, "GROUP_IDP_UNLINKED", Map.of("groupId", groupId.toString()));
     }
 
     /** Entfernt die Gruppe samt Mitgliedschaften, Rollen-Zuweisungen und ihren Freigaben. */
@@ -198,8 +230,10 @@ public class AuthorizationController {
         var vId = VaultId.of(vaultId);
         access.requireMember(vId, authentication.getName());
         var groups = authorization.listGroups(vId);
-        return groups.stream().flatMap(group -> group.memberSubjects().stream()).distinct().sorted()
-            .map(subject -> new MemberResponse(subject,
+        var subjects = groups.stream().flatMap(group -> group.memberSubjects().stream()).distinct().sorted().toList();
+        var names = people.displayNames(subjects);
+        return subjects.stream()
+            .map(subject -> new MemberResponse(subject, names.get(subject),
                 groups.stream().filter(group -> group.memberSubjects().contains(subject))
                     .map(group -> new GroupRef(group.id().toString(), group.name())).toList(),
                 authorization.membership(vId, subject).vaultPermissions()))
@@ -269,10 +303,24 @@ public class AuthorizationController {
     public record MemberRequest(String subject) {
     }
 
+    public record IdpGroupRequest(String idpGroup) {
+
+        /** Wie im Token: exakt, nur ohne Leerraum am Rand. */
+        static String validated(IdpGroupRequest request) {
+            var name = request == null || request.idpGroup() == null ? "" : request.idpGroup().strip();
+            if (name.isEmpty() || name.length() > 256 || name.chars().anyMatch(Character::isISOControl)) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "idpGroup must be 1-256 printable characters");
+            }
+            return name;
+        }
+    }
+
     public record GroupRef(String id, String name) {
     }
 
-    public record MemberResponse(String subject, List<GroupRef> groups, Set<Permission> permissions) {
+    /** {@code displayName}: aus Token oder SCIM, {@code null} wenn unbekannt - dann zeigt die Webapp das Subject. */
+    public record MemberResponse(String subject, String displayName, List<GroupRef> groups, Set<Permission> permissions) {
     }
 
     public record RoleResponse(String id, String name, Set<Permission> permissions) {
@@ -281,11 +329,19 @@ public class AuthorizationController {
         }
     }
 
-    public record GroupResponse(String id, String name, Set<String> memberSubjects, Set<String> roleIds) {
-        static GroupResponse from(Group group, Set<UUID> roleIds) {
+    /**
+     * {@code memberSubjects}: direkt eingetragene; wer ueber {@code idpGroup} dazugehoert, steht nur in
+     * {@code idpMemberCount} - bei "alle Beschaeftigten" waeren es zehntausende Namen.
+     */
+    public record GroupResponse(String id, String name, Set<String> memberSubjects, Map<String, String> memberNames,
+                                Set<String> roleIds, String idpGroup, Integer idpMemberCount) {
+        static GroupResponse from(Group group, Set<UUID> roleIds, Integer idpMemberCount, Map<String, String> names) {
+            var memberNames = new java.util.TreeMap<String, String>();
+            group.memberSubjects().stream().filter(names::containsKey).forEach(subject -> memberNames.put(subject, names.get(subject)));
             return new GroupResponse(
-                group.id().toString(), group.name(), group.memberSubjects(),
-                roleIds.stream().map(UUID::toString).collect(java.util.stream.Collectors.toUnmodifiableSet()));
+                group.id().toString(), group.name(), group.memberSubjects(), memberNames,
+                roleIds.stream().map(UUID::toString).collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                group.idpGroup(), group.idpGroup() == null ? null : (idpMemberCount == null ? 0 : idpMemberCount));
         }
     }
 }

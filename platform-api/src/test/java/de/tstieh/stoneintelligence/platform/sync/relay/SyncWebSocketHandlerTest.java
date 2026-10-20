@@ -29,9 +29,11 @@ class SyncWebSocketHandlerTest {
     private final VaultAnnouncementService announcements = new VaultAnnouncementService();
     private final de.tstieh.stoneintelligence.platform.identity.FakeAccessGrantRepository grants =
         new de.tstieh.stoneintelligence.platform.identity.FakeAccessGrantRepository(notes);
+    private final Set<String> blockedNow = Set.of("left-the-company");
     private final SyncWebSocketHandler handler =
         new SyncWebSocketHandler(relay, notes, new VaultAccessGuard(authorization, grants), announcements,
-            new de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker(notes));
+            new de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker(notes),
+            new de.tstieh.stoneintelligence.platform.identity.BlockedSubjects(() -> blockedNow, event -> { }));
 
     private VaultId newReaderOnlyNote(String actor, String path) {
         var vaultId = VaultId.newId();
@@ -245,4 +247,21 @@ class SyncWebSocketHandlerTest {
                 assertThat(new String(SyncFrame.decode(((BinaryMessage) message).getPayload().array()).payload())).isEqualTo("Team/y.md"));
         }
 }
+
+    // ADR 0013: deaktiviert der IdP jemanden, endet auch die laufende Synchronisation sofort.
+    @Test
+    void should_closeTheConnectionsOfABlockedPerson_andRefuseNewOnes() {
+        var vaultId = newReaderOnlyNote("ben", "a.md");
+        authorization.addMember(authorization.createGroup(vaultId, "x").id(), "anna");
+        var ben = connect(vaultId, "ben");
+        var anna = connect(vaultId, "anna");
+
+        handler.onSubjectBlocked(new de.tstieh.stoneintelligence.platform.identity.SubjectBlocked("ben"));
+
+        assertThat(ben.isOpen()).isFalse();
+        assertThat(ben.closeStatus.getCode()).isEqualTo(SyncWebSocketHandler.CLOSE_ACCOUNT_DEACTIVATED);
+        assertThat(anna.isOpen()).isTrue();
+        var late = connect(vaultId, "left-the-company");
+        assertThat(late.isOpen()).isFalse();
+    }
 }

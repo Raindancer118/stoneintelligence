@@ -25,8 +25,12 @@ export interface NoteListItem {
 }
 
 export interface GroupRef { id: string; name: string; }
-export interface VaultMember { subject: string; groups: GroupRef[]; permissions: Permission[]; }
-export interface VaultGroup { id: string; name: string; memberSubjects: string[]; roleIds: string[]; }
+export interface VaultMember { subject: string; displayName?: string | null; groups: GroupRef[]; permissions: Permission[]; }
+/** `idpGroup`: verknuepfte Gruppe des Identitaetsanbieters; ihre Leute stehen nur in `idpMemberCount` (ADR 0013). */
+export interface VaultGroup {
+  id: string; name: string; memberSubjects: string[]; memberNames?: Record<string, string>; roleIds: string[];
+  idpGroup?: string | null; idpMemberCount?: number | null;
+}
 export interface VaultRole { id: string; name: string; permissions: Permission[]; }
 export type { HistoryEvent, NoteActivity, NoteHistory } from "./historyText";
 import type { HistoryEvent, NoteHistory } from "./historyText";
@@ -480,6 +484,15 @@ export class NoteApiClient {
 
   async deleteGroup(vaultId: string, groupId: string): Promise<void> {
     await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/groups/${groupId}`, "failed to delete group");
+  }
+
+  /** Wer beim Identitaetsanbieter in `idpGroup` ist, ist Mitglied der Gruppe (ADR 0013). */
+  async linkIdpGroup(vaultId: string, groupId: string, idpGroup: string): Promise<void> {
+    await this.send<void>("PUT", `/api/v1/vaults/${vaultId}/groups/${groupId}/idp-group`, "failed to link the group", { idpGroup });
+  }
+
+  async unlinkIdpGroup(vaultId: string, groupId: string): Promise<void> {
+    await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/groups/${groupId}/idp-group`, "failed to unlink the group");
   }
 
   async addGroupMember(vaultId: string, groupId: string, subject: string): Promise<void> {

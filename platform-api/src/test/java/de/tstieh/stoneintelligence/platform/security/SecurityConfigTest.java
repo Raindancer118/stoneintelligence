@@ -10,7 +10,7 @@ class SecurityConfigTest {
 
     @Test
     void should_allowConfiguredWebappOrigin_forCrossOriginRequests() {
-        var source = new SecurityConfig("https://kb.tstieh.de").corsConfigurationSource();
+        var source = new SecurityConfig("https://kb.tstieh.de", "preferred_username", "groups", "name").corsConfigurationSource();
         HttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/vaults");
 
         var config = source.getCorsConfiguration(request);
@@ -24,7 +24,7 @@ class SecurityConfigTest {
     // Selbst gehostet: dieselbe Variable wie fuer die Einladungslinks, Pfad und Schraegstrich egal.
     @Test
     void should_allowTheWebappOfASelfHostedInstance() {
-        var source = new SecurityConfig("https://notes.example.org/app/").corsConfigurationSource();
+        var source = new SecurityConfig("https://notes.example.org/app/", "preferred_username", "groups", "name").corsConfigurationSource();
 
         var config = source.getCorsConfiguration(new MockHttpServletRequest("GET", "/api/v1/vaults"));
 
@@ -36,7 +36,7 @@ class SecurityConfigTest {
 
     @Test
     void should_notAllowArbitraryOrigin() {
-        var source = new SecurityConfig("https://kb.tstieh.de").corsConfigurationSource();
+        var source = new SecurityConfig("https://kb.tstieh.de", "preferred_username", "groups", "name").corsConfigurationSource();
         HttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/vaults");
 
         var config = source.getCorsConfiguration(request);
@@ -55,7 +55,7 @@ class SecurityConfigTest {
         // er ist ueber das Single-Use-Ticket selbst abgesichert (s. TicketHandshakeInterceptor).
         // Live beobachtet: jeder Verbindungsversuch von Obsidian Desktop scheiterte mit 403,
         // bevor das Ticket ueberhaupt geprueft wurde.
-        var source = new SecurityConfig("https://kb.tstieh.de").corsConfigurationSource();
+        var source = new SecurityConfig("https://kb.tstieh.de", "preferred_username", "groups", "name").corsConfigurationSource();
         HttpServletRequest request = new MockHttpServletRequest("GET", "/ws/sync");
 
         var config = source.getCorsConfiguration(request);

@@ -5,6 +5,7 @@
   import { explainAccessError, permissionsLabel } from "../accessPlan";
   import { describeEvent, formatDate, type HistoryEvent } from "../historyText";
   import { connectionConfigJson } from "../connectionConfig";
+  import { idpLinkText, personLabel } from "../peopleText";
   import InvitePeople from "./InvitePeople.svelte";
 
   let { vault, me = "", onRenamed = () => {}, onLeft = () => {} }: { vault: Vault; me?: string; onRenamed?: (vault: Vault) => void; onLeft?: () => void } = $props();
@@ -44,6 +45,18 @@
   let newRolePermissions = $state<Set<string>>(new Set());
   let newGroupName = $state("");
   let newMemberByGroup = $state<Record<string, string>>({});
+  let idpDraftByGroup = $state<Record<string, string>>({});
+
+  function linkIdpGroup(group: Group) {
+    const idpGroup = (idpDraftByGroup[group.id] ?? group.idpGroup ?? "").trim();
+    if (!idpGroup || idpGroup === group.idpGroup) return;
+    void change(async () => { await api.linkIdpGroup(vault.id, group.id, idpGroup); idpDraftByGroup = { ...idpDraftByGroup, [group.id]: "" }; }, ["groups", "members"]);
+  }
+
+  function unlinkIdpGroup(group: Group) {
+    if (!window.confirm(`Verknüpfung von „${group.name}“ lösen? Wer nur über „${group.idpGroup}“ dazugehört, verliert die Rechte aus dieser Gruppe. Direkt eingetragene Mitglieder bleiben.`)) return;
+    void change(() => api.unlinkIdpGroup(vault.id, group.id), ["groups", "members"]);
+  }
 
   async function refresh() {
     loading = true; error = null;
@@ -204,7 +217,7 @@
     <tbody>
       {#each members as member (member.subject)}
         <tr>
-          <td class="label">{member.subject}{member.subject === me ? " (du)" : ""}</td>
+          <td class="label">{personLabel(member.subject, member.displayName)}{member.subject === me ? " (du)" : ""}</td>
           <td class="permissions">{permissionsLabel(member.permissions)}{member.groups.length ? ` · ${member.groups.map(g => g.name).join(", ")}` : ""}</td>
           <td class="actions"><button class="link" onclick={() => removeFromVault(member.subject)}>{member.subject === me ? "Vault verlassen" : "entfernen"}</button></td>
         </tr>
@@ -276,10 +289,24 @@
       </div>
       <h4 class="visually-hidden">{group.name}</h4>
 
+      <div class="idp-link" class:linked={!!group.idpGroup}>
+        <p class="eyebrow">Identitätsanbieter</p>
+        <p>{idpLinkText({ idpGroup: group.idpGroup ?? null, idpMemberCount: group.idpMemberCount ?? null }) ?? "Gruppe aus dem Firmen-Login verknüpfen: Wer dort Mitglied ist, ist es hier auch – ohne Einladung."}</p>
+        <form class="row-form" onsubmit={(e) => { e.preventDefault(); linkIdpGroup(group); }}>
+          <input type="text" maxlength="256" aria-label={`Gruppe beim Identitätsanbieter für ${group.name}`}
+            placeholder="Name wie im Login, z. B. alle-mitarbeitenden"
+            value={idpDraftByGroup[group.id] || (group.idpGroup ?? "")}
+            oninput={(e) => (idpDraftByGroup = { ...idpDraftByGroup, [group.id]: e.currentTarget.value })} />
+          <button class="secondary" type="submit">{group.idpGroup ? "Ändern" : "Verknüpfen"}</button>
+          {#if group.idpGroup}<button class="link" type="button" onclick={() => unlinkIdpGroup(group)}>Verknüpfung lösen</button>{/if}
+        </form>
+      </div>
+
+      {#if group.idpGroup}<p class="hint">Außerdem direkt eingetragen:</p>{/if}
       <ul class="members">
         {#each group.memberSubjects as subject}
           <li>
-            {subject}
+            {personLabel(subject, group.memberNames?.[subject])}
             <button class="link" onclick={() => removeMember(group.id, subject)}>entfernen</button>
           </li>
         {/each}

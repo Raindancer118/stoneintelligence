@@ -60,6 +60,9 @@ erhalten, und wer die Notiz gerade offen hat, sieht den Wechsel sofort.
 Rollen und Gruppen legt ihr selbst an. Freigaben gelten für den ganzen Vault, einen Ordner oder eine
 einzelne Notiz, direkt aus dem Kontextmenü in Obsidian.
 
+In einer Firma verknüpft ihr Gruppen mit dem Login: Wer dort zu „Vertrieb“ gehört, ist es hier auch,
+ohne Einladung. Deaktiviert die IT ein Konto, endet der Zugriff sofort (SCIM).
+
 Der Dateibaum zeigt mit einem Schloss, was nur lesbar ist. Entzieht jemand das Leserecht, verschwindet
 die Notiz auf dem Gerät der betroffenen Person, noch während sie verbunden ist.
 
@@ -156,6 +159,7 @@ In BRAT `Raindancer118/stoneintelligence` als Plugin-Repository eintragen. Oder 
 
 - Anmeldung über OIDC (Authentik), PKCE
 - Rechte je Vault, Ordner und Notiz
+- Gruppen aus dem Firmen-Login, SCIM 2.0
 - Audit-Protokoll getrennt von Betriebslogs
 - Rate-Limits, stabile IDs, Tombstones
 - lokale Embeddings mit pgvector
@@ -236,6 +240,8 @@ Sync reichen PostgreSQL und `platform-api`, dazu ein Datenbankpasswort und ein O
 - Der OIDC-Client (öffentlich, PKCE) gilt für Webapp und Plugin und braucht die Redirect-URIs
   `<webapp>/callback`, `http://127.0.0.1:42813/callback` (Desktop) und
   `obsidian://stoneintelligence-auth` (Mobil).
+- Firmen-Login (Entra ID, Okta, Authentik, Keycloak): Gruppen-Claim, unveränderliche Kennung und
+  SCIM einrichten wie in [`docs/scim.md`](docs/scim.md) beschrieben.
 
 </details>
 

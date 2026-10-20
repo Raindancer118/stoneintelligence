@@ -19,8 +19,12 @@ export interface Role {
 export interface Group {
   id: string;
   name: string;
+  /** Direkt eingetragen; wer über `idpGroup` dazugehört, zählt nur `idpMemberCount` (ADR 0013). */
   memberSubjects: string[];
+  memberNames?: Record<string, string>;
   roleIds: string[];
+  idpGroup?: string | null;
+  idpMemberCount?: number | null;
 }
 
 
@@ -86,7 +90,7 @@ export type { HistoryEvent, NoteActivity, NoteHistory } from "./historyText";
 import type { HistoryEvent, NoteHistory } from "./historyText";
 import type { Restored, VersionList, VersionText } from "./versionText";
 import type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
-export interface VaultMember { subject: string; groups: { id: string; name: string }[]; permissions: Permission[]; }
+export interface VaultMember { subject: string; displayName?: string | null; groups: { id: string; name: string }[]; permissions: Permission[]; }
 /** `permissions === null` heisst "wie im Vault", eine leere Liste "nichts". */
 export interface GrantChange { scopeType: ScopeType; subject: string | null; permissions: Permission[] | null; }
 
@@ -267,6 +271,10 @@ export const api = {
   renameGroup: (vaultId: string, groupId: string, name: string) =>
     request<void>(`/api/v1/vaults/${vaultId}/groups/${groupId}`, { method: "PATCH", body: JSON.stringify({ name }) }),
   deleteGroup: (vaultId: string, groupId: string) => request<void>(`/api/v1/vaults/${vaultId}/groups/${groupId}`, { method: "DELETE" }),
+  linkIdpGroup: (vaultId: string, groupId: string, idpGroup: string) =>
+    request<void>(`/api/v1/vaults/${vaultId}/groups/${groupId}/idp-group`, { method: "PUT", body: JSON.stringify({ idpGroup }) }),
+  unlinkIdpGroup: (vaultId: string, groupId: string) =>
+    request<void>(`/api/v1/vaults/${vaultId}/groups/${groupId}/idp-group`, { method: "DELETE" }),
   renameVault: (vaultId: string, name: string) =>
     request<Vault>(`/api/v1/vaults/${vaultId}`, { method: "PATCH", body: JSON.stringify({ name }) }),
   setSelectiveSync: (vaultId: string, selectiveSync: boolean) =>

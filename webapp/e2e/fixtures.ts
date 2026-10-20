@@ -55,7 +55,8 @@ export async function mockWorkspace(page: Page) {
     }
     if (path.includes("/groups/")) {
       const parts = path.split("/groups/")[1]!.split("/"); const group = groups.find(g => g.id === parts[0])!;
-      if (parts[1] === "members") { if (request.method() === "POST") group.memberSubjects.push(request.postDataJSON().subject); else group.memberSubjects = group.memberSubjects.filter(s => s !== parts[2]); }
+      if (parts[1] === "idp-group") { if (request.method() === "PUT") { (group as any).idpGroup = request.postDataJSON().idpGroup; (group as any).idpMemberCount = 3; } else { (group as any).idpGroup = null; (group as any).idpMemberCount = null; } }
+      else if (parts[1] === "members") { if (request.method() === "POST") group.memberSubjects.push(request.postDataJSON().subject); else group.memberSubjects = group.memberSubjects.filter(s => s !== parts[2]); }
       else if (parts[1] === "roles") { if(request.method() === "POST") group.roleIds.push(parts[2]!); else group.roleIds = group.roleIds.filter(r => r !== parts[2]); }
       else if(request.method() === "DELETE") groups = groups.filter(g => g.id !== parts[0]);
       else group.name = request.postDataJSON().name;
