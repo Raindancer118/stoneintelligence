@@ -43,6 +43,13 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     private final VaultAccessGuard access;
     private final VaultAnnouncementService announcements;
     private final de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker activity;
+    private final de.tstieh.stoneintelligence.platform.identity.BlockedSubjects blocked;
+
+    /** Ein per SCIM gesperrtes Konto (ADR 0013) - das Plugin meldet sich dann neu an und bekommt 401. */
+    public static final int CLOSE_ACCOUNT_DEACTIVATED = 4401;
+
+    /** Offene Verbindungen, damit sich die einer gesperrten Person sofort schliessen lassen. */
+    private final Map<String, WebSocketSession> openSessions = new ConcurrentHashMap<>();
 
     /** Pro Session (WS-Verbindung) die aktuell gejointen Notiz-Raeume - Grundlage fuer Autorisierung und Cleanup. */
     private final Map<String, Set<NoteId>> joinedNotesBySession = new ConcurrentHashMap<>();
@@ -62,7 +69,9 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
 
     public SyncWebSocketHandler(SyncRelayService relay, NoteRepository notes, VaultAccessGuard access,
                                 VaultAnnouncementService announcements,
-                                de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker activity) {
+                                de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker activity,
+                                de.tstieh.stoneintelligence.platform.identity.BlockedSubjects blocked) {
+        this.blocked = blocked;
         this.relay = relay;
         this.notes = notes;
         this.access = access;
@@ -72,6 +81,12 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
+        // Das Ticket wurde vor der Sperre ausgestellt - es lebt nur Sekunden, gilt dann aber nicht mehr.
+        if (blocked.isBlocked(actorOf(session))) {
+            new WebSocketSyncSession(session).close(CLOSE_ACCOUNT_DEACTIVATED, "account deactivated");
+            return;
+        }
+        openSessions.put(session.getId(), session);
         joinedNotesBySession.put(session.getId(), ConcurrentHashMap.newKeySet());
         writableNotesBySession.put(session.getId(), ConcurrentHashMap.newKeySet());
         // Vault-weite Bestandsankuendigungen gelten fuer die GESAMTE Verbindung, unabhaengig
@@ -191,6 +206,7 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        openSessions.remove(session.getId());
         announcements.unsubscribe(vaultIdOf(session), new WebSocketSyncSession(session));
         writableNotesBySession.remove(session.getId());
         contentUpdateSessions.remove(session.getId());
@@ -205,6 +221,16 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         var syncSession = new WebSocketSyncSession(session);
         for (var noteId : joined) {
             relay.onLeave(noteId, syncSession);
+        }
+    }
+
+    /** Sperrt der IdP jemanden, enden dessen offene Verbindungen sofort - auf jeder Instanz, die es bemerkt. */
+    @org.springframework.context.event.EventListener
+    public void onSubjectBlocked(de.tstieh.stoneintelligence.platform.identity.SubjectBlocked event) {
+        for (var session : openSessions.values()) {
+            if (event.subject().equals(actorOf(session))) {
+                new WebSocketSyncSession(session).close(CLOSE_ACCOUNT_DEACTIVATED, "account deactivated");
+            }
         }
     }
 

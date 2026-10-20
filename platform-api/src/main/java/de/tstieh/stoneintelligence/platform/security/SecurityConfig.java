@@ -45,9 +45,23 @@ public class SecurityConfig {
      * fuer `npm run dev` gegen die deployte API.
      */
     private final List<String> allowedOrigins;
+    /**
+     * Welcher Claim die Person bezeichnet (ADR 0013). Fuer Firmen-IdPs empfohlen: ein unveraenderlicher
+     * wie {@code sub} oder {@code oid}; {@code preferred_username} aendert sich dort z. B. bei Heirat.
+     */
+    private final String principalClaim;
+    /** Darf ein Pfad sein ({@code realm_access.roles}). */
+    private final String groupsClaim;
+    private final String nameClaim;
 
-    public SecurityConfig(@Value("${STONEINTELLIGENCE_WEBAPP_URL:https://kb.tstieh.de}") String webappUrl) {
+    public SecurityConfig(@Value("${STONEINTELLIGENCE_WEBAPP_URL:https://kb.tstieh.de}") String webappUrl,
+                          @Value("${STONEINTELLIGENCE_OIDC_PRINCIPAL_CLAIM:preferred_username}") String principalClaim,
+                          @Value("${STONEINTELLIGENCE_OIDC_GROUPS_CLAIM:groups}") String groupsClaim,
+                          @Value("${STONEINTELLIGENCE_OIDC_NAME_CLAIM:name}") String nameClaim) {
         this.allowedOrigins = List.of(originOf(webappUrl), "http://localhost:5173");
+        this.principalClaim = principalClaim;
+        this.groupsClaim = groupsClaim;
+        this.nameClaim = nameClaim;
     }
 
     /** CORS vergleicht nur Schema, Host und Port - ein Pfad oder Schraegstrich in der URL wuerde nie passen. */
@@ -78,10 +92,40 @@ public class SecurityConfig {
         return http.build();
     }
 
+    /**
+     * {@code /scim/v2/**} gehoert allein dem Identitaetsanbieter (ADR 0013): eigenes Bearer-Token, kein OIDC.
+     * Antworten ohne gueltiges Token im SCIM-Fehlerformat, damit der IdP die Ursache anzeigt.
+     */
+    @Bean
+    @org.springframework.core.annotation.Order(0)
+    public SecurityFilterChain scimChain(HttpSecurity http,
+            de.tstieh.stoneintelligence.platform.scim.ScimTokenFilter scimToken) throws Exception {
+        http
+            .securityMatcher("/scim/v2/**")
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session.sessionCreationPolicy(
+                org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
+            .addFilterBefore(scimToken,
+                org.springframework.security.web.authentication.AnonymousAuthenticationFilter.class)
+            .authorizeHttpRequests(auth -> auth.anyRequest()
+                .hasRole(de.tstieh.stoneintelligence.platform.scim.ScimTokenFilter.ROLE))
+            .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, denied) -> {
+                response.setStatus(org.springframework.http.HttpStatus.UNAUTHORIZED.value());
+                response.setHeader("WWW-Authenticate", "Bearer realm=\"scim\"");
+                response.setContentType("application/scim+json");
+                response.getWriter().write("{\"schemas\":[\"urn:ietf:params:scim:api:messages:2.0:Error\"],"
+                    + "\"status\":\"401\",\"detail\":\"A valid SCIM bearer token is required\"}");
+            }));
+        return http.build();
+    }
+
     @Bean
     @org.springframework.core.annotation.Order(2)
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, IdentitySync identity,
+            de.tstieh.stoneintelligence.platform.identity.BlockedSubjects blocked) throws Exception {
         http
+            .addFilterAfter(new IdentityFilter(identity, blocked, groupsClaim, nameClaim),
+                org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class)
             .csrf(csrf -> csrf.disable())
             .cors(Customizer.withDefaults())
             .authorizeHttpRequests(auth -> auth
@@ -130,7 +174,7 @@ public class SecurityConfig {
 
     private Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter() {
         var converter = new JwtAuthenticationConverter();
-        converter.setPrincipalClaimName("preferred_username");
+        converter.setPrincipalClaimName(principalClaim);
         return converter;
     }
 }

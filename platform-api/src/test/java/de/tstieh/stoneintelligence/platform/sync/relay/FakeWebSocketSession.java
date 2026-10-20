@@ -52,9 +52,12 @@ final class FakeWebSocketSession implements WebSocketSession {
         open = false;
     }
 
+    CloseStatus closeStatus;
+
     @Override
     public void close(CloseStatus status) {
         open = false;
+        closeStatus = status;
     }
 
     @Override

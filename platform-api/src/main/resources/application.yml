@@ -29,6 +29,10 @@ spring:
 # Issuer/Client-Registrierung feststehen - ein leerer/ungueltiger Registrierungs-Block wuerde
 # den Spring-Kontext schon beim Start scheitern lassen, deshalb bewusst noch nicht hier.
 
+# Hinter dem Reverse-Proxy (NPM): absolute URLs (SCIM meta.location) mit https und oeffentlichem Host.
+server:
+  forward-headers-strategy: framework
+
 management:
   endpoints:
     web:

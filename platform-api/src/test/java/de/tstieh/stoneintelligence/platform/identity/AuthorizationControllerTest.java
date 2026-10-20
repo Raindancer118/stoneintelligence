@@ -20,9 +20,10 @@ class AuthorizationControllerTest {
     private final FakeAccessGrantRepository grants = new FakeAccessGrantRepository(notes);
     private final VaultAccessGuard guard = new VaultAccessGuard(authorization, grants);
     private final java.util.List<String> audit = new java.util.ArrayList<>();
+    private final FakePeopleDirectory people = new FakePeopleDirectory();
     private final AuthorizationController controller = new AuthorizationController(authorization, guard, grants, notes,
         (vault, note, actor, action, payload) -> audit.add(action),
-        new de.tstieh.stoneintelligence.platform.sync.relay.VaultAnnouncementService());
+        new de.tstieh.stoneintelligence.platform.sync.relay.VaultAnnouncementService(), people);
 
     private VaultId ownerBootstrappedVault(String owner) {
         var vaultId = VaultId.newId();
@@ -249,6 +250,63 @@ class AuthorizationControllerTest {
 
             assertThatThrownBy(() -> controller.deleteRole(vault(), foreignRole.id(), tom)).isInstanceOf(ForbiddenException.class);
             assertThatThrownBy(() -> controller.deleteGroup(vault(), foreignGroup.id(), tom)).isInstanceOf(ForbiddenException.class);
+        }
+    }
+
+    // ADR 0013 Schritt 5
+    @org.junit.jupiter.api.Nested
+    class IdpLinks {
+
+        private final VaultId vaultId = ownerBootstrappedVault("tom");
+        private final TestingAuthenticationToken tom = new TestingAuthenticationToken("tom", null);
+
+        private AuthorizationController.GroupResponse sales() {
+            return controller.listGroups(vaultId.value().toString(), tom).stream()
+                .filter(group -> group.name().equals("Vertrieb")).findFirst().orElseThrow();
+        }
+
+        @Test
+        void should_linkAGroupToTheIdp_showHowManyPeopleItHas_andUnlinkIt() {
+            var group = controller.createGroup(vaultId.value().toString(), new AuthorizationController.CreateGroupRequest("Vertrieb"), tom);
+            var groupId = java.util.UUID.fromString(group.id());
+
+            controller.linkIdpGroup(vaultId.value().toString(), groupId, new AuthorizationController.IdpGroupRequest("  sales  "), tom);
+            authorization.rememberTokenGroups("ben", java.util.Set.of("sales"), java.time.Instant.now());
+
+            assertThat(sales().idpGroup()).isEqualTo("sales");
+            assertThat(sales().idpMemberCount()).isEqualTo(1);
+            assertThat(audit).contains("GROUP_IDP_LINKED");
+
+            controller.unlinkIdpGroup(vaultId.value().toString(), groupId, tom);
+            assertThat(sales().idpGroup()).isNull();
+            assertThat(sales().idpMemberCount()).isNull();
+            assertThat(authorization.membership(vaultId, "ben").isMember()).isFalse();
+        }
+
+        @Test
+        void should_onlyLetManagersLink_andRejectNonsense() {
+            var group = controller.createGroup(vaultId.value().toString(), new AuthorizationController.CreateGroupRequest("Vertrieb"), tom);
+            var groupId = java.util.UUID.fromString(group.id());
+
+            assertThatThrownBy(() -> controller.linkIdpGroup(vaultId.value().toString(), groupId,
+                new AuthorizationController.IdpGroupRequest("sales"), new TestingAuthenticationToken("mallory", null)))
+                .isInstanceOf(ForbiddenException.class);
+            assertThatThrownBy(() -> controller.linkIdpGroup(vaultId.value().toString(), groupId,
+                new AuthorizationController.IdpGroupRequest("   "), tom))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+            assertThatThrownBy(() -> controller.linkIdpGroup(vaultId.value().toString(), groupId,
+                new AuthorizationController.IdpGroupRequest("a".repeat(257)), tom))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        }
+
+        @Test
+        void should_showDisplayNames_whereTheyAreKnown() {
+            people.remember("tom", "Tom Stieh", java.time.Instant.now());
+
+            assertThat(controller.listMembers(vaultId.value().toString(), tom))
+                .singleElement().extracting(AuthorizationController.MemberResponse::displayName).isEqualTo("Tom Stieh");
+            assertThat(controller.listGroups(vaultId.value().toString(), tom).getFirst().memberNames())
+                .containsEntry("tom", "Tom Stieh");
         }
     }
 }

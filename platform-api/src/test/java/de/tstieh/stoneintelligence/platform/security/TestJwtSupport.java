@@ -51,15 +51,21 @@ public class TestJwtSupport {
 
     /** Wie {@link #signedJwtFor(String)}, zusaetzlich mit {@code email}-Claim (wie Authentik ihn ausstellt). */
     public static String signedJwtFor(String preferredUsername, String email) {
+        return signedJwtWith(preferredUsername, email == null ? java.util.Map.of()
+            : java.util.Map.of("email", email, "email_verified", true));
+    }
+
+    /** Mit beliebigen weiteren Claims, etwa {@code groups} und {@code name} (ADR 0013). */
+    public static String signedJwtWith(String preferredUsername, java.util.Map<String, Object> extraClaims) {
         try {
-            var claims = new JWTClaimsSet.Builder()
+            var builder = new JWTClaimsSet.Builder()
                 .subject(preferredUsername)
                 .claim("preferred_username", preferredUsername)
-                .claim("email", email)
-                .claim("email_verified", email != null)
+                .claim("email_verified", false)
                 .issueTime(Date.from(Instant.now()))
-                .expirationTime(Date.from(Instant.now().plusSeconds(300)))
-                .build();
+                .expirationTime(Date.from(Instant.now().plusSeconds(300)));
+            extraClaims.forEach(builder::claim);
+            var claims = builder.build();
             var signedJwt = new SignedJWT(new JWSHeader(JWSAlgorithm.RS256), claims);
             signedJwt.sign(new RSASSASigner((RSAPrivateKey) KEY_PAIR.getPrivate()));
             return signedJwt.serialize();

@@ -73,7 +73,7 @@ class JdbcAuthorizationRepositoryIT extends AuthorizationRepositoryContractTest 
     void cleanTables() {
         // CASCADE ueber platform.vaults raeumt roles/groups/group_roles/group_members/
         // path_rules/topic_rules automatisch mit auf (alle haengen per FK am Vault).
-        jdbcClient.sql("TRUNCATE platform.vaults CASCADE").update();
+        jdbcClient.sql("TRUNCATE platform.vaults, platform.subject_idp_groups, platform.directory_users, platform.directory_groups, platform.people CASCADE").update();
     }
 
     /**
@@ -113,7 +113,8 @@ class JdbcAuthorizationRepositoryIT extends AuthorizationRepositoryContractTest 
         var notes = new de.tstieh.stoneintelligence.platform.vault.FakeNoteRepository();
         var grants = new FakeAccessGrantRepository(notes);
         var controller = new AuthorizationController(repository, new VaultAccessGuard(repository, grants), grants, notes,
-            (vault, note, actor, action, payload) -> { }, new de.tstieh.stoneintelligence.platform.sync.relay.VaultAnnouncementService());
+            (vault, note, actor, action, payload) -> { }, new de.tstieh.stoneintelligence.platform.sync.relay.VaultAnnouncementService(),
+            new JdbcPeopleDirectory(jdbcClient));
         queryCount.set(0);
 
         var groups = controller.listGroups(vaultId.value().toString(), new TestingAuthenticationToken("tom", null));
@@ -124,7 +125,8 @@ class JdbcAuthorizationRepositoryIT extends AuthorizationRepositoryContractTest 
         assertThat(groups).filteredOn(group -> group.name().equals("empty"))
             .singleElement().satisfies(group -> assertThat(group.roleIds()).isEmpty());
         assertThat(groups).allSatisfy(group -> assertThat(group.roleIds()).doesNotContain(otherRole.id().toString()));
-        assertThat(queryCount.get()).as("SQL round trips including permission check").isLessThanOrEqualTo(4);
+        // Rechte, Gruppen, Mitglieder, Rollen, Anzeigenamen - unabhaengig von der Zahl der Gruppen.
+        assertThat(queryCount.get()).as("SQL round trips including permission check").isLessThanOrEqualTo(5);
     }
 
     @Override

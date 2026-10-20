@@ -1,5 +1,8 @@
 package de.tstieh.stoneintelligence.platform.identity;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Map;
 import java.util.Set;
 import de.tstieh.stoneintelligence.domain.id.VaultId;
 import org.junit.jupiter.api.Nested;
@@ -261,6 +264,143 @@ public abstract class AuthorizationRepositoryContractTest {
             assertThat(repository.listGroups(vaultId)).isEmpty();
             assertThat(repository.membership(vaultId, "tom").isMember()).isFalse();
             assertThat(repository.listRoles(vaultId)).hasSize(1);
+        }
+    }
+
+    // ADR 0013 Schritt 5: wer in der verknuepften Gruppe des Firmen-IdP ist, ist Mitglied - ohne Einladung.
+    @Nested
+    class IdpGroups {
+
+        private final Instant now = Instant.now();
+
+        @Test
+        void should_makeEveryoneInALinkedIdpGroupAMember() {
+            var repository = repository();
+            var vaultId = newVault();
+            var role = repository.createRole(vaultId, "lesen", Set.of(Permission.READ));
+            var everyone = repository.createGroup(vaultId, "Alle Beschaeftigten");
+            repository.assignRole(everyone.id(), role.id());
+            repository.linkIdpGroup(everyone.id(), "all-employees");
+
+            repository.rememberTokenGroups("ben", Set.of("all-employees", "football-club"), now);
+
+            assertThat(repository.membership(vaultId, "ben").groupIds()).containsExactly(everyone.id());
+            assertThat(repository.effectivePermissions(vaultId, "ben")).containsExactly(Permission.READ);
+            assertThat(repository.listAccessibleVaultIds("ben")).contains(vaultId);
+            assertThat(repository.membership(vaultId, "eve").isMember()).isFalse();
+            assertThat(repository.listGroups(vaultId)).singleElement().extracting(Group::idpGroup).isEqualTo("all-employees");
+            assertThat(repository.linkedIdpGroups()).contains("all-employees").doesNotContain("football-club");
+        }
+
+        @Test
+        void should_endMembership_whenTheIdpNoLongerListsThePerson_orTheLinkIsRemoved() {
+            var repository = repository();
+            var vaultId = newVault();
+            var group = repository.createGroup(vaultId, "Vertrieb");
+            repository.linkIdpGroup(group.id(), "sales");
+            repository.rememberTokenGroups("ben", Set.of("sales"), now);
+            repository.rememberTokenGroups("anna", Set.of("sales"), now);
+
+            repository.rememberTokenGroups("ben", Set.of(), now);
+            assertThat(repository.membership(vaultId, "ben").isMember()).isFalse();
+            assertThat(repository.membership(vaultId, "anna").isMember()).isTrue();
+
+            repository.linkIdpGroup(group.id(), null);
+            assertThat(repository.membership(vaultId, "anna").isMember()).isFalse();
+            assertThat(repository.listGroups(vaultId).getFirst().idpGroup()).isNull();
+        }
+
+        // Wer sich eine Woche nicht angemeldet hat, bleibt nicht ewig ueber ein altes Token Mitglied.
+        @Test
+        void should_forgetTokenGroups_afterAWeekWithoutSignIn() {
+            var repository = repository();
+            var vaultId = newVault();
+            var group = repository.createGroup(vaultId, "Vertrieb");
+            repository.linkIdpGroup(group.id(), "sales");
+
+            repository.rememberTokenGroups("ben", Set.of("sales"), now.minus(Duration.ofDays(8)));
+
+            assertThat(repository.membership(vaultId, "ben").isMember()).isFalse();
+        }
+
+        @Test
+        void should_keepDirectMembers_nextToIdpMembers() {
+            var repository = repository();
+            var vaultId = newVault();
+            var group = repository.createGroup(vaultId, "Vertrieb");
+            repository.linkIdpGroup(group.id(), "sales");
+            repository.addMember(group.id(), "extern");
+
+            assertThat(repository.membership(vaultId, "extern").isMember()).isTrue();
+            assertThat(repository.listGroups(vaultId).getFirst().memberSubjects()).containsExactly("extern");
+        }
+
+        // Nur echte Aenderungen sollen Caches leeren und Geraete wecken - nicht das stuendliche Auffrischen.
+        @Test
+        void should_reportTheVaultsWhoseMembershipChanged() {
+            var repository = repository();
+            var vaultId = newVault();
+            var otherVault = newVault();
+            repository.linkIdpGroup(repository.createGroup(vaultId, "Vertrieb").id(), "sales");
+            repository.linkIdpGroup(repository.createGroup(otherVault, "Alle").id(), "all-employees");
+
+            assertThat(repository.rememberTokenGroups("ben", Set.of("sales"), now)).containsExactly(vaultId);
+            assertThat(repository.rememberTokenGroups("ben", Set.of("sales"), now.plusSeconds(60))).isEmpty();
+            assertThat(repository.rememberTokenGroups("ben", Set.of("sales", "all-employees"), now)).containsExactly(otherVault);
+            assertThat(repository.rememberTokenGroups("ben", Set.of(), now)).containsExactlyInAnyOrder(vaultId, otherVault);
+        }
+
+        // Kam jemand nach Ablauf wieder, ist das fuer die Caches ein Beitritt, kein Auffrischen.
+        @Test
+        void should_treatASignInAfterExpiryAsJoiningAgain() {
+            var repository = repository();
+            var vaultId = newVault();
+            repository.linkIdpGroup(repository.createGroup(vaultId, "Vertrieb").id(), "sales");
+            repository.rememberTokenGroups("ben", Set.of("sales"), now.minus(Duration.ofDays(9)));
+
+            assertThat(repository.rememberTokenGroups("ben", Set.of("sales"), now)).containsExactly(vaultId);
+            assertThat(repository.membership(vaultId, "ben").isMember()).isTrue();
+        }
+
+        @Test
+        void should_sweepExpiredTokenGroups_andReportTheirVaults() {
+            var repository = repository();
+            var vaultId = newVault();
+            repository.linkIdpGroup(repository.createGroup(vaultId, "Vertrieb").id(), "sales");
+            repository.rememberTokenGroups("old", Set.of("sales"), now.minus(Duration.ofDays(8)));
+            repository.rememberTokenGroups("fresh", Set.of("sales"), now);
+
+            assertThat(repository.forgetTokenGroupsSeenBefore(now.minus(AuthorizationRepository.TOKEN_GROUPS_VALID_FOR)))
+                .containsExactly(vaultId);
+            assertThat(repository.forgetTokenGroupsSeenBefore(now.minus(AuthorizationRepository.TOKEN_GROUPS_VALID_FOR))).isEmpty();
+            assertThat(repository.membership(vaultId, "fresh").isMember()).isTrue();
+        }
+
+        @Test
+        void should_countIdpMembersPerLinkedGroup() {
+            var repository = repository();
+            var vaultId = newVault();
+            var sales = repository.createGroup(vaultId, "Vertrieb");
+            var plain = repository.createGroup(vaultId, "Projekt");
+            repository.linkIdpGroup(sales.id(), "sales");
+            repository.addMember(plain.id(), "tom");
+            repository.rememberTokenGroups("ben", Set.of("sales"), now);
+            repository.rememberTokenGroups("anna", Set.of("sales"), now);
+            repository.rememberTokenGroups("gone", Set.of("sales"), now.minus(Duration.ofDays(30)));
+
+            assertThat(repository.countIdpMembers(vaultId)).containsExactly(Map.entry(sales.id(), 2));
+        }
+
+        @Test
+        void should_refuseLinkingTheSameIdpGroupTwiceInOneVault_butAllowItAcrossVaults() {
+            var repository = repository();
+            var vaultId = newVault();
+            repository.linkIdpGroup(repository.createGroup(vaultId, "Vertrieb").id(), "sales");
+            var second = repository.createGroup(vaultId, "Vertrieb 2");
+
+            assertThatThrownBy(() -> repository.linkIdpGroup(second.id(), "sales"))
+                .isInstanceOf(IdpGroupAlreadyLinkedException.class);
+            repository.linkIdpGroup(repository.createGroup(newVault(), "Vertrieb").id(), "sales");
         }
     }
 
