@@ -125,8 +125,14 @@
     void (async () => {
       try {
         if (window.location.pathname === "/callback") {
-          const completed = await completeLogin();
-          const returnTo = safeReturnPath((completed?.state as { returnTo?: unknown } | undefined)?.returnTo);
+          let returnTo: string | null = null;
+          try {
+            const completed = await completeLogin();
+            returnTo = safeReturnPath((completed?.state as { returnTo?: unknown } | undefined)?.returnTo);
+          } catch {
+            // Ein verbrauchter oder abgelaufener Code würde beim Neuladen von /callback erneut scheitern.
+            error = "Die Anmeldung konnte nicht abgeschlossen werden. Bitte melde dich erneut an.";
+          }
           window.history.replaceState({}, "", returnTo ?? "/");
         }
         inviteToken = inviteTokenFrom(window.location.pathname);
