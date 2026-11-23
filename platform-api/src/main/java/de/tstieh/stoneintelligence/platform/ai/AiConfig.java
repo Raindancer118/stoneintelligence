@@ -58,12 +58,6 @@ public class AiConfig {
         return registration;
     }
 
-    @Bean(destroyMethod = "close")
-    @Lazy
-    public YjsBridge yjsBridge() {
-        return YjsBridge.load();
-    }
-
     @Bean
     @Lazy
     public AiWriteService aiWriteService(NoteRepository notes, SnapshotStore snapshots, SyncRelayService relay, YjsBridge yjs,

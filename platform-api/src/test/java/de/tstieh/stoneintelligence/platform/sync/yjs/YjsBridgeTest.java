@@ -62,4 +62,33 @@ class YjsBridgeTest {
             }
         }
     }
+
+    @Test
+    void should_mergeHistoryIntoOneUpdate_withTheSameText() {
+        var history = new ArrayList<byte[]>();
+        for (var text : List.of("eins", "eins zwei", "zwei", "zwei – drei 😀")) {
+            bridge.change(history, text).ifPresent(history::add);
+        }
+
+        var state = bridge.merge(history);
+
+        assertThat(bridge.textOf(List.of(state))).isEqualTo("zwei – drei 😀");
+        var next = bridge.change(List.of(state), "vier").orElseThrow();
+        assertThat(bridge.textOf(List.of(state, next))).isEqualTo("vier");
+    }
+
+    @Test
+    void should_runCallsOnSeveralContexts_whenPooled() throws Exception {
+        try (var pooled = YjsBridge.load(3); var executor = Executors.newFixedThreadPool(6)) {
+            List<Future<String>> results = new ArrayList<>();
+            for (int i = 0; i < 30; i++) {
+                var text = "Pool " + i;
+                results.add(executor.submit(() -> pooled.textOf(List.of(pooled.change(List.of(), text).orElseThrow()))));
+            }
+            for (int i = 0; i < 30; i++) {
+                assertThat(results.get(i).get()).isEqualTo("Pool " + i);
+            }
+            assertThat(pooled.contexts()).isBetween(1, 3);
+        }
+    }
 }
