@@ -38,6 +38,8 @@ public class WorkerConfig {
 
     @Bean
     public WorkerLoop workerLoop(PlatformApi platform, GatewayLlmFactory llms, CapacityReporter capacity) {
+        // 6 h Abstand: teilen sich mehrere Worker ein /tmp, bleibt der laufende Job eines anderen unberuehrt.
+        StaleWorkDirs.sweep(java.nio.file.Path.of(System.getProperty("java.io.tmpdir")), java.time.Duration.ofHours(6));
         var processor = new JobProcessor(platform, llms, ServiceModels.from(System.getenv()), LocalDate::now,
             JobProcessor.resumeRootFrom(System.getenv()),
             new de.tstieh.stoneintelligence.worker.embed.LazyEmbedder(
