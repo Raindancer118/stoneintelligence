@@ -185,7 +185,7 @@
     <button class="quiet share-folder" onclick={() => sharing = { kind: "folder", path: folder }}>{folder ? `Ordner „${folder.split("/").pop()}“ freigeben` : "Freigaben für den ganzen Vault"}</button>
     <div class="note-rows" aria-busy={loading}>
       {#if search.trim()}{#each visible as note (note.id)}{@render row(note, 0)}{/each}{:else}{@render tree("", 0)}{/if}
-      {#if search.trim() && !visible.length && !searching}<p class="list-empty">Keine passenden Notizen.</p>{/if}
+      {#if search.trim() && !visible.length && !searching}<p class="list-empty" role="status">Keine passenden Notizen.</p>{/if}
       {#if !search.trim() && !loading && levels[""] && !levels[""].folders.length && !levels[""].entries.length}<p class="list-empty">Noch keine Notizen vorhanden.</p>{/if}
       {#if search.trim() && truncated && !searching}<p class="hint">Weitere Treffer vorhanden. Gib mehr vom Titel oder Pfad ein.</p>{/if}
       {#if searching}<p class="list-empty" role="status">Suche läuft…</p>{:else if loading}<p class="list-empty" role="status">Notizen werden geladen…</p>{/if}
