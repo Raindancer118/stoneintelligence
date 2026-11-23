@@ -1,4 +1,5 @@
 import { getAccessToken } from "./auth";
+import { notifySessionExpired } from "./session";
 
 const baseUrl = import.meta.env.VITE_PLATFORM_API_URL as string;
 
@@ -104,6 +105,21 @@ export class ApiError extends Error {
   }
 }
 
+/** Ein verlorener Login zählt wie ein 401: erneute Anmeldung anbieten statt eines internen Fehlertexts. */
+async function bearer(): Promise<string> {
+  try {
+    return await getAccessToken();
+  } catch {
+    notifySessionExpired();
+    throw new ApiError(401);
+  }
+}
+
+function rejected(response: Response, detail?: string): never {
+  if (response.status === 401) notifySessionExpired();
+  throw new ApiError(response.status, detail);
+}
+
 /** Fachliche Ablehnungen (HTTP 422) bringen einen fuer Menschen geschriebenen Text mit. */
 async function problemDetail(response: Response): Promise<string | undefined> {
   if (response.status !== 422) return undefined;
@@ -127,7 +143,7 @@ async function publicRequest<T>(path: string): Promise<T> {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken();
+  const token = await bearer();
   const response = await fetch(`${baseUrl}${path}`, {
     signal: AbortSignal.timeout(20_000),
     ...options,
@@ -139,7 +155,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     },
   });
   if (!response.ok) {
-    throw new ApiError(response.status, await problemDetail(response));
+    rejected(response, await problemDetail(response));
   }
   if (response.status === 204 || response.headers.get("Content-Length") === "0") {
     return undefined as T;
@@ -164,9 +180,9 @@ export const api = {
   /** Inhalt einer Datei - mit Anmeldung geladen, angezeigt über eine Blob-URL (die API liefert immer als Anhang). */
   fileBlob: async (vaultId: string, fileId: string) => {
     const response = await fetch(`${baseUrl}/api/v1/vaults/${vaultId}/files/${fileId}/content`, {
-      signal: AbortSignal.timeout(300_000), headers: { Authorization: `Bearer ${await getAccessToken()}` },
+      signal: AbortSignal.timeout(300_000), headers: { Authorization: `Bearer ${await bearer()}` },
     });
-    if (!response.ok) throw new ApiError(response.status, await problemDetail(response));
+    if (!response.ok) rejected(response, await problemDetail(response));
     return await response.blob();
   },
   createNote: (vaultId: string, path: string) => request<Note>(`/api/v1/vaults/${vaultId}/notes`,

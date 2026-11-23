@@ -12,6 +12,7 @@
   import QuickJump from "./lib/components/QuickJump.svelte";
   import { connectionConfigJson } from "./lib/connectionConfig";
   import { withTransition } from "./lib/motion";
+  import { onSessionExpired } from "./lib/session";
   let collapsed = $state(false);
   let mobileOpen = $state(false);
   let jumping = $state(false);
@@ -55,6 +56,11 @@
   let dirty = $state(false);
 
   let authBusy = $state(false);
+  /** Die API hat 401 gemeldet; ein Entwurf bleibt bis zur bewussten erneuten Anmeldung erhalten. */
+  let sessionExpired = $state(false);
+  function relogin() {
+    if (mayLeave()) void authenticate();
+  }
   let inviteToken = $state<string | null>(null);
   let setupPage = $state(false);
   /** Datenschutzerklaerung - ohne Anmeldung erreichbar (DSGVO Art. 13). */
@@ -135,7 +141,8 @@
     })();
     const onPopState = () => { if (!mayLeave()) { window.history.pushState({}, "", setupPage ? "/setup" : privacyPage ? "/datenschutz" : "/"); return; } inviteToken = inviteTokenFrom(window.location.pathname); setupPage = window.location.pathname === "/setup"; privacyPage = window.location.pathname === "/datenschutz"; };
     window.addEventListener("popstate", onPopState);
-    return () => { alive = false; window.removeEventListener("popstate", onPopState); };
+    const offExpired = onSessionExpired(() => { if (user) sessionExpired = true; });
+    return () => { alive = false; offExpired(); window.removeEventListener("popstate", onPopState); };
   });
 </script>
 
@@ -166,6 +173,7 @@
     </aside>
     <div class="main-column">
       <header class="app-header"><button class="mobile-toggle quiet" aria-label={mobileOpen ? "Menü schließen" : "Menü öffnen"} aria-expanded={mobileOpen} onclick={() => mobileOpen = !mobileOpen}><Icon name="panel" /></button><div class="breadcrumb"><span>Dein Wissen</span><span aria-hidden="true">/</span><strong>{setupPage ? "Einrichtung" : selected?.name ?? "Willkommen"}</strong></div><button class="quick-trigger" onclick={() => jumping = true}><Icon name="search" /><span>Schnellsprung</span><kbd>⌘ K</kbd></button></header>
+      {#if sessionExpired}<div class="app-error feedback error" role="alert"><p>Deine Anmeldung ist abgelaufen. Ein offener Entwurf bleibt bis zur erneuten Anmeldung erhalten; exportiere ihn vorher, wenn er wichtig ist.</p><button class="secondary" disabled={authBusy} onclick={relogin}>Erneut anmelden</button></div>{/if}
       {#if error}<div class="app-error feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={() => { error = ""; void refreshVaults().catch(e => error = e.message); }}>Erneut versuchen</button></div>{/if}
       <main id="workspace">
         {#if setupPage}<p><a href="/" onclick={leaveSetup}>← Zurück zu den Notizen</a></p><ObsidianSetup {vaults} signedIn={true} onLogin={() => authenticate()} />
