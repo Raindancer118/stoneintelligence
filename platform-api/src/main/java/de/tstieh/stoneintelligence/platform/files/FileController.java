@@ -85,7 +85,7 @@ public class FileController {
         var download = files.download(vId, nId);
         var name = download.note().path().substring(download.note().path().lastIndexOf('/') + 1);
         return ResponseEntity.ok()
-            .contentType(MediaType.parseMediaType(download.version().contentType()))
+            .contentType(MediaType.parseMediaType(DownloadContentTypes.safe(download.version().contentType())))
             .contentLength(download.version().size())
             .eTag("\"" + download.version().revision() + "\"")
             .header("X-Content-SHA256", download.version().sha256())
