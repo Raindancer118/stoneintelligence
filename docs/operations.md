@@ -55,6 +55,12 @@ Geloeschtes liegt unter `geloescht/<Datum>/`). Nach dem Restore pruefen, dass je
    Image gegen ein neueres Schema startet nicht (`ddl-auto: validate`).
 4. Images sind per Digest gepinnt, Dependabot schlaegt Updates vor.
 
+## Mehrere Instanzen
+
+`STONEINTELLIGENCE_CLUSTER=true` auf jeder platform-api-Instanz, alle an derselben Datenbank (ADR 0013, Schritt 7).
+Jede Instanz belegt eine Pool-Verbindung dauerhaft fuer `LISTEN`. Der Load Balancer braucht keine Sticky Sessions;
+WebSockets muessen durchgereicht werden. Rate-Limits gelten je Instanz.
+
 ## Secrets
 
 Nur in `.env` / `worker.env` auf dem Server (nicht im Repo, nicht im Image; `.dockerignore` schliesst sie aus):
