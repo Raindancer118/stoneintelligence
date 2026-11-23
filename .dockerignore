@@ -7,6 +7,8 @@ compose.yml
 compose.yml.bak.*
 # Nicht fuer die Java-Builds gebraucht
 .git
+.claude
+.github
 **/target
 **/node_modules
 plugin
