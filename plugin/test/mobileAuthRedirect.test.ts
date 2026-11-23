@@ -1,5 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleMobileRedirectCallback, type PendingAuthCallback } from "../src/sync/mobileAuthRedirect";
+import { awaitMobileRedirect, handleMobileRedirectCallback, type PendingAuthCallback } from "../src/sync/mobileAuthRedirect";
+
+describe("awaitMobileRedirect", () => {
+  it("should_timeOutAndClearThePendingLogin", async () => {
+    const holder = { pending: null as PendingAuthCallback | null };
+    await expect(awaitMobileRedirect("s", holder, 20)).rejects.toThrow(/timed out/);
+    expect(holder.pending).toBeNull();
+  });
+
+  it("should_rejectTheEarlierLogin_whenANewOneStarts", async () => {
+    const holder = { pending: null as PendingAuthCallback | null };
+    const first = awaitMobileRedirect("a", holder).catch((e: Error) => e.message);
+    const second = awaitMobileRedirect("b", holder);
+    expect(await first).toMatch(/cancelled/);
+    handleMobileRedirectCallback(holder.pending, { state: "b", code: "c" });
+    expect(await second).toBe("c");
+  });
+});
 
 function pendingCallback() {
   return { state: "the-state", resolve: vi.fn(), reject: vi.fn() } satisfies PendingAuthCallback as PendingAuthCallback & {

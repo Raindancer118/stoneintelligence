@@ -193,3 +193,25 @@ describe("Serverwechsel", () => {
     expect(settings.platformWsUrl).toBe("");
   });
 });
+
+describe("built-in exclusions", () => {
+  it("should_excludeToolingFolders_atAnyDepth_withEmptyUserList", () => {
+    for (const path of ["node_modules/x/README.md", "Projekt/node_modules/pw/skill.md", "a/venv/lib/x.md",
+      "a/__pycache__/x.md", "a/.venv/x.md", ".trash/old.md", "x/.git/HEAD.md", ".obsidian/n.md"]) {
+      expect(isExcluded(path, []), path).toBe(true);
+    }
+    expect(isExcludedFolder("Projekt/node_modules", [])).toBe(true);
+    expect(isExcludedFolder("Projekt/node_modules/pw", [])).toBe(true);
+  });
+
+  it("should_notExcludeLookalikes", () => {
+    expect(isExcluded("my_node_modules/x.md", [])).toBe(false);
+    expect(isExcluded("Notizen/venvs.md", [])).toBe(false);
+    expect(isExcludedFolder("Notizen", [])).toBe(false);
+  });
+
+  it("should_applyToExistingUsers_whoseSavedListIsEmpty", () => {
+    const settings = migrateSettings({ excludedFolders: [] });
+    expect(isExcluded("node_modules/a.md", settings.excludedFolders)).toBe(true);
+  });
+});
