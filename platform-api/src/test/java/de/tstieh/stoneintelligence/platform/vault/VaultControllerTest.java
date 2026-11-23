@@ -121,6 +121,17 @@ class VaultControllerTest {
                 new VaultController.RenameVaultRequest("Meins"), new org.springframework.security.authentication.TestingAuthenticationToken("ben", null)))
             .isInstanceOf(ForbiddenException.class);
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.rename(created.id(), new VaultController.RenameVaultRequest(" "), tom))
-            .isInstanceOf(de.tstieh.stoneintelligence.platform.identity.InvalidGrantException.class);
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+    }
+
+    @Test
+    void should_rejectMissingBlankOrOversizedVaultNames() {
+        var tom = new TestingAuthenticationToken("tom", null);
+
+        for (var name : new String[] {null, "  ", "x".repeat(201), "a\nb"}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.create(new VaultController.CreateVaultRequest(name), tom))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        }
+        assertThat(vaults.toString()).isNotNull();
     }
 }

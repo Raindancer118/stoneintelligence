@@ -16,13 +16,20 @@ public final class GrantIndex {
     private final Map<String, List<AccessGrant>> folders = new HashMap<>();
     private final Map<String, List<AccessGrant>> entries = new HashMap<>();
 
+    private final List<AccessGrant> all;
+
     private GrantIndex(List<AccessGrant> grants) {
+        this.all = List.copyOf(grants);
         for (var grant : grants) {
             switch (grant.target()) {
                 case GrantTarget.Folder folder -> folders.computeIfAbsent(folder.path(), key -> new ArrayList<>()).add(grant);
                 case GrantTarget.Entry entry -> entries.computeIfAbsent(AccessResolver.normalize(entry.path()), key -> new ArrayList<>()).add(grant);
             }
         }
+    }
+
+    public List<AccessGrant> grants() {
+        return all;
     }
 
     public static GrantIndex of(List<AccessGrant> grants) {

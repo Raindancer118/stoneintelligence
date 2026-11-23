@@ -15,6 +15,8 @@ import java.util.function.Function;
  */
 public record ScimFilter(Expression expression) {
 
+    static final int MAX_LENGTH = 2048;
+    private static final int MAX_DEPTH = 32;
     static final Set<String> CASE_EXACT = Set.of("id", "externalid", "value", "$ref");
     private static final String SCHEMA_PREFIX = "urn:ietf:params:scim:schemas:core:2.0:";
 
@@ -47,6 +49,9 @@ public record ScimFilter(Expression expression) {
     public static ScimFilter parse(String filter) {
         if (filter == null || filter.isBlank()) {
             throw ScimException.invalidFilter("empty filter");
+        }
+        if (filter.length() > MAX_LENGTH) {
+            throw ScimException.invalidFilter("filter is longer than " + MAX_LENGTH + " characters");
         }
         var parser = new Parser(filter);
         var expression = parser.or();
@@ -169,16 +174,21 @@ public record ScimFilter(Expression expression) {
 
         private final String input;
         private int position;
+        private int depth;
 
         Parser(String input) {
             this.input = input;
         }
 
         Expression or() {
+            if (++depth > MAX_DEPTH) {
+                throw ScimException.invalidFilter("filter is nested deeper than " + MAX_DEPTH + " levels");
+            }
             var left = and();
             while (keyword("or")) {
                 left = new Or(left, and());
             }
+            depth--;
             return left;
         }
 

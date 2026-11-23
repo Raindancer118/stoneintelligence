@@ -47,9 +47,11 @@ class AiWriteServiceTest {
     private final FakeAiChangeSetRepository changeSets = new FakeAiChangeSetRepository();
     private final de.tstieh.stoneintelligence.platform.vault.FakeFolderRepository folders =
         new de.tstieh.stoneintelligence.platform.vault.FakeFolderRepository();
+    private final java.util.Set<String> forbiddenPaths = new java.util.HashSet<>();
     private final AiWriteService service = new AiWriteService(notes, snapshots, relay, yjs, new VaultAnnouncementService(),
         new de.tstieh.stoneintelligence.platform.vault.FolderRegistry(folders, new VaultAnnouncementService(), new de.tstieh.stoneintelligence.platform.identity.FakeAccessGrantRepository(notes)),
-        (vault, note, actor, action, payload) -> audit.add(actor + " " + action), new AiServiceDirectory(List.of(EXTERN, LOKAL)), changeSets, () -> Instant.parse("2026-09-23T12:00:00Z"));
+        (vault, note, actor, action, payload) -> audit.add(actor + " " + action), new AiServiceDirectory(List.of(EXTERN, LOKAL)), changeSets, () -> Instant.parse("2026-09-23T12:00:00Z"),
+        null, (vault, actor, path, permission) -> !forbiddenPaths.contains(path));
 
     private AiChangeSet newChangeSet() {
         return service.startChangeSet(vaultId, EXTERN, "tom", "Vorlesung.pdf");
@@ -353,6 +355,21 @@ class AiWriteServiceTest {
             assertThat(report.reverted()).isZero();
             assertThat(report.conflicts()).extracting(AiRevertConflict::path).containsExactly("Neu.md");
             assertThat(service.readText(vaultId, created.noteId(), EXTERN)).isEqualTo("neu\nvon Tom weitergeschrieben\n");
+        }
+
+        @Test
+        void should_refuseRevert_whenTheCallerMayNotTouchAnAffectedPath_andLeaveEverythingAsIs() {
+            var changeSet = newChangeSet();
+            var open = service.createNote(vaultId, changeSet.id(), "Offen/A.md", "a\n", NoteLevel.of(1));
+            var secret = service.createNote(vaultId, changeSet.id(), "Geheim/B.md", "b\n", NoteLevel.of(1));
+            forbiddenPaths.add("Geheim/B.md");
+
+            assertThatThrownBy(() -> service.revert(vaultId, changeSet.id(), "ben"))
+                .isInstanceOf(AiWriteRefusedException.class).hasMessageNotContaining("Geheim");
+
+            assertThat(notes.findById(vaultId, open.noteId())).isPresent();
+            assertThat(notes.findById(vaultId, secret.noteId())).isPresent();
+            assertThat(changeSets.find(vaultId, changeSet.id()).orElseThrow().revertedAt()).isNull();
         }
 
         @Test

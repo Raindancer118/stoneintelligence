@@ -9,6 +9,7 @@ import java.util.function.UnaryOperator;
 import de.tstieh.stoneintelligence.domain.id.VaultId;
 import de.tstieh.stoneintelligence.platform.audit.AuditRecorder;
 import de.tstieh.stoneintelligence.platform.sync.relay.VaultAnnouncementService;
+import de.tstieh.stoneintelligence.platform.vault.DisplayNames;
 import de.tstieh.stoneintelligence.platform.vault.ForbiddenException;
 import de.tstieh.stoneintelligence.platform.vault.NoteRepository;
 import de.tstieh.stoneintelligence.platform.vault.VaultAccessGuard;
@@ -68,7 +69,10 @@ public class AuthorizationController {
     ) {
         var vId = VaultId.of(vaultId);
         access.require(vId, authentication.getName(), Permission.MANAGE);
-        var role = authorization.createRole(vId, request.name(), Set.copyOf(request.permissions()));
+        if (request.permissions() == null) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "permissions are required");
+        }
+        var role = authorization.createRole(vId, DisplayNames.require(request.name()), Set.copyOf(request.permissions()));
         return RoleResponse.from(role);
     }
 
@@ -85,7 +89,7 @@ public class AuthorizationController {
             authorization.setRolePermissions(roleId, permissions);
         }
         if (request.name() != null && !request.name().isBlank()) {
-            authorization.renameRole(roleId, request.name());
+            authorization.renameRole(roleId, DisplayNames.require(request.name()));
         }
         changed(vId, authentication, "ROLE_CHANGED", Map.of("roleId", roleId.toString()));
     }
@@ -121,7 +125,7 @@ public class AuthorizationController {
     ) {
         var vId = VaultId.of(vaultId);
         access.require(vId, authentication.getName(), Permission.MANAGE);
-        var group = authorization.createGroup(vId, request.name());
+        var group = authorization.createGroup(vId, DisplayNames.require(request.name()));
         return GroupResponse.from(group, Set.of(), null, Map.of());
     }
 
@@ -131,7 +135,7 @@ public class AuthorizationController {
         var vId = VaultId.of(vaultId);
         requireGroupAccess(vId, groupId, authentication);
         if (request.name() != null && !request.name().isBlank()) {
-            authorization.renameGroup(groupId, request.name());
+            authorization.renameGroup(groupId, DisplayNames.require(request.name()));
             audit.record(vId, null, authentication.getName(), "GROUP_CHANGED", Map.of("groupId", groupId.toString()));
         }
     }

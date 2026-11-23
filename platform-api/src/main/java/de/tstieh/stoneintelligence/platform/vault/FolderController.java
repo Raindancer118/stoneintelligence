@@ -84,6 +84,7 @@ public class FolderController {
         var vId = VaultId.of(vaultId);
         var folder = validated(path);
         access.require(vId, auth.getName(), Permission.DELETE, folder + "/");
+        access.requireFolderTreeRemovable(vId, auth.getName(), folder, folders.list(vId));
         folders.delete(vId, folder);
         return new FolderResponse(folder);
     }

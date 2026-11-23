@@ -66,4 +66,18 @@ class ScimFilterTest {
         assertThatThrownBy(() -> ScimFilter.parse(filter))
             .isInstanceOfSatisfying(ScimException.class, error -> assertThat(error.scimType()).isEqualTo("invalidFilter"));
     }
+
+    @Test
+    void should_rejectDeeplyNestedFilters_insteadOfOverflowingTheStack() {
+        var nested = "(".repeat(5000) + "active eq true" + ")".repeat(5000);
+
+        assertThatThrownBy(() -> ScimFilter.parse(nested)).isInstanceOf(ScimException.class);
+    }
+
+    @Test
+    void should_rejectOversizedFilters() {
+        var huge = "userName eq \"" + "a".repeat(10_000) + "\"";
+
+        assertThatThrownBy(() -> ScimFilter.parse(huge)).isInstanceOf(ScimException.class);
+    }
 }
