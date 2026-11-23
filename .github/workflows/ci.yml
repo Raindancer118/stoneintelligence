@@ -6,9 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   java-build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # packages.tstieh.de (ai-gateway): Maven-HTTP-Transport scheitert dort am TLSv1.3-Handshake.
       MAVEN_OPTS: -Djdk.tls.client.protocols=TLSv1.2
@@ -63,13 +71,64 @@ jobs:
   # Die naechtliche Sicherung auf dorn (ops/backup) - gegen eine echte Wegwerf-Postgres.
   backup-script-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Test backup script
         run: ops/backup/test-backup.sh
+      - name: Test container healthcheck script
+        run: ops/docker/test-healthcheck.sh
+
+  # Die Dockerfiles bauen (ohne private Registry: platform-api, mcp-adapter) und der mcp-adapter
+  # muss im Container "healthy" werden - prueft Healthcheck, Non-root-Nutzer und JVM-Flags.
+  docker-build-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build platform-api image
+        run: docker build -f platform-api/Dockerfile -t platform-api:ci .
+      - name: Build mcp-adapter image
+        run: docker build -f mcp-adapter/Dockerfile -t mcp-adapter:ci .
+      - name: mcp-adapter becomes healthy and runs unprivileged
+        run: |
+          docker run -d --name mcp --cap-drop ALL --security-opt no-new-privileges:true mcp-adapter:ci
+          for _ in $(seq 40); do
+            state=$(docker inspect -f '{{.State.Health.Status}}' mcp)
+            [ "$state" = healthy ] && break
+            sleep 5
+          done
+          docker logs mcp | tail -20
+          [ "$state" = healthy ]
+          [ "$(docker exec mcp id -u)" != 0 ]
+
+  # Bericht, kein Gatekeeper: bekannte Schwachstellen in Laufzeit-Abhaengigkeiten.
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: npm audit (production dependencies, non-blocking)
+        run: |
+          for dir in plugin webapp yjs-bridge; do
+            echo "::group::npm audit $dir"
+            (cd "$dir" && npm audit --omit=dev --audit-level=high) || echo "::warning::npm audit reported findings in $dir"
+            echo "::endgroup::"
+          done
+      - name: Dependency review (pull requests)
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+        continue-on-error: true
+        with:
+          fail-on-severity: high
 
   plugin-build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: plugin
@@ -99,6 +158,7 @@ jobs:
   # Job stellt sicher, dass es exakt aus dem Quellcode (inkl. plugin/src/sync/textDiff.ts) entsteht.
   yjs-bridge-build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -130,6 +190,7 @@ jobs:
 
   webapp-build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: webapp
