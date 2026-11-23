@@ -12,6 +12,7 @@ import de.tstieh.stoneintelligence.platform.identity.AccessVersions;
 import de.tstieh.stoneintelligence.platform.identity.AuthorizationRepository;
 import de.tstieh.stoneintelligence.platform.identity.EffectiveAccess;
 import de.tstieh.stoneintelligence.platform.identity.GrantIndex;
+import de.tstieh.stoneintelligence.platform.identity.GrantTarget;
 import de.tstieh.stoneintelligence.platform.identity.Membership;
 import de.tstieh.stoneintelligence.platform.identity.Permission;
 import de.tstieh.stoneintelligence.platform.sync.relay.VaultAnnouncementService;
@@ -113,6 +114,27 @@ public class VaultAccessGuard {
     public void require(VaultId vaultId, String actor, Permission permission, String path) {
         if (!accessAt(vaultId, actor, path).allows(permission)) {
             throw new ForbiddenException(actor + " lacks " + permission + " on '" + path + "' in vault " + vaultId.value());
+        }
+    }
+
+    /**
+     * Loeschen eines Ordnerbaums nimmt auch die Freigaben darin mit - dafuer genuegt "Loeschen" am obersten
+     * Ordner nicht: jeder Unterordner muss loeschbar (oder verwaltbar) sein, jeder Ordner mit Freigabe verwaltbar, sonst
+     * liesse sich eine Beschraenkung weiter unten durch Loeschen des Elternordners aufheben.
+     */
+    public void requireFolderTreeRemovable(VaultId vaultId, String actor, String folder, List<String> existingFolders) {
+        var check = accessChecker(vaultId, actor);
+        for (var path : existingFolders) {
+            var at = check.apply(path + "/");
+            if (FolderPaths.isInside(path, folder) && !at.allows(Permission.DELETE) && !at.allows(Permission.MANAGE)) {
+                throw new ForbiddenException(actor + " may not delete folder '" + path + "' in vault " + vaultId.value());
+            }
+        }
+        for (var grant : index(vaultId).grants()) {
+            if (grant.target() instanceof GrantTarget.Folder target && FolderPaths.isInside(target.path(), folder)
+                    && !check.apply(target.path() + "/").allows(Permission.MANAGE)) {
+                throw new ForbiddenException(actor + " may not manage access in folder '" + target.path() + "'");
+            }
         }
     }
 
