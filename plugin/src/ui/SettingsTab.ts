@@ -1,5 +1,5 @@
 import { type App, Notice, type Plugin, PluginSettingTab, Setting, setIcon } from "obsidian";
-import { applyServer, DEFAULT_SETTINGS, type StoneIntelligenceSettings, wsUrlFor } from "../settings";
+import { applyServer, BUILT_IN_EXCLUDED_FOLDERS, DEFAULT_SETTINGS, type StoneIntelligenceSettings, wsUrlFor } from "../settings";
 import type { VaultSummary } from "../sync/NoteApiClient";
 import type { SyncActivity } from "../sync/SyncActivity";
 import { presentStatus } from "./statusPresentation";
@@ -233,7 +233,7 @@ export class StoneIntelligenceSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Ausgeschlossene Ordner")
-      .setDesc("Ein Ordner pro Zeile. Notizen darin werden weder hoch- noch heruntergeladen.")
+      .setDesc(`Ein Ordner pro Zeile. Notizen darin werden weder hoch- noch heruntergeladen. Immer ausgeschlossen (eingebaut, auf jeder Ebene): ${BUILT_IN_EXCLUDED_FOLDERS.join(", ")}.`)
       .addTextArea((text) => {
         text.setPlaceholder("Privat\nVorlagen").setValue(settings.excludedFolders.join("\n"));
         text.inputEl.rows = 3;
