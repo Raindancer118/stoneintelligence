@@ -49,12 +49,13 @@ test("mobile reading has no horizontal overflow and returns to the list", async 
 
 test("rename and confirmed deletion update the note list", async ({ page }) => {
   await openNote(page);
-  await page.getByText("Details und Aktionen", { exact: true }).click();
+  await page.getByText("Mehr", { exact: true }).click();
   await page.getByRole("button", { name: "Umbenennen / verschieben" }).click();
   await page.getByLabel("Neuer Pfad", { exact: true }).fill("Archiv/Abschluss.md");
   await page.getByRole("button", { name: "Pfad speichern" }).click();
   await expect(page.getByRole("button", { name: "Abschluss Archiv" })).toBeVisible();
   page.once("dialog", dialog => dialog.accept());
+  await page.getByText("Mehr", { exact: true }).click();
   await page.getByRole("button", { name: "Notiz löschen" }).click();
   await expect(page.getByRole("button", { name: "Abschluss Archiv" })).toHaveCount(0);
 });
@@ -91,7 +92,7 @@ test("invite an existing account and an email address from the members page", as
 
 test("connect the selected vault to Obsidian from the vault", async ({ page }, testInfo) => {
   await openNote(page);
-  await page.getByRole("button", { name: "In Obsidian", exact: true }).click();
+  await page.getByRole("button", { name: "Obsidian verbinden", exact: true }).click();
   const connect = page.getByRole("link", { name: "Mit „Team-Wissen“ verbinden" }).first();
   await expect(connect).toHaveAttribute("href", new RegExp(String.raw`^obsidian://stoneintelligence-connect\?stoneVault=[0-9a-f-]{36}&name=Team-Wissen`
     + "&server=http%3A%2F%2F127.0.0.1%3A4173&ws=ws%3A%2F%2F127.0.0.1%3A4173"
@@ -103,7 +104,7 @@ test("connect the selected vault to Obsidian from the vault", async ({ page }, t
 test("reads a document with AI and undoes the result", async ({ page }, testInfo) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   await page.goto("/");
-  await page.getByRole("button", { name: "KI-Wissen" }).click();
+  await page.getByRole("button", { name: "Dokumente & KI" }).click();
   await expect(page.getByRole("heading", { name: "Wissen aus Dokumenten" })).toBeVisible();
 
   await page.getByLabel("KI-Dienst").selectOption("lokal");

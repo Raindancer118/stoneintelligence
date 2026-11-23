@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Skeleton from "./Skeleton.svelte";
   import { api, ApiError } from "../api";
   import { describeVersion, explainVersionError, lineDiff, type DiffRow, type NoteVersion, type VersionList } from "../versionText";
 
@@ -59,7 +60,7 @@
   {#if notice}<p class="feedback" role="status">{notice}</p>{/if}
   {#if error}<p class="feedback error" role="alert">{error}</p>{/if}
   {#if !list}
-    {#if !error}<p role="status">Versionen werden geladen…</p>{/if}
+    {#if !error}<Skeleton kind="list" rows={4} label="Versionen werden geladen…" />{/if}
   {:else if list.versions.length === 0}
     <p>Noch keine Versionen.</p>
   {:else}
@@ -72,7 +73,7 @@
           </button>
           {#if open === version.revision}
             <div class="version-detail">
-              {#if loadingDiff}<p role="status">Wird geladen…</p>
+              {#if loadingDiff}<Skeleton kind="panel" rows={4} label="Wird geladen…" />
               {:else if rows && (index === 0 || rows.length === 0)}<p>So sieht die Notiz gerade aus.</p>
               {:else if rows}
                 <p>Was sich gegenüber jetzt ändern würde:</p>

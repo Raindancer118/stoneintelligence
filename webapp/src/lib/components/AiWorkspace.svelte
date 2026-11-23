@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Skeleton from "./Skeleton.svelte";
   import { onDestroy, onMount } from "svelte";
   import {
     api, type AiChangeSet, type AiChangeSetDetail, type AiJob, type AiQuota, type AiRevertReport, type AiService,
@@ -243,7 +244,7 @@
   {#if error}<div class="feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={load}>Erneut versuchen</button></div>{/if}
 
   {#if loading}
-    <p role="status">KI-Bereich wird geladen…</p>
+    <Skeleton kind="panel" label="KI-Bereich wird geladen…" />
   {:else}
     {#if services.length === 0}
       <p class="feedback">Auf diesem Server ist noch keine KI eingerichtet. Sobald der Betrieb einen KI-Dienst anbindet, kannst du hier Dokumente einlesen lassen.</p>
@@ -364,7 +365,7 @@
                     </ul>
                   {/if}
                 {:else}
-                  <p role="status" class="hint">Wird geladen…</p>
+                  <Skeleton kind="list" rows={2} label="Wird geladen…" />
                 {/if}
               {/if}
             </li>

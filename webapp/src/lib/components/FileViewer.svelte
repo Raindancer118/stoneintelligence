@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Skeleton from "./Skeleton.svelte";
   import { onDestroy, onMount } from "svelte";
   import { api, type Note } from "../api";
   import { formatSize, previewKind } from "../fileKinds";
@@ -88,7 +89,7 @@
       <div class="empty"><h3>Große Datei</h3><p>Sie wird erst geladen, wenn du sie ansehen oder herunterladen möchtest.</p>
         <button class="primary" onclick={load}>Datei laden ({formatSize(size)})</button></div>
     {:else if loading}
-      <p class="loading" role="status">Datei wird geladen…</p>
+      <Skeleton kind="document" label="Datei wird geladen…" />
     {:else if url}
       {#if isText && textPreview !== null}
         <pre aria-label="Textvorschau">{textPreview}</pre>

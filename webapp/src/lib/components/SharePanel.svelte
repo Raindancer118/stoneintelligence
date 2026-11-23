@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Skeleton from "./Skeleton.svelte";
   import { onMount } from "svelte";
   import { api, ApiError, type AccessReport, type Group, type ScopeType, type Vault } from "../api";
   import { describeScope, describeSource, explainAccessError, permissionsFor, permissionsLabel, PRESETS, presetOf, type PresetId } from "../accessPlan";
@@ -55,7 +56,7 @@
 
 <section class="share-panel" aria-label="Freigabe">
   <header><h3>Freigabe: {title}</h3><button class="quiet" onclick={onClose}>Schließen</button></header>
-  {#if !report && !error}<p class="hint" role="status">Wird geladen…</p>{/if}
+  {#if !report && !error}<Skeleton kind="list" rows={3} label="Wird geladen…" />{/if}
   {#if report}
     <p class="mine">Deine Rechte hier: <strong>{permissionsLabel(report.mine.permissions)}</strong> · {describeSource(report.mine.source)}</p>
     {#if !mayManage}<p class="hint">Freigaben ändern kann, wer diese Stelle verwaltet.</p>

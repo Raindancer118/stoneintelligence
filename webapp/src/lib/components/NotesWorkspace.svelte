@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Skeleton from "./Skeleton.svelte";
   import { onMount } from "svelte";
   import { api, type Note, type Vault } from "../api";
   import { normalizeNotePath } from "../noteContent";
@@ -134,12 +135,6 @@
     finally { if (alive) { creating = false; onDirtyChange(dirty); } }
   }
   /** "3 Notizen" bzw. "1 Notiz, 2 Dateien" - Dateien nur erwähnen, wenn es welche gibt. */
-  function loadedSummary(list: Note[]) {
-    const files = list.filter(n => n.kind === "FILE").length;
-    const count = list.length - files;
-    const noteText = `${count} ${count === 1 ? "Notiz" : "Notizen"}`;
-    return files ? `${noteText}, ${files} ${files === 1 ? "Datei" : "Dateien"}` : noteText;
-  }
   function changed(note: Note) {
     for (const [path, level] of Object.entries(levels)) levels[path] = { ...level, entries: level.entries.filter(n => n.id !== note.id) };
     selected = note;
@@ -168,33 +163,32 @@
     {/each}
     {#each sorted(level.entries) as note (note.id)}{@render row(note, depth)}{/each}
     {#if level.cursor}<button class="quiet load-more" style={`--depth:${depth}`} disabled={level.loading} onclick={() => loadLevel(path, true)}>Weitere laden</button>{/if}
-    {#if level.loading}<p class="list-empty" style={`--depth:${depth}`} role="status">Wird geladen…</p>{/if}
+    {#if level.loading}<div style={`--depth:${depth}`} class="tree-skeleton"><Skeleton kind="tree" rows={depth === 0 && !level.folders.length && !level.entries.length ? 5 : 2} label="Notizen werden geladen…" /></div>{/if}
   {/if}
 {/snippet}
 
-<div class="workspace-tools" class:note-open={selected !== null}>
-  <div><p class="hint">{loading && !notes.length ? "Übersicht wird geladen…" : `${loadedSummary(notes)} in den geöffneten Ordnern`}</p></div>
-  <div class="tool-actions"><button class="secondary" disabled={loading || creating} onclick={() => load()}>Liste aktualisieren</button>{#if permissions.includes("CREATE")}<button class="primary" aria-expanded={showCreate} onclick={() => showCreate = !showCreate}>Neue Notiz</button>{/if}</div>
-</div>
 {#if error}<div class="feedback error" role="alert"><p>{error}</p><button class="secondary" disabled={loading} onclick={() => load()}>Erneut versuchen</button></div>{/if}
 {#if showCreate}<form class="create-form" onsubmit={e => { e.preventDefault(); void create(); }}><div><label for="create-path">Titel oder Pfad der neuen Notiz</label><input id="create-path" bind:value={newPath} placeholder="Projekte/Ideen.md" required disabled={creating} /><p class="hint">Mit / kannst du die Notiz in einem Ordner ablegen.</p></div><button class="primary" disabled={creating}>{creating ? "Wird angelegt…" : "Notiz anlegen"}</button><button type="button" class="quiet" disabled={creating} onclick={() => showCreate = false}>Abbrechen</button></form>{/if}
 <div class="notes-layout" class:has-selection={selected !== null}>
   <section class="note-index" aria-label="Notizliste">
-    <label for="note-search">Notizen finden</label><input id="note-search" type="search" bind:value={search} placeholder="Titel oder Pfad suchen" />
-    <div class="filters"><label>Sortierung<select bind:value={sort}><option value="path">Name A–Z</option><option value="recent">Neu angelegt</option></select></label></div>
-    <button class="quiet share-folder" onclick={() => sharing = { kind: "folder", path: folder }}>{folder ? `Ordner „${folder.split("/").pop()}“ freigeben` : "Freigaben für den ganzen Vault"}</button>
+    <div class="index-head">
+      <label class="sr-only" for="note-search">Notizen finden</label><input id="note-search" type="search" bind:value={search} placeholder="Suchen" />
+      {#if permissions.includes("CREATE")}<button class="primary" aria-expanded={showCreate} onclick={() => showCreate = !showCreate}>Neue Notiz</button>{/if}
+    </div>
+    <div class="index-tools"><label class="inline-select"><span class="sr-only">Sortierung</span><select bind:value={sort} aria-label="Sortierung"><option value="path">Name A–Z</option><option value="recent">Neueste zuerst</option></select></label><button class="quiet" disabled={loading || creating} onclick={() => load()}>Aktualisieren</button></div>
     <div class="note-rows" aria-busy={loading}>
       {#if search.trim()}{#each visible as note (note.id)}{@render row(note, 0)}{/each}{:else}{@render tree("", 0)}{/if}
       {#if search.trim() && !visible.length && !searching}<p class="list-empty" role="status">Keine passenden Notizen.</p>{/if}
       {#if !search.trim() && !loading && levels[""] && !levels[""].folders.length && !levels[""].entries.length}<p class="list-empty">Noch keine Notizen vorhanden.</p>{/if}
       {#if search.trim() && truncated && !searching}<p class="hint">Weitere Treffer vorhanden. Gib mehr vom Titel oder Pfad ein.</p>{/if}
-      {#if searching}<p class="list-empty" role="status">Suche läuft…</p>{:else if loading}<p class="list-empty" role="status">Notizen werden geladen…</p>{/if}
+      {#if searching}<Skeleton kind="tree" rows={3} label="Suche läuft…" />{/if}
     </div>
+    <div class="index-foot"><button class="quiet" onclick={() => sharing = { kind: "folder", path: folder }}>{folder ? `„${folder.split("/").pop()}“ freigeben` : "Vault freigeben"}</button></div>
   </section>
   <section class="note-content" aria-label="Ausgewählte Notiz">
     {#if sharing}{#key JSON.stringify(sharing)}<SharePanel {vault} target={sharing} onClose={() => sharing = null} />{/key}{/if}
-    {#if selected}<div class="note-actions"><button class="quiet back-to-list" onclick={() => select(null)}>Zur Notizliste</button><span class="note-actions-right">{#if selected.kind !== "FILE"}<button class="quiet" aria-expanded={similar !== null} disabled={similarLoading} onclick={showSimilar}>Ähnliche Notizen</button>{/if}<button class="quiet" onclick={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null}>Freigabe</button></span></div>
-    {#if similar}<section class="similar" aria-label="Ähnliche Notizen">{#if similar.length}<ul>{#each similar as other (other.noteId)}<li><button class="link" onclick={() => openSimilar(other.path)}>{other.path.split("/").pop()?.replace(/\.md$/i, "")}</button><span class="hint">{Math.round(other.similarity * 100)} % ähnlich{other.heading ? ` · „${other.heading}“` : ""}</span></li>{/each}</ul>{:else}<p class="hint">Noch nichts gefunden. Ähnlichkeiten entstehen beim Verlinken (KI → Verlinkung).</p>{/if}</section>{/if}{#key selected.id}{#if selected.kind === "FILE"}<FileViewer note={selected} {permissions} onChanged={changed} onDeleted={deleted} />{:else}<NoteEditor note={selected} {permissions} onChanged={changed} onDeleted={deleted} onDirtyChange={setDirty} />{/if}{/key}
-    {:else}<div class="welcome-document"><svg viewBox="0 0 64 72" width="64" height="72" fill="none" aria-hidden="true"><path d="M10 3h29l15 15v51H10z" stroke="currentColor" stroke-width="2"/><path d="M39 3v16h15M20 32h24M20 42h24M20 52h15" stroke="currentColor" stroke-width="2"/></svg><h3>Dein Wissen, direkt im Browser.</h3><p>Wähle eine Notiz aus der Liste, um sie zu lesen{permissions.includes("WRITE") ? " oder zu bearbeiten" : ""}.</p>{#if permissions.includes("CREATE")}<button class="primary" onclick={() => showCreate = true}>Erste Gedanken festhalten</button>{/if}<p class="hint">Mit Obsidian verbunden. Gespeicherte Änderungen stehen auch deinen anderen Geräten zur Verfügung.</p></div>{/if}
+    {#if selected}<div class="note-actions"><button class="quiet back-to-list" onclick={() => select(null)}>Zur Notizliste</button>{#if selected.kind === "FILE"}<button class="secondary" onclick={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null}>Freigeben</button>{/if}</div>
+    {#if similar}<section class="similar" aria-label="Ähnliche Notizen">{#if similar.length}<ul>{#each similar as other (other.noteId)}<li><button class="link" onclick={() => openSimilar(other.path)}>{other.path.split("/").pop()?.replace(/\.md$/i, "")}</button><span class="hint">{Math.round(other.similarity * 100)} % ähnlich{other.heading ? ` · „${other.heading}“` : ""}</span></li>{/each}</ul>{:else}<p class="hint">Noch nichts gefunden. Ähnlichkeiten entstehen beim Verlinken (KI → Verlinkung).</p>{/if}</section>{/if}{#key selected.id}{#if selected.kind === "FILE"}<FileViewer note={selected} {permissions} onChanged={changed} onDeleted={deleted} />{:else}<NoteEditor note={selected} {permissions} onChanged={changed} onDeleted={deleted} onDirtyChange={setDirty} onShare={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null} onSimilar={showSimilar} />{/if}{/key}
+    {:else}<div class="welcome-document"><div class="placeholder-lines" aria-hidden="true"><i></i><i></i><i></i></div><h3>Keine Notiz geöffnet</h3><p>Wähle links eine Notiz, um sie zu lesen{permissions.includes("WRITE") ? " und zu bearbeiten" : ""}. Was du hier speicherst, erscheint sofort in Obsidian bei allen, die den Vault verbunden haben.</p></div>{/if}
   </section>
 </div>

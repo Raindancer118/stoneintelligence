@@ -82,7 +82,7 @@ describe("large vaults", () => {
     const renamed = vi.fn();
     render(VaultDetail, { vault, me: "tom", onRenamed: renamed });
     await screen.findByText("tom (du)");
-    await fireEvent.click(screen.getByRole("button", { name: "Vault-Einstellungen" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Allgemein" }));
 
     await fireEvent.click(screen.getByRole("checkbox", { name: /Nur Arbeitsbereiche synchronisieren/ }));
 

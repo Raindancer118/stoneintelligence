@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Skeleton from "./lib/components/Skeleton.svelte";
   import { onMount } from "svelte";
   import type { User } from "oidc-client-ts";
   import { completeLogin, getUser, login as startLogin, logout as startLogout, preferredUsername } from "./lib/auth";
@@ -21,9 +22,11 @@
   let copied = $state(false);
   let canManage = $state(false);
   const areas = $derived([
-    { id: "notes", label: "Notizen" }, { id: "obsidian", label: "In Obsidian" },
-    { id: "ai", label: "KI-Wissen" }, ...(canManage ? [{ id: "manage", label: "Mitglieder & Rechte" }] : []),
+    { id: "notes", label: "Notizen" }, { id: "ai", label: "Dokumente & KI" },
+    ...(canManage ? [{ id: "manage", label: "Mitglieder & Rechte" }, { id: "settings", label: "Einstellungen" }] : []),
+    { id: "obsidian", label: "Obsidian verbinden" },
   ]);
+  type Section = "notes" | "manage" | "settings" | "obsidian" | "ai";
   function toggleNavigation() {
     collapsed = !collapsed;
     try { localStorage.setItem("stone.navigation.collapsed", String(collapsed)); } catch { /* Private browsing can disable storage. */ }
@@ -53,7 +56,7 @@
   let error = $state("");
   let vaults = $state<Vault[]>([]);
   let selected = $state<Vault | null>(null);
-  let section = $state<"notes" | "manage" | "obsidian" | "ai">("notes");
+  let section = $state<Section>("notes");
   let dirty = $state(false);
 
   let authBusy = $state(false);
@@ -98,7 +101,7 @@
     if (selected?.id === vault.id || !mayLeave()) return;
     void withTransition(() => { selected = vault; jumpNote = null; mobileOpen = false; section = "notes"; dirty = false; canManage = false; }, "area");
   }
-  function navigate(next: "notes" | "manage" | "obsidian" | "ai") { if ((next !== section || setupPage) && mayLeave()) void withTransition(() => { section = next; setupPage = false; dirty = false; jumpNote = null; }, "area"); mobileOpen = false; jumping = false; }
+  function navigate(next: Section) { if ((next !== section || setupPage) && mayLeave()) void withTransition(() => { section = next; setupPage = false; dirty = false; jumpNote = null; }, "area"); mobileOpen = false; jumping = false; }
   async function refreshVaults(created?: Vault) {
     const loaded = await api.listVaults();
     if (!alive) return;
@@ -178,25 +181,24 @@
 {:else}
   <div class="shell" class:nav-collapsed={collapsed}>
     <aside class="main-navigation" class:mobile-open={mobileOpen} aria-label="Hauptnavigation">
-      <div class="brand"><img src="/logo.png" alt="" width="34" height="34" /><span>Stone<span class="brand-light">Intelligence</span></span></div>
-      <button class="nav-collapse" aria-label={collapsed ? "Navigation ausklappen" : "Navigation einklappen"} aria-expanded={!collapsed} onclick={toggleNavigation}><Icon name="panel" /><span>Navigation einklappen</span></button>
+      <div class="brand"><img src="/logo.png" alt="" width="28" height="28" /><span>Stone<span class="brand-light">Intelligence</span></span><button class="nav-collapse quiet" aria-label={collapsed ? "Navigation ausklappen" : "Navigation einklappen"} title={collapsed ? "Navigation ausklappen" : "Navigation einklappen"} aria-expanded={!collapsed} onclick={toggleNavigation}><Icon name="panel" size={18} /></button></div>
       <div class="vault-switcher"><Sidebar {vaults} selectedId={selected?.id ?? null} onSelect={choose} onCreated={refreshVaults} canCreate={() => mayLeave()} /></div>
-      {#if selected}<nav class="area-nav" aria-label="Vault-Bereiche"><p class="nav-caption">Arbeitsplatz</p>{#each areas as area}<button class:active={section === area.id && !setupPage} aria-label={area.label} title={area.label} aria-pressed={section === area.id && !setupPage} onclick={() => navigate(area.id as typeof section)}><Icon name={area.id} /><span>{area.label}</span></button>{/each}</nav>{/if}
-      <div class="nav-bottom"><a href="/setup" onclick={openSetup}><Icon name="obsidian" /><span>Obsidian einrichten</span></a><div class="account"><span class="avatar">{preferredUsername(user).slice(0, 1).toUpperCase()}</span><span class="account-name">{preferredUsername(user)}<small>Dein Konto</small></span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></div>
+      {#if selected}<nav class="area-nav" aria-label="Vault-Bereiche">{#each areas as area}<button class:active={section === area.id && !setupPage} aria-label={area.label} title={area.label} aria-pressed={section === area.id && !setupPage} onclick={() => navigate(area.id as typeof section)}><Icon name={area.id} /><span>{area.label}</span></button>{/each}</nav>{/if}
+      <div class="nav-bottom">{#if !selected}<a href="/setup" onclick={openSetup}><Icon name="obsidian" /><span>Obsidian einrichten</span></a>{/if}<div class="account"><span class="avatar">{preferredUsername(user).slice(0, 1).toUpperCase()}</span><span class="account-name">{preferredUsername(user)}<small>Dein Konto</small></span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></div>
     </aside>
     <div class="main-column">
-      <header class="app-header"><button class="mobile-toggle quiet" aria-label={mobileOpen ? "Menü schließen" : "Menü öffnen"} aria-expanded={mobileOpen} onclick={() => mobileOpen = !mobileOpen}><Icon name="panel" /></button><div class="breadcrumb"><span>Dein Wissen</span><span aria-hidden="true">/</span><strong>{setupPage ? "Einrichtung" : selected?.name ?? "Willkommen"}</strong></div><button class="quick-trigger" onclick={() => jumping = true}><Icon name="search" /><span>Schnellsprung</span><kbd>⌘ K</kbd></button><ThemeToggle /></header>
+      <header class="app-header"><button class="mobile-toggle quiet" aria-label={mobileOpen ? "Menü schließen" : "Menü öffnen"} aria-expanded={mobileOpen} onclick={() => mobileOpen = !mobileOpen}><Icon name="panel" /></button><div class="breadcrumb">{#if setupPage}<strong>Obsidian einrichten</strong>{:else if selected}<span>{selected.name}</span><span aria-hidden="true">/</span><strong>{areas.find(a => a.id === section)?.label}</strong>{:else}<strong>Willkommen</strong>{/if}</div><button class="quick-trigger" onclick={() => jumping = true}><Icon name="search" /><span>Schnellsprung</span><kbd>⌘ K</kbd></button><ThemeToggle /></header>
       {#if sessionExpired}<div class="app-error feedback error" role="alert"><p>Deine Anmeldung ist abgelaufen. Ein offener Entwurf bleibt bis zur erneuten Anmeldung erhalten; exportiere ihn vorher, wenn er wichtig ist.</p><button class="secondary" disabled={authBusy} onclick={relogin}>Erneut anmelden</button></div>{/if}
       {#if error}<div class="app-error feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={() => { error = ""; void refreshVaults().catch(e => error = e.message); }}>Erneut versuchen</button></div>{/if}
       <main id="workspace">
         {#if setupPage}<p><a href="/" onclick={leaveSetup}>← Zurück zu den Notizen</a></p><ObsidianSetup {vaults} signedIn={true} onLogin={() => authenticate()} />
         {:else if selected}
-          <div class="workspace-heading"><div><p class="eyebrow">{areas.find(a => a.id === section)?.label}</p><h1>{selected.name}</h1></div></div>
+          {#if section !== "notes"}<div class="workspace-heading"><h1>{areas.find(a => a.id === section)?.label}</h1></div>{:else}<h1 class="sr-only">{selected.name}</h1>{/if}
           {#key selected.id}
             {#if section === "obsidian"}<ObsidianSetup vaults={[selected]} signedIn={true} scopedVault={true} onLogin={() => authenticate()} /><section class="connection-panel"><h3>Ohne Knöpfe</h3><p class="hint">Füge die Verbindungsdaten im Plugin unter Erweitert ein.</p><button class="secondary" onclick={copyConfig}>{copied ? "Kopiert" : "Konfiguration kopieren"}</button></section>
-            {:else if section === "ai"}{#await import("./lib/components/AiWorkspace.svelte")}<p role="status">KI-Bereich wird geladen…</p>{:then module}<module.default vault={selected} />{:catch}<p class="feedback error" role="alert">Der KI-Bereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
-            {:else if section === "notes"}{#await import("./lib/components/NotesWorkspace.svelte")}<p role="status">Notizbereich wird geladen…</p>{:then module}<module.default vault={selected} requestedNote={jumpNote} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
-            {:else}{#await import("./lib/components/VaultDetail.svelte")}<p role="status">Verwaltung wird geladen…</p>{:then module}<div class="management"><module.default vault={selected} me={preferredUsername(user)} onRenamed={v => { vaults = vaults.map(old => old.id === v.id ? v : old); selected = v; }} onLeft={() => refreshVaults()} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}{/if}
+            {:else if section === "ai"}{#await import("./lib/components/AiWorkspace.svelte")}<Skeleton kind="panel" label="KI-Bereich wird geladen…" />{:then module}<module.default vault={selected} />{:catch}<p class="feedback error" role="alert">Der KI-Bereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
+            {:else if section === "notes"}{#await import("./lib/components/NotesWorkspace.svelte")}<Skeleton kind="notes" label="Notizbereich wird geladen…" />{:then module}<module.default vault={selected} requestedNote={jumpNote} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
+            {:else}{#key section}{#await import("./lib/components/VaultDetail.svelte")}<Skeleton kind="list" label="Verwaltung wird geladen…" />{:then module}<div class="management"><module.default vault={selected} pages={section === "settings" ? ["settings", "log"] : ["members", "roles", "groups"]} me={preferredUsername(user)} onRenamed={v => { vaults = vaults.map(old => old.id === v.id ? v : old); selected = v; }} onLeft={() => refreshVaults()} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}{/key}{/if}
           {/key}
         {:else}<section class="first-vault"><p class="eyebrow">Ein neuer Anfang</p><h1>Hier beginnt dein<br />gemeinsames Wissen.</h1><p>Lege in der Navigation deinen ersten Vault an. Ein Vault bündelt deine Notizen und legt fest, mit wem du sie teilst.</p><button class="primary" onclick={() => { collapsed = false; mobileOpen = true; }}>Ersten Vault anlegen</button></section>{/if}
       </main>

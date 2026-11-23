@@ -1,6 +1,8 @@
 <script lang="ts">
+  import Skeleton from "./Skeleton.svelte";
   import { withTransition } from "../motion";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
+  import { LoadingGate } from "../loadingGate";
   import { api, ApiError, type Group, type Role, type Vault, type VaultMember } from "../api";
   import { explainAccessError, permissionsLabel } from "../accessPlan";
   import { describeEvent, formatDate, type HistoryEvent } from "../historyText";
@@ -8,13 +10,19 @@
   import { idpLinkText, personLabel } from "../peopleText";
   import InvitePeople from "./InvitePeople.svelte";
 
-  let { vault, me = "", onRenamed = () => {}, onLeft = () => {} }: { vault: Vault; me?: string; onRenamed?: (vault: Vault) => void; onLeft?: () => void } = $props();
+  let { vault, me = "", onRenamed = () => {}, onLeft = () => {}, pages = ["members", "roles", "groups", "log", "settings"] }: { vault: Vault; me?: string; onRenamed?: (vault: Vault) => void; onLeft?: () => void; pages?: string[] } = $props();
 
-  let page = $state("members");
+  // svelte-ignore state_referenced_locally
+  let page = $state(pages[0] ?? "members");
   let loading = $state(true);
+  let skeleton = $state(false);
+  const gate = new LoadingGate(visible => skeleton = visible);
+  $effect(() => gate.set(loading));
+  onDestroy(() => gate.dispose());
   let vaultName = $state("");
   let renamingVault = $state(false);
-  const adminPages = [{ id: "members", label: "Mitglieder" }, { id: "roles", label: "Rollen" }, { id: "groups", label: "Gruppen" }, { id: "log", label: "Protokoll" }, { id: "settings", label: "Vault-Einstellungen" }];
+  const allPages = [{ id: "members", label: "Mitglieder" }, { id: "roles", label: "Rollen" }, { id: "groups", label: "Gruppen" }, { id: "settings", label: "Allgemein" }, { id: "log", label: "Protokoll" }];
+  const adminPages = $derived(allPages.filter(item => pages.includes(item.id)));
   async function renameVault() {
     if (!vaultName.trim() || renamingVault) return;
     renamingVault = true;
@@ -201,13 +209,14 @@
 </script>
 
 
-<nav class="admin-tabs" aria-label="Verwaltungsbereiche">{#each adminPages as item}<button class:active={page === item.id} aria-pressed={page === item.id} onclick={() => void withTransition(() => page = item.id, "tab")}>{item.label}</button>{/each}</nav>
-{#if loading}<p role="status">Verwaltung wird geladen…</p>{/if}
+{#if adminPages.length > 1}<nav class="admin-tabs" aria-label="Verwaltungsbereiche">{#each adminPages as item}<button class:active={page === item.id} aria-pressed={page === item.id} onclick={() => void withTransition(() => page = item.id, "tab")}>{item.label}</button>{/each}</nav>{/if}
+{#if skeleton}<Skeleton kind="list" gated label="Verwaltung wird geladen…" />{:else if loading}<p class="sr-only" role="status">Verwaltung wird geladen…</p>{/if}
 
 {#if error}
   <div class="feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={refresh}>Erneut versuchen</button></div>
 {/if}
 
+{#if !skeleton}
 {#if page === "members"}
 <InvitePeople {vault} />
 
@@ -362,4 +371,5 @@
 </section>
 
 
+{/if}
 {/if}
