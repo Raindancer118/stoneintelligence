@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM eclipse-temurin:25-jdk AS build
+FROM eclipse-temurin:25-jdk@sha256:ce2ef9d2d67a68de5e196d4de9d743327c44a10b57fe02ec39f572c652cacfd3 AS build
 WORKDIR /workspace
 COPY . .
 # ai-gateway kommt aus der privaten Registry packages.tstieh.de: Zugang nur beim Bauen, als
@@ -7,7 +7,7 @@ COPY . .
 RUN --mount=type=secret,id=maven_settings,target=/root/.m2/settings.xml \
     MAVEN_OPTS=-Djdk.tls.client.protocols=TLSv1.2 ./mvnw -q -pl intelligence-worker -am -DskipTests package
 
-FROM eclipse-temurin:25-jre
+FROM eclipse-temurin:25-jre@sha256:4ed132f6832e9804b123e89a849a7b4502756ae64a4ee08ebab939d9d5d0a9fa
 RUN useradd --system --uid 10001 --home-dir /app worker
 # Lokales Embedding-Modell (ADR 0012): gepinnte Fassung, per Pruefsumme gesichert - Notizen verlassen
 # fuer die Verlinkung den Server nie. Basis intfloat/multilingual-e5-small (MIT).
@@ -31,6 +31,8 @@ ENV STONEAI_RESUME_DIR=/data/ai-resume
 # Ein 100-MB-Buch liegt beim Einlesen mehrfach im Speicher; der Standard (25 % des Containers) reicht nicht.
 # Heap 60 % des Containers (dorn: 1792 MB -> ~1,05 GB wie zuvor); der Rest bleibt fuer das lokale
 # Embedding-Modell (ONNX Runtime, Tokenizer) ausserhalb des Heaps.
-ENV JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError"
+COPY --chmod=755 ops/docker/healthcheck.sh /usr/local/bin/healthcheck
+HEALTHCHECK --interval=30s --timeout=8s --start-period=90s --retries=3 CMD ["healthcheck", "8081", "/actuator/health/liveness"]
 EXPOSE 8081
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

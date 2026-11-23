@@ -334,4 +334,22 @@ class JobProcessorTest {
         assertThat(platform.events).contains("link Pflanzen.md 1");
         assertThat(platform.events).last().isEqualTo("complete");
     }
+
+    @Test
+    void should_neverLetAFileNameEscapeTheWorkDirectory_orBreakTheFilesystem() {
+        assertThat(JobProcessor.safeFileName("../../etc/passwd")).isEqualTo("passwd");
+        assertThat(JobProcessor.safeFileName("..\\..\\boot.ini")).isEqualTo("boot.ini");
+        assertThat(JobProcessor.safeFileName("..")).isEqualTo("Dokument..");
+        assertThat(JobProcessor.safeFileName("a\0b\n.pdf")).isEqualTo("ab.pdf");
+        assertThat(JobProcessor.safeFileName(null)).isEqualTo("Dokument");
+        var longName = JobProcessor.safeFileName("x".repeat(400) + ".pdf");
+        assertThat(longName).hasSize(100).endsWith(".pdf");
+    }
+
+    @Test
+    void should_processADocumentWhoseNameHasControlCharacters() {
+        processor(answering(ANSWER)).process(job("Skript\0.md", "# Photosynthese\n\nText.\n"));
+
+        assertThat(platform.events).last().isEqualTo("complete");
+    }
 }

@@ -32,4 +32,27 @@ class IntelligenceWorkerApplicationStartupTest {
             assertThat(context.getBeansOfType(WorkerLoop.class)).hasSize(1);
         }
     }
+
+    @Nested
+    @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+    class Betriebsendpunkte {
+
+        @org.springframework.boot.test.web.server.LocalServerPort
+        int port;
+
+        private java.net.http.HttpResponse<String> get(String path) throws Exception {
+            return java.net.http.HttpClient.newHttpClient().send(
+                java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://localhost:" + port + path)).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        }
+
+        @Test
+        void should_exposeProbesAndMetrics_butNeitherEnvNorConfig() throws Exception {
+            assertThat(get("/actuator/health/liveness").statusCode()).isEqualTo(200);
+            assertThat(get("/actuator/health/readiness").statusCode()).isEqualTo(200);
+            assertThat(get("/actuator/prometheus").body()).contains("jvm_memory_used_bytes");
+            assertThat(get("/actuator/env").statusCode()).isEqualTo(404);
+            assertThat(get("/actuator/configprops").statusCode()).isEqualTo(404);
+        }
+    }
 }

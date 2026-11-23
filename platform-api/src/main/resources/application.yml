@@ -19,6 +19,10 @@ spring:
       max-file-size: 100MB
       max-request-size: 110MB
 
+  # Jede Shutdown-Phase wartet hoechstens so lange; stop_grace_period im Compose muss darueber liegen.
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
   flyway:
     schemas: platform
     default-schema: platform
@@ -32,6 +36,8 @@ spring:
 # Hinter dem Reverse-Proxy (NPM): absolute URLs (SCIM meta.location) mit https und oeffentlichem Host.
 server:
   forward-headers-strategy: framework
+  # SIGTERM: laufende Anfragen (Uploads, Dateizugriffe) zu Ende bringen, statt sie abzubrechen.
+  shutdown: graceful
 
 management:
   endpoints:
@@ -41,6 +47,8 @@ management:
   endpoint:
     health:
       show-details: never
+      probes:
+        enabled: true
 
 logging:
   level:

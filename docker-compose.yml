@@ -1,6 +1,22 @@
+# Rotation, damit json-file-Logs die Platte nicht fuellen; Format der Java-Logs per
+# LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs (oder logstash) auf JSON umstellbar.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-java-service: &java-service
+  logging: *logging
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    logging: *logging
+    image: pgvector/pgvector:pg17@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd
     restart: unless-stopped
     environment:
       POSTGRES_DB: stoneintelligence
@@ -17,6 +33,7 @@ services:
       retries: 10
 
   platform-api:
+    <<: *java-service
     build:
       context: .
       dockerfile: platform-api/Dockerfile
@@ -56,6 +73,7 @@ services:
   # ein Dienst nutzt, steht in worker.env (AI_SERVICE_<ID>_FAST|SMART|VISION|ENDPOINT|KEYS,
   # GROQ_API_KEY, GOOGLE_API_KEY ...) - getrennt von .env, damit der Worker keine DB-Secrets sieht.
   intelligence-worker:
+    <<: *java-service
     build:
       context: .
       dockerfile: intelligence-worker/Dockerfile
@@ -74,8 +92,10 @@ services:
     volumes:
       - stoneintelligence-ai-resume:/data/ai-resume
     mem_limit: 1536m
+    stop_grace_period: 140s
 
   mcp-adapter:
+    <<: *java-service
     build:
       context: .
       dockerfile: mcp-adapter/Dockerfile
