@@ -15,6 +15,7 @@ class RecordingVaultSubscriber implements VaultSubscriber {
     private final boolean failOnSend;
     final List<Received> received = new ArrayList<>();
     final Set<NoteId> joined = new java.util.HashSet<>();
+    int accessChanges;
     boolean contentUpdates = true;
     boolean folderEvents = true;
     de.tstieh.stoneintelligence.platform.vault.SyncScope scope = de.tstieh.stoneintelligence.platform.vault.SyncScope.wholeVault();
@@ -74,5 +75,10 @@ class RecordingVaultSubscriber implements VaultSubscriber {
             throw new SyncSessionSendException("tote Verbindung", new IllegalStateException("test"));
         }
         received.add(new Received(messageType, noteId, path));
+    }
+
+    @Override
+    public void accessChanged() {
+        accessChanges++;
     }
 }
