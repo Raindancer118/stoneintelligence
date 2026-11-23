@@ -309,4 +309,18 @@ class AuthorizationControllerTest {
                 .containsEntry("tom", "Tom Stieh");
         }
     }
+
+    @Test
+    void should_rejectInvalidRoleAndGroupNamesAndMissingPermissions() {
+        var vaultId = ownerBootstrappedVault("tom");
+        var auth = new TestingAuthenticationToken("tom", null);
+        var id = vaultId.value().toString();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.createGroup(id, new AuthorizationController.CreateGroupRequest("x".repeat(201)), auth))
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.createRole(id, new AuthorizationController.CreateRoleRequest(null, List.of()), auth))
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.createRole(id, new AuthorizationController.CreateRoleRequest("ok", null), auth))
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+    }
 }
