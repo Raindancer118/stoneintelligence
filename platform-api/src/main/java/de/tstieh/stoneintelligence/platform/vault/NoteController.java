@@ -5,7 +5,7 @@ import java.util.List;
 import de.tstieh.stoneintelligence.domain.id.NoteId;
 import de.tstieh.stoneintelligence.domain.id.VaultId;
 import de.tstieh.stoneintelligence.domain.notelevel.NoteLevel;
-import de.tstieh.stoneintelligence.platform.audit.AuditService;
+import de.tstieh.stoneintelligence.platform.audit.AuditRecorder;
 import de.tstieh.stoneintelligence.platform.identity.Permission;
 import de.tstieh.stoneintelligence.platform.sync.relay.SnapshotStore;
 import de.tstieh.stoneintelligence.platform.sync.relay.SyncRelayService;
@@ -34,14 +34,14 @@ public class NoteController {
 
     private final NoteRepository notes;
     private final SyncRelayService relay;
-    private final AuditService audit;
+    private final AuditRecorder audit;
     private final VaultAccessGuard access;
     private final VaultAnnouncementService announcements;
     private final SnapshotStore snapshots;
     private final FolderRegistry folders;
     private final de.tstieh.stoneintelligence.platform.files.FileVersionRepository fileVersions;
 
-    public NoteController(NoteRepository notes, SyncRelayService relay, AuditService audit, VaultAccessGuard access,
+    public NoteController(NoteRepository notes, SyncRelayService relay, AuditRecorder audit, VaultAccessGuard access,
                           VaultAnnouncementService announcements, SnapshotStore snapshots, FolderRegistry folders,
                           de.tstieh.stoneintelligence.platform.files.FileVersionRepository fileVersions) {
         this.folders = folders;
@@ -218,8 +218,17 @@ public class NoteController {
         var note = notes.rename(vId, nId, request.path());
         audit.record(vId, nId, actor, "note.renamed", java.util.Map.of("from", String.valueOf(before), "to", note.path()));
         announcements.announceNoteRenamed(vId, nId, note.path(), note.kind());
+        if (before != null && !parentOf(before).equals(parentOf(note.path()))) {
+            // Freigaben haengen am Ordner: offene Verbindungen duerfen die Notiz am neuen Ort ggf. nicht mehr lesen.
+            announcements.announceAccessChanged(vId);
+        }
         folders.ensureParentsOf(vId, note.path(), actor);
         return NoteResponse.from(note);
+    }
+
+    private static String parentOf(String path) {
+        var slash = path.lastIndexOf('/');
+        return slash < 0 ? "" : path.substring(0, slash);
     }
 
     @DeleteMapping("/api/v1/vaults/{vaultId}/notes/{noteId}")
