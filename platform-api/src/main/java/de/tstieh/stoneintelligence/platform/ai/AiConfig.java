@@ -69,9 +69,9 @@ public class AiConfig {
     public AiWriteService aiWriteService(NoteRepository notes, SnapshotStore snapshots, SyncRelayService relay, YjsBridge yjs,
                                          VaultAnnouncementService announcements, FolderRegistry folders, AuditService audit,
                                          AiServiceDirectory services, AiChangeSetRepository changeSets,
-                                         de.tstieh.stoneintelligence.platform.files.FileService files) {
+                                         de.tstieh.stoneintelligence.platform.files.FileService files, VaultAccessGuard access) {
         return new AiWriteService(notes, snapshots, relay, yjs, announcements, folders, audit::record, services, changeSets,
-            Instant::now, files);
+            Instant::now, files, (vaultId, actor, path, permission) -> access.accessAt(vaultId, actor, path).allows(permission));
     }
 
     @Bean

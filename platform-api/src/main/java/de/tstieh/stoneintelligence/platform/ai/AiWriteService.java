@@ -56,6 +56,7 @@ public class AiWriteService {
     private final AiChangeSetRepository changeSets;
     private final Supplier<Instant> clock;
     private final FileService files;
+    private final PathAccess pathAccess;
     private final NoteLevelPolicyResolver levels = NoteLevelPolicyResolver.withDefaults();
 
     public AiWriteService(NoteRepository notes, SnapshotStore snapshots, SyncRelayService relay, YjsBridge yjs,
@@ -65,11 +66,29 @@ public class AiWriteService {
         this(notes, snapshots, relay, yjs, announcements, folders, audit, services, changeSets, clock, null);
     }
 
-    /** @param files legt die gelesenen Originale ab; {@code null} = keine Dateien (Tests ohne Dateispeicher) */
+    /** Ob {@code actor} an {@code path} die Berechtigung hat - fuer das Rueckgaengigmachen im Namen eines Menschen. */
+    @FunctionalInterface
+    public interface PathAccess {
+        boolean allows(VaultId vaultId, String actor, String path, de.tstieh.stoneintelligence.platform.identity.Permission permission);
+    }
+
     public AiWriteService(NoteRepository notes, SnapshotStore snapshots, SyncRelayService relay, YjsBridge yjs,
                           VaultAnnouncementService announcements, FolderRegistry folders, AiAuditRecorder audit,
                           AiServiceDirectory services,
                           AiChangeSetRepository changeSets, Supplier<Instant> clock, FileService files) {
+        this(notes, snapshots, relay, yjs, announcements, folders, audit, services, changeSets, clock, files,
+            (vaultId, actor, path, permission) -> true);
+    }
+
+    /**
+     * @param files legt die gelesenen Originale ab; {@code null} = keine Dateien (Tests ohne Dateispeicher)
+     * @param pathAccess Rechte der Person, die rueckgaengig macht - die KI-Schreibwege selbst pruefen die Rechte im Controller
+     */
+    public AiWriteService(NoteRepository notes, SnapshotStore snapshots, SyncRelayService relay, YjsBridge yjs,
+                          VaultAnnouncementService announcements, FolderRegistry folders, AiAuditRecorder audit,
+                          AiServiceDirectory services,
+                          AiChangeSetRepository changeSets, Supplier<Instant> clock, FileService files, PathAccess pathAccess) {
+        this.pathAccess = pathAccess;
         this.files = files;
         this.notes = notes;
         this.snapshots = snapshots;
@@ -267,6 +286,26 @@ public class AiWriteService {
         return List.copyOf(applied);
     }
 
+    /**
+     * Rueckgaengig schreibt und loescht Eintraege - wer das ausloest, braucht dafuer an jedem betroffenen
+     * Pfad dasselbe Recht wie fuer eine eigene Aenderung. Alles oder nichts, damit das Change-Set nicht
+     * halb zurueckgenommen und dann gesperrt ist; die Meldung nennt keinen Pfad.
+     */
+    private void requireMayRevert(VaultId vaultId, UUID changeSetId, String actor) {
+        for (var change : changeSets.changes(changeSetId)) {
+            var path = notes.findById(vaultId, change.noteId()).map(Note::path).orElse(null);
+            if (path == null) {
+                continue;
+            }
+            var needed = change.kind() == AiChange.Kind.CREATED || change.kind() == AiChange.Kind.FILE_CREATED
+                ? de.tstieh.stoneintelligence.platform.identity.Permission.DELETE
+                : de.tstieh.stoneintelligence.platform.identity.Permission.WRITE;
+            if (!pathAccess.allows(vaultId, actor, path, needed)) {
+                throw new AiWriteRefusedException("Diese KI-Änderung betrifft Einträge, die du nicht ändern darfst");
+            }
+        }
+    }
+
     /** Dateiname ohne .md je Eintrag, klein - um mehrdeutige Namen zu erkennen. */
     private java.util.Map<String, Long> linkNames(VaultId vaultId) {
         var counts = new java.util.HashMap<String, Long>();
@@ -298,6 +337,7 @@ public class AiWriteService {
      */
     public AiRevertReport revert(VaultId vaultId, UUID changeSetId, String actor) {
         var changeSet = openChangeSet(vaultId, changeSetId);
+        requireMayRevert(vaultId, changeSetId, actor);
         if (!changeSets.markReverted(changeSetId, clock.get())) {
             throw new AiWriteRefusedException("Diese KI-Änderung wurde bereits rückgängig gemacht");
         }
