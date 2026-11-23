@@ -12,16 +12,18 @@
   let input: HTMLInputElement;
   let found = $state<Note[]>([]);
   let searching = $state(false);
+  let failure = $state('');
   let run = 0;
   // Notizen sucht der Server (Titel und Pfad), Bereiche werden lokal gefiltert; nur die letzte Anfrage zählt.
   $effect(() => {
     const q = query.trim();
     const current = ++run;
+    failure = '';
     if (!q || !vaultId) { found = []; searching = false; return; }
     searching = true;
     const timer = setTimeout(async () => {
       try { const result = await api.searchNotes(vaultId, q, 20); if (current === run) found = result.notes; }
-      catch { if (current === run) found = []; }
+      catch (e) { if (current === run) { found = []; failure = e instanceof Error ? e.message : 'Die Suche ist gerade nicht erreichbar.'; } }
       finally { if (current === run) searching = false; }
     }, 200);
     return () => clearTimeout(timer);
@@ -64,7 +66,7 @@
     <p class="hint">Titel und Pfade im ganzen Vault · ↑ ↓ auswählen · Enter öffnen</p>
     <div id="jump-results" class="jump-results">
       {#each results as item, i (item.id)}<button class="jump-result" class:highlighted={active === i} onclick={() => choose(i)}><Icon name={item.note ? 'notes' : item.id} /><span><strong>{item.label}</strong><small>{item.detail}</small></span><span aria-hidden="true">↵</span></button>{/each}
-      {#if searching}<p class="empty" role="status">Suche läuft…</p>{:else if !results.length}<p class="empty">Kein passendes Ziel.</p>{/if}
+      {#if searching}<p class="empty" role="status">Suche läuft…</p>{:else if failure}<p class="empty error" role="alert">{failure}</p>{:else if !results.length}<p class="empty" role="status">Kein passendes Ziel.</p>{/if}
     </div>
     <footer><a href="/datenschutz">Datenschutz</a><a href="https://tstieh.de/impressum">Impressum</a></footer>
   </div>

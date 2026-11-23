@@ -114,7 +114,7 @@
     <span class="save-state" aria-live="polite">{saving ? "Wird gespeichert…" : dirty ? "Ungespeicherte Änderungen" : savedAt ? `Gespeichert um ${savedAt}` : ""}</span>
   </header>
   <div class="document-toolbar">
-    <div class="modes" aria-label="Ansicht">
+    <div class="modes" role="group" aria-label="Ansicht">
       <button class:chosen={mode === "read"} aria-pressed={mode === "read"} onclick={() => void withTransition(() => mode = "read", "note")}>Lesen</button>
       {#if writable}<button class:chosen={mode === "edit"} aria-pressed={mode === "edit"} disabled={!content || loading || saving} onclick={() => void withTransition(() => mode = "edit", "note")}>Bearbeiten</button>{/if}
     </div>
