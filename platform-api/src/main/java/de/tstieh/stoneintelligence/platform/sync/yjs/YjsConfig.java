@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Lazy;
 @Configuration
 public class YjsConfig {
 
-    /** {@code contexts} 0 = so viele wie Prozessoren, hoechstens 8 (je Context rund 50 MB Heap). */
+    /** {@code contexts} 0 = so viele wie Prozessoren, hoechstens 8; jeder Context haelt eine eigene Kopie des Bundles im Heap. */
     @Bean(destroyMethod = "close")
     @Lazy
     public YjsBridge yjsBridge(@Value("${stoneintelligence.yjs.contexts:0}") int contexts) {
