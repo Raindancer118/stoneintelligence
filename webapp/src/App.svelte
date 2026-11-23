@@ -31,8 +31,8 @@
     if (user && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); jumping = !jumping; }
   }
   function jumpToNote(note: Note) {
-    if (!mayLeave()) return;
-    dirty = false; section = "notes"; setupPage = false; jumpNote = note; jumping = false; mobileOpen = false;
+    // Ein offener Entwurf lebt im Notizbereich, der beim Wechsel selbst nachfragt - hier nicht doppelt.
+    section = "notes"; setupPage = false; jumpNote = note; jumping = false; mobileOpen = false;
   }
   async function copyConfig() {
     if (!selected) return;
