@@ -18,7 +18,7 @@ import { applyReadOnly, bindEditorToText, unbindEditor } from "./sync/editorBind
 import { type Badge, badgeFor, isReadOnly, type Permission } from "./sync/accessPlan";
 import { planEditorBindings } from "./sync/editorBindingPlan";
 import {
-  handleMobileRedirectCallback, MOBILE_REDIRECT_ACTION, MOBILE_REDIRECT_URI,
+  awaitMobileRedirect, handleMobileRedirectCallback, MOBILE_REDIRECT_ACTION, MOBILE_REDIRECT_URI,
   openAuthorizationUrlMobile, type PendingAuthCallback,
 } from "./sync/mobileAuthRedirect";
 import {
@@ -549,9 +549,10 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   private awaitMobileRedirectCode(expectedState: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      this.pendingAuthCallback = { state: expectedState, resolve, reject };
-    });
+    const holder = { pending: this.pendingAuthCallback };
+    const code = awaitMobileRedirect(expectedState, holder);
+    this.pendingAuthCallback = holder.pending;
+    return code;
   }
 
   // ---------------------------------------------------------------------------------------------
