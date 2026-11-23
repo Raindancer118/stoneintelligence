@@ -12,7 +12,7 @@ import { contentTypeFor, FileSync, type FileVaultPort } from "./sync/fileSync";
 import { actorDisplayNameFromAccessToken, displayNameFromClaims, pickUserColor } from "./sync/actorIdentity";
 import { AuthentikAuthClient, TokenRefreshRejectedError, type StoredTokens } from "./sync/AuthentikAuthClient";
 import { dedupeInFlight } from "./sync/dedupeInFlight";
-import { awaitDesktopRedirectCode, DESKTOP_REDIRECT_URI, openAuthorizationUrlDesktop } from "./sync/desktopAuthRedirect";
+import { awaitDesktopRedirectCode, cancelDesktopRedirect, DESKTOP_REDIRECT_URI, openAuthorizationUrlDesktop } from "./sync/desktopAuthRedirect";
 import { awaitCatchupComplete, awaitConnected, connectForCatchup } from "./sync/catchupConnection";
 import { applyReadOnly, bindEditorToText, unbindEditor } from "./sync/editorBinding";
 import { type Badge, badgeFor, isReadOnly, type Permission } from "./sync/accessPlan";
@@ -357,8 +357,12 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   onunload(): void {
     window.clearTimeout(this.bindingRetryTimer ?? undefined);
-    for (const timer of [...this.localChangeTimers.values(), ...this.remoteChangeTimers.values()]) {
+    for (const timer of [...this.localChangeTimers.values(), ...this.remoteChangeTimers.values(), ...this.fileChangeTimers.values()]) {
       window.clearTimeout(timer);
+    }
+    window.clearTimeout(this.folderPassTimer ?? undefined);
+    if (Platform.isDesktopApp) {
+      cancelDesktopRedirect();
     }
     this.stopSyncEngine();
     if (this.settingsSaveTimer !== null) {
