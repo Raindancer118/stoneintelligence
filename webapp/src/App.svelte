@@ -10,6 +10,7 @@
 
   import Icon from "./lib/components/Icon.svelte";
   import QuickJump from "./lib/components/QuickJump.svelte";
+  import ThemeToggle from "./lib/components/ThemeToggle.svelte";
   import { connectionConfigJson } from "./lib/connectionConfig";
   import { withTransition } from "./lib/motion";
   import { onSessionExpired } from "./lib/session";
@@ -164,9 +165,15 @@
 {:else if setupPage && !user}
   <main id="workspace" class="standalone"><a class="gate-brand" href="/" onclick={leaveSetup}><img src="/logo.png" alt="" width="40" height="40" /><span>StoneIntelligence</span></a><ObsidianSetup vaults={[]} signedIn={false} onLogin={() => authenticate()} /></main>
 {:else if !user}
-  <main id="workspace" class="gate">
-    <div class="gate-story"><a class="gate-brand" href="/"><img src="/logo.png" alt="" width="42" height="42" /><span>StoneIntelligence</span></a><p class="eyebrow">Für Gedanken, die weitergehen.</p><h1>Wissen wächst.<br />Gemeinsam.</h1><p class="gate-lead">Deine Notizen. Eure Ideen. Ein gemeinsamer Ort – in Obsidian und hier im Browser.</p><div class="gate-illustration" aria-hidden="true"><span class="paper paper-back">Ideen & Verbindungen</span><div class="paper"><span>GEMEINSAMES WISSEN</span><h2>Was wir heute<br />verstanden haben.</h2><i></i><i></i><i></i><p>Festhalten. Weiterdenken.</p></div></div></div>
-    <section class="gate-login"><p class="eyebrow">Dein Arbeitsplatz</p><h2>Schön, dass du da bist.</h2><p>Lies, schreibe und teile die Notizen deiner Vaults. Melde dich mit deinem bestehenden Konto an.</p>{#if error}<p class="feedback error" role="alert">{error}</p>{/if}<button class="primary" disabled={authBusy} onclick={() => authenticate()}>{authBusy ? "Anmeldung wird geöffnet…" : "Mit Authentik anmelden"}<Icon name="arrow" /></button><p class="hint">Die Anmeldung läuft sicher über Authentik.</p><div class="gate-setup"><span>Lieber direkt in Obsidian?</span><a href="/setup" onclick={openSetup}>Obsidian einrichten <span aria-hidden="true">↗</span></a></div></section>
+  <main id="workspace" class="door">
+    <header class="door-top"><a class="gate-brand" href="/"><img src="/logo.png" alt="" width="28" height="28" /><span>StoneIntelligence</span></a><ThemeToggle /></header>
+    <section class="door-login">
+      <h1>Bei StoneIntelligence anmelden</h1>
+      <p>Die Notizen deiner Vaults lesen, schreiben und freigeben, im Browser und in Obsidian, live mit allen, die gerade mitschreiben.</p>
+      {#if error}<p class="feedback error" role="alert">{error}</p>{/if}
+      <div class="door-actions"><button class="primary" disabled={authBusy} onclick={() => authenticate()}>{authBusy ? "Anmeldung wird geöffnet…" : "Mit Authentik anmelden"}</button><a class="button-link" href="/setup" onclick={openSetup}>Obsidian einrichten</a></div>
+    </section>
+    <figure class="door-product" aria-hidden="true"><img class="only-light" src="/door-app-light.png" alt="" width="1440" height="900" /><img class="only-dark" src="/door-app-dark.png" alt="" width="1440" height="900" /></figure>
   </main>
 {:else}
   <div class="shell" class:nav-collapsed={collapsed}>
@@ -178,13 +185,13 @@
       <div class="nav-bottom"><a href="/setup" onclick={openSetup}><Icon name="obsidian" /><span>Obsidian einrichten</span></a><div class="account"><span class="avatar">{preferredUsername(user).slice(0, 1).toUpperCase()}</span><span class="account-name">{preferredUsername(user)}<small>Dein Konto</small></span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></div>
     </aside>
     <div class="main-column">
-      <header class="app-header"><button class="mobile-toggle quiet" aria-label={mobileOpen ? "Menü schließen" : "Menü öffnen"} aria-expanded={mobileOpen} onclick={() => mobileOpen = !mobileOpen}><Icon name="panel" /></button><div class="breadcrumb"><span>Dein Wissen</span><span aria-hidden="true">/</span><strong>{setupPage ? "Einrichtung" : selected?.name ?? "Willkommen"}</strong></div><button class="quick-trigger" onclick={() => jumping = true}><Icon name="search" /><span>Schnellsprung</span><kbd>⌘ K</kbd></button></header>
+      <header class="app-header"><button class="mobile-toggle quiet" aria-label={mobileOpen ? "Menü schließen" : "Menü öffnen"} aria-expanded={mobileOpen} onclick={() => mobileOpen = !mobileOpen}><Icon name="panel" /></button><div class="breadcrumb"><span>Dein Wissen</span><span aria-hidden="true">/</span><strong>{setupPage ? "Einrichtung" : selected?.name ?? "Willkommen"}</strong></div><button class="quick-trigger" onclick={() => jumping = true}><Icon name="search" /><span>Schnellsprung</span><kbd>⌘ K</kbd></button><ThemeToggle /></header>
       {#if sessionExpired}<div class="app-error feedback error" role="alert"><p>Deine Anmeldung ist abgelaufen. Ein offener Entwurf bleibt bis zur erneuten Anmeldung erhalten; exportiere ihn vorher, wenn er wichtig ist.</p><button class="secondary" disabled={authBusy} onclick={relogin}>Erneut anmelden</button></div>{/if}
       {#if error}<div class="app-error feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={() => { error = ""; void refreshVaults().catch(e => error = e.message); }}>Erneut versuchen</button></div>{/if}
       <main id="workspace">
         {#if setupPage}<p><a href="/" onclick={leaveSetup}>← Zurück zu den Notizen</a></p><ObsidianSetup {vaults} signedIn={true} onLogin={() => authenticate()} />
         {:else if selected}
-          <div class="workspace-heading"><div><p class="eyebrow">{section === "notes" ? "Deine Bibliothek" : section === "ai" ? "Entdecken & verknüpfen" : section === "manage" ? "Gemeinsam arbeiten" : "Überall verbunden"}</p><h1>{selected.name}</h1></div><span class="workspace-badge"><span aria-hidden="true">●</span> {areas.find(a => a.id === section)?.label}</span></div>
+          <div class="workspace-heading"><div><p class="eyebrow">{areas.find(a => a.id === section)?.label}</p><h1>{selected.name}</h1></div></div>
           {#key selected.id}
             {#if section === "obsidian"}<ObsidianSetup vaults={[selected]} signedIn={true} scopedVault={true} onLogin={() => authenticate()} /><section class="connection-panel"><h3>Ohne Knöpfe</h3><p class="hint">Füge die Verbindungsdaten im Plugin unter Erweitert ein.</p><button class="secondary" onclick={copyConfig}>{copied ? "Kopiert" : "Konfiguration kopieren"}</button></section>
             {:else if section === "ai"}{#await import("./lib/components/AiWorkspace.svelte")}<p role="status">KI-Bereich wird geladen…</p>{:then module}<module.default vault={selected} />{:catch}<p class="feedback error" role="alert">Der KI-Bereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}

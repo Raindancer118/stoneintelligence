@@ -173,7 +173,7 @@
 {/snippet}
 
 <div class="workspace-tools" class:note-open={selected !== null}>
-  <div><h2 class="section-title">Notizen & Dateien</h2><p class="hint">{loading && !notes.length ? "Übersicht wird geladen…" : `${loadedSummary(notes)} in den geöffneten Ordnern`}</p></div>
+  <div><p class="hint">{loading && !notes.length ? "Übersicht wird geladen…" : `${loadedSummary(notes)} in den geöffneten Ordnern`}</p></div>
   <div class="tool-actions"><button class="secondary" disabled={loading || creating} onclick={() => load()}>Liste aktualisieren</button>{#if permissions.includes("CREATE")}<button class="primary" aria-expanded={showCreate} onclick={() => showCreate = !showCreate}>Neue Notiz</button>{/if}</div>
 </div>
 {#if error}<div class="feedback error" role="alert"><p>{error}</p><button class="secondary" disabled={loading} onclick={() => load()}>Erneut versuchen</button></div>{/if}
