@@ -120,7 +120,7 @@ public class NoteController {
         if (scope != null && !scope.isEmpty()) {
             return scoped(vId, cursor, pageSize, kinds, scope, authentication.getName());
         }
-        var page = notes.list(vId, cursor, pageSize, parseKinds(kinds));
+        var page = notes.list(vId, cursor, Math.clamp(pageSize, 1, 1000), parseKinds(kinds));
         var readable = access.readableNotes(vId, authentication.getName(), page.notes());
         return new ReconciliationResponse(
             page.epochId(), page.complete(), page.nextCursor().orElse(null), listed(vId, authentication.getName(), readable));

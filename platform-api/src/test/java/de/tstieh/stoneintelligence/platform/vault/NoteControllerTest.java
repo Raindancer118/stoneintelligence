@@ -19,7 +19,7 @@ import org.springframework.security.authentication.TestingAuthenticationToken;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class NoteControllerRenameTest {
+class NoteControllerTest {
 
     private final FakeAuthorizationRepository authorization = new FakeAuthorizationRepository();
     private final FakeNoteRepository notes = new FakeNoteRepository();
@@ -33,7 +33,7 @@ class NoteControllerRenameTest {
     private final VaultId vaultId = VaultId.newId();
     private final AtomicInteger accessChecks = new AtomicInteger();
 
-    NoteControllerRenameTest() {
+    NoteControllerTest() {
         var role = authorization.createRole(vaultId, "alles", EnumSet.allOf(Permission.class));
         var group = authorization.createGroup(vaultId, "alle");
         authorization.assignRole(group.id(), role.id());
@@ -65,5 +65,29 @@ class NoteControllerRenameTest {
         rename("Offen/A.md", "Offen/B.md");
 
         assertThat(accessChecks).hasValue(0);
+    }
+
+    @Test
+    void should_capThePageSize_whenListingTheWholeVault() {
+        for (var i = 0; i < 1001; i++) {
+            notes.create(vaultId, "N" + i + ".md", NoteLevel.of(1), "tom");
+        }
+
+        var page = controller.reconcile(vaultId.value().toString(), null, 100_000, "note", null, null,
+            new TestingAuthenticationToken("tom", null));
+
+        assertThat(page.notes()).hasSize(1000);
+        assertThat(page.complete()).isFalse();
+    }
+
+    @Test
+    void should_returnAtLeastOneEntry_whenThePageSizeIsNotPositive() {
+        notes.create(vaultId, "A.md", NoteLevel.of(1), "tom");
+        notes.create(vaultId, "B.md", NoteLevel.of(1), "tom");
+
+        var page = controller.reconcile(vaultId.value().toString(), null, -3, "note", null, null,
+            new TestingAuthenticationToken("tom", null));
+
+        assertThat(page.notes()).hasSize(1);
     }
 }
