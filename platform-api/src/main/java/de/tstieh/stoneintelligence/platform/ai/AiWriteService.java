@@ -323,7 +323,7 @@ public class AiWriteService {
                 reverted++;
                 continue;
             }
-            var history = snapshots.listSince(change.noteId(), 0);
+            var history = snapshots.current(change.noteId());
             if (history.stream().anyMatch(UpdateRecord::ciphertext)) {
                 conflicts.add(new AiRevertConflict(note.get().path(), "Die Notiz ist inzwischen verschlüsselt"));
                 continue;
@@ -423,7 +423,7 @@ public class AiWriteService {
     }
 
     private List<UpdateRecord> plainHistory(Note note) {
-        var history = snapshots.listSince(note.id(), 0);
+        var history = snapshots.current(note.id());
         if (history.stream().anyMatch(UpdateRecord::ciphertext)) {
             throw new AiWriteRefusedException("Verschlüsselte Notizen kann keine KI lesen: " + note.path());
         }

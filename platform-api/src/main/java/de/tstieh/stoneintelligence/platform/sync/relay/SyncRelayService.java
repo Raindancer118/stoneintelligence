@@ -40,9 +40,22 @@ public class SyncRelayService {
     private final ConcurrentHashMap<NoteId, ConcurrentHashMap<String, byte[]>> latestAwarenessBySession =
         new ConcurrentHashMap<>();
 
+    private final java.util.function.BiConsumer<NoteId, java.util.List<UpdateRecord>> onJoined;
+
     public SyncRelayService(SnapshotStore snapshotStore, SyncRoomRegistry registry) {
+        this(snapshotStore, registry, (noteId, sent) -> { });
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public SyncRelayService(SnapshotStore snapshotStore, SyncRoomRegistry registry, NoteStateCompactor compactor) {
+        this(snapshotStore, registry, compactor::joined);
+    }
+
+    SyncRelayService(SnapshotStore snapshotStore, SyncRoomRegistry registry,
+                     java.util.function.BiConsumer<NoteId, java.util.List<UpdateRecord>> onJoined) {
         this.snapshotStore = snapshotStore;
         this.registry = registry;
+        this.onJoined = onJoined;
     }
 
     private Object lockFor(NoteId noteId) {
@@ -56,9 +69,11 @@ public class SyncRelayService {
      * befindliche Historie wartet. Synchronisiert auf {@link #lockFor(NoteId)}, s. Klassendoc.
      */
     public void onJoin(NoteId noteId, SyncSession session) {
+        java.util.List<UpdateRecord> sent;
         synchronized (lockFor(noteId)) {
             registry.join(noteId, session);
-            for (var update : snapshotStore.listSince(noteId, 0)) {
+            sent = snapshotStore.current(noteId);
+            for (var update : sent) {
                 session.sendDocUpdate(noteId, update.payload());
             }
             var retainedAwareness = latestAwarenessBySession.get(noteId);
@@ -71,6 +86,7 @@ public class SyncRelayService {
             }
             session.sendCatchupComplete(noteId);
         }
+        onJoined.accept(noteId, sent);
     }
 
     /**

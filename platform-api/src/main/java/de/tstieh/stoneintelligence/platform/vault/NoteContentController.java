@@ -58,7 +58,7 @@ public class NoteContentController {
     @GetMapping
     public ContentResponse read(@PathVariable String vaultId, @PathVariable String noteId, Authentication auth) {
         var note = authorizedNote(vaultId, noteId, auth, Permission.READ);
-        var updates = snapshots.listSince(note.id(), 0);
+        var updates = snapshots.current(note.id());
         if (updates.stream().anyMatch(UpdateRecord::ciphertext)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Encrypted content cannot be opened in this editor");
         }

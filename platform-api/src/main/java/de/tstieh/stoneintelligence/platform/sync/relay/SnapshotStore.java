@@ -29,4 +29,25 @@ public interface SnapshotStore {
      * ihre Historie laden zu muessen.
      */
     java.util.Map<NoteId, Long> latestRevisions(java.util.Collection<NoteId> noteIds);
+
+    /** Der zuletzt abgelegte zusammengefuehrte Zustand, falls einer existiert. */
+    java.util.Optional<NoteState> state(NoteId noteId);
+
+    /** Legt den Zustand ab; ein aelterer als der vorhandene wird ignoriert (Compaction-Laeufe koennen sich ueberholen). */
+    void saveState(NoteId noteId, long revision, byte[] state);
+
+    /**
+     * Was ein Client zum Beitreten braucht: der Zustand (als Update mit seiner Revision) und alle
+     * Updates danach. Ohne Zustand die ganze Historie. Gleichwertig zu {@code listSince(noteId, 0)}.
+     */
+    default List<UpdateRecord> current(NoteId noteId) {
+        var state = state(noteId);
+        if (state.isEmpty()) {
+            return listSince(noteId, 0);
+        }
+        var updates = new java.util.ArrayList<UpdateRecord>();
+        updates.add(new UpdateRecord(state.get().revision(), state.get().payload(), false));
+        updates.addAll(listSince(noteId, state.get().revision()));
+        return updates;
+    }
 }

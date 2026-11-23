@@ -72,7 +72,7 @@ public class NoteVersionController {
         var note = authorizedNote(vaultId, noteId, auth, Permission.READ);
         var log = plainLog(note);
         var at = existing(log, revision);
-        var all = payloads(snapshots.listSince(note.id(), 0));
+        var all = payloads(snapshots.current(note.id()));
         return new VersionText(revision, at.createdAt(), at.actor(), textAt(note, revision), yjs().textOf(all), revisionOf(log));
     }
 
@@ -83,7 +83,7 @@ public class NoteVersionController {
         existing(plainLog(note), revision);
         var text = textAt(note, revision);
         for (var attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
-            var history = snapshots.listSince(note.id(), 0);
+            var history = snapshots.current(note.id());
             var current = history.isEmpty() ? 0 : history.getLast().serverSequence();
             var update = yjs().change(payloads(history), text);
             if (update.isEmpty()) {

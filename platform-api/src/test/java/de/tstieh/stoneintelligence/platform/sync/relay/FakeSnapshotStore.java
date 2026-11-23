@@ -13,6 +13,7 @@ public final class FakeSnapshotStore implements SnapshotStore {
     private record Stored(UpdateRecord record, UpdateInfo info) { }
 
     private final Map<NoteId, List<Stored>> updatesByNote = new ConcurrentHashMap<>();
+    private final Map<NoteId, NoteState> states = new ConcurrentHashMap<>();
     private final Supplier<Instant> clock;
 
     public FakeSnapshotStore() {
@@ -64,5 +65,16 @@ public final class FakeSnapshotStore implements SnapshotStore {
         var revisions = new java.util.HashMap<NoteId, Long>();
         noteIds.forEach(id -> revisions.put(id, (long) updatesByNote.getOrDefault(id, List.of()).size()));
         return revisions;
+    }
+
+    @Override
+    public synchronized java.util.Optional<NoteState> state(NoteId noteId) {
+        return java.util.Optional.ofNullable(states.get(noteId));
+    }
+
+    @Override
+    public synchronized void saveState(NoteId noteId, long revision, byte[] state) {
+        states.merge(noteId, new NoteState(revision, state),
+            (current, next) -> next.revision() > current.revision() ? next : current);
     }
 }
