@@ -10,7 +10,8 @@ COPY --from=build /workspace/platform-api/target/platform-api-*-exec.jar app.jar
 # Volume, das Besitz und Rechte dieses Verzeichnisses uebernimmt. Die API laeuft nicht als root.
 RUN mkdir -p /data/files && chown 1000:1000 /data/files
 USER 1000:1000
-ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+# Kein MaxRAMPercentage: ohne mem_limit saehe die JVM den RAM der ganzen VM.
+ENV JAVA_TOOL_OPTIONS="-XX:+ExitOnOutOfMemoryError"
 COPY --chmod=755 ops/docker/healthcheck.sh /usr/local/bin/healthcheck
 HEALTHCHECK --interval=30s --timeout=8s --start-period=90s --retries=3 CMD ["healthcheck", "8080", "/actuator/health"]
 ENV STONEINTELLIGENCE_FILE_STORAGE_DIR=/data/files

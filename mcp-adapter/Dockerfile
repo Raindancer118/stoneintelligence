@@ -8,7 +8,8 @@ RUN useradd --system --uid 10001 --no-create-home mcp
 WORKDIR /app
 COPY --from=build /workspace/mcp-adapter/target/mcp-adapter-*-exec.jar app.jar
 USER mcp
-ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+# Kein MaxRAMPercentage: ohne mem_limit saehe die JVM den RAM der ganzen VM.
+ENV JAVA_TOOL_OPTIONS="-XX:+ExitOnOutOfMemoryError"
 COPY --chmod=755 ops/docker/healthcheck.sh /usr/local/bin/healthcheck
 HEALTHCHECK --interval=30s --timeout=8s --start-period=90s --retries=3 CMD ["healthcheck", "8082", "/actuator/health"]
 EXPOSE 8082
