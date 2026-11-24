@@ -40,7 +40,8 @@ class ApiParityTest {
     private static final Map<String, String> NOT_IN_PLUGIN = Map.of(
         "/api/v1/invitations/*", "Einladungen nimmt man ueber den Link aus der Mail im Browser an",
         "/api/v1/invitations/*/accept", "Einladungen nimmt man ueber den Link aus der Mail im Browser an",
-        "/api/v1/vaults/*/notes/*/content", "Das Plugin uebertraegt Inhalte live ueber die Sync-Verbindung (Yjs)");
+        "/api/v1/vaults/*/notes/*/content", "Das Plugin uebertraegt Inhalte live ueber die Sync-Verbindung (Yjs)",
+        "/api/v1/vaults/*/audit/export", "Protokoll-Export fuer die Sicherheitsueberwachung; im Plugin laege die Datei im Vault und wuerde an alle Mitglieder synchronisiert");
 
     private static final Pattern CLIENT_PATH = Pattern.compile("/api/v1/[^\"'`\\s?]*");
 
