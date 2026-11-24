@@ -104,13 +104,21 @@ class BoundedParallelTest {
     @Test
     @DisplayName("should pass on a failure of the report, e.g. a cancelled job, and interrupt running items")
     void should_propagateAReportFailure_andInterruptTheRest() throws Exception {
-        CountDownLatch interrupted = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(2);
+        // Erst melden, wenn 1 und 2 wirklich laufen: sonst bricht cancel(true) sie vor dem Start ab, und es gibt nichts zu unterbrechen.
+        CountDownLatch othersRunning = new CountDownLatch(2);
 
         assertThatThrownBy(() -> BoundedParallel.run(3, 3, index -> {
             if (index == 0) {
+                try {
+                    othersRunning.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
                 return 0;
             }
             try {
+                othersRunning.countDown();
                 Thread.sleep(10_000);
             } catch (InterruptedException e) {
                 interrupted.countDown();
