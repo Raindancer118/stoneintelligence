@@ -83,6 +83,24 @@ describe("KI-Bereich", () => {
   });
 });
 
+describe("Verwaltung", () => {
+  it("shows management areas from the vault's own permissions, without opening the notes first", async () => {
+    vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(api.listVaults).mockResolvedValue([{ id: "vault", name: "My notes", createdAt: "" }]);
+    vi.mocked(api.permissions).mockResolvedValue(["READ", "MANAGE"]);
+    vi.mocked(api.aiServices).mockResolvedValue([]);
+    vi.mocked(api.listAiJobs).mockResolvedValue([]);
+    vi.mocked(api.listChangeSets).mockResolvedValue([]);
+    render(App);
+    // Sofort weiter, bevor der Notizbereich ueberhaupt geladen ist.
+    await fireEvent.click(await screen.findByRole("button", { name: "Dokumente & KI" }));
+
+    expect(await screen.findByRole("button", { name: "Mitglieder & Rechte" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Einstellungen" })).toBeTruthy();
+    expect(api.permissions).toHaveBeenCalledWith("vault");
+  });
+});
+
 describe("invitation links", () => {
   const invitation = {
     state: "PENDING", vaultName: "Team-Notizen", invitedBy: "tom", maskedEmail: "n***@example.org", access: "EDIT",

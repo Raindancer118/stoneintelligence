@@ -58,6 +58,14 @@
   let selected = $state<Vault | null>(null);
   let section = $state<Section>("notes");
   let dirty = $state(false);
+  // Rechte je Vault selbst holen: sonst sah die Verwaltung nur, wer zuerst den Notizbereich geladen hatte.
+  $effect(() => {
+    const vaultId = selected?.id;
+    if (!vaultId) return;
+    let current = true;
+    api.permissions(vaultId).then(p => { if (current && selected?.id === vaultId) canManage = p.includes("MANAGE"); }).catch(() => { /* Bereiche bleiben, wie sie sind */ });
+    return () => { current = false; };
+  });
 
   let authBusy = $state(false);
   /** Die API hat 401 gemeldet; ein Entwurf bleibt bis zur bewussten erneuten Anmeldung erhalten. */
