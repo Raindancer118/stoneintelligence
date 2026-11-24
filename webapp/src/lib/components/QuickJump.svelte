@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { api, type Note } from '../api';
   import Icon from './Icon.svelte';
+  import Excerpt from './Excerpt.svelte';
   let { vaultId, areas, onNote, onArea, onClose }: {
     vaultId: string | null; areas: { id: string; label: string }[];
     onNote: (note: Note) => void; onArea: (area: string) => void; onClose: () => void;
@@ -11,6 +12,7 @@
   let panel: HTMLDivElement;
   let input: HTMLInputElement;
   let found = $state<Note[]>([]);
+  let excerpts = $state<Record<string, string>>({});
   let searching = $state(false);
   let failure = $state('');
   let run = 0;
@@ -22,7 +24,7 @@
     if (!q || !vaultId) { found = []; searching = false; return; }
     searching = true;
     const timer = setTimeout(async () => {
-      try { const result = await api.searchNotes(vaultId, q, 20); if (current === run) found = result.notes; }
+      try { const result = await api.searchNotes(vaultId, q, 20); if (current === run) { found = result.notes; excerpts = result.excerpts ?? {}; } }
       catch (e) { if (current === run) { found = []; failure = e instanceof Error ? e.message : 'Die Suche ist gerade nicht erreichbar.'; } }
       finally { if (current === run) searching = false; }
     }, 200);
@@ -65,7 +67,7 @@
     <div class="jump-search"><Icon name="search" /><input bind:this={input} aria-label="Ziel suchen" type="search" placeholder="Notiz, Pfad oder Bereich …" bind:value={query} oninput={() => active = 0} aria-controls="jump-results" /></div>
     <p class="hint">Titel und Pfade im ganzen Vault · ↑ ↓ auswählen · Enter öffnen</p>
     <div id="jump-results" class="jump-results">
-      {#each results as item, i (item.id)}<button class="jump-result" class:highlighted={active === i} onclick={() => choose(i)}><Icon name={item.note ? 'notes' : item.id} /><span><strong>{item.label}</strong><small>{item.detail}</small></span><span aria-hidden="true">↵</span></button>{/each}
+      {#each results as item, i (item.id)}<button class="jump-result" class:highlighted={active === i} onclick={() => choose(i)}><Icon name={item.note ? 'notes' : item.id} /><span><strong>{item.label}</strong><small>{item.detail}</small>{#if item.note && excerpts[item.note.id]}<small class="jump-excerpt"><Excerpt text={excerpts[item.note.id]} /></small>{/if}</span><span aria-hidden="true">↵</span></button>{/each}
       {#if searching}<p class="empty" role="status">Suche läuft…</p>{:else if failure}<p class="empty error" role="alert">{failure}</p>{:else if !results.length}<p class="empty" role="status">Kein passendes Ziel.</p>{/if}
     </div>
     <footer><a href="/datenschutz">Datenschutz</a><a href="https://tstieh.de/impressum">Impressum</a></footer>

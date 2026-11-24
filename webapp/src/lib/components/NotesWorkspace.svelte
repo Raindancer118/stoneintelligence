@@ -10,6 +10,7 @@
   import Icon from "./Icon.svelte";
   import { withTransition } from "../motion";
   import SetupChecklist from "./SetupChecklist.svelte";
+  import Excerpt from "./Excerpt.svelte";
   import { setupDismissed, setupSteps } from "../setupSteps";
   let { vault, onDirtyChange, onPermissions = () => {}, requestedNote = null, onNavigate = () => {} }: { vault: Vault; onDirtyChange: (dirty: boolean) => void; onPermissions?: (permissions: string[]) => void; requestedNote?: Note | null; onNavigate?: (area: "manage" | "obsidian") => void } = $props();
   let lastRequest: Note | null = null;
@@ -61,6 +62,7 @@
   let complete = $state(false);
   /** Treffer der Serversuche; {@code null}, solange nicht gesucht wird. */
   let hits = $state<Note[] | null>(null);
+  let excerpts = $state<Record<string, string>>({});
   let truncated = $state(false);
   let searching = $state(false);
   let searchRun = 0;
@@ -128,7 +130,7 @@
     const timer = setTimeout(async () => {
       try {
         const found = await api.searchNotes(vault.id, query);
-        if (run === searchRun && alive) { hits = found.notes; truncated = found.truncated; }
+        if (run === searchRun && alive) { hits = found.notes; truncated = found.truncated; excerpts = found.excerpts ?? {}; }
       } catch (e) { if (run === searchRun && alive) error = e instanceof Error ? e.message : "Die Suche ist gerade nicht erreichbar."; }
       finally { if (run === searchRun && alive) searching = false; }
     }, 250);
@@ -163,7 +165,7 @@
 
 
 {#snippet row(note: Note, depth: number)}
-  <button class="note-row" style={`--depth:${depth}`} class:active={selected?.id === note.id} aria-current={selected?.id === note.id ? "true" : undefined} onclick={() => select(note)}><Icon name="notes" size={17} /><span class="note-row-text"><span class="note-name">{note.kind === "FILE" ? note.path.split("/").pop() : note.path.split("/").pop()?.replace(/\.md$/i, "")}</span>{#if note.kind === "FILE"}<span class="file-kind">{fileKindLabel(note.path)}</span>{/if}<span class="note-path">{note.path.includes("/") ? note.path.slice(0, note.path.lastIndexOf("/")) : "Ohne Ordner"}</span>{#if note.noteLevel === 101}<span class="locked">Verschlüsselt</span>{/if}</span></button>
+  <button class="note-row" style={`--depth:${depth}`} class:active={selected?.id === note.id} aria-current={selected?.id === note.id ? "true" : undefined} onclick={() => select(note)}><Icon name="notes" size={17} /><span class="note-row-text"><span class="note-name">{note.kind === "FILE" ? note.path.split("/").pop() : note.path.split("/").pop()?.replace(/\.md$/i, "")}</span>{#if note.kind === "FILE"}<span class="file-kind">{fileKindLabel(note.path)}</span>{/if}<span class="note-path">{note.path.includes("/") ? note.path.slice(0, note.path.lastIndexOf("/")) : "Ohne Ordner"}</span>{#if note.noteLevel === 101}<span class="locked">Verschlüsselt</span>{/if}{#if search.trim() && excerpts[note.id]}<span class="note-excerpt"><Excerpt text={excerpts[note.id]} /></span>{/if}</span></button>
 {/snippet}
 
 {#snippet tree(path: string, depth: number)}

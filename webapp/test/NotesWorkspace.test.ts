@@ -38,6 +38,18 @@ describe("notes workspace", () => {
     await screen.findByRole("button", { name: /Grenzwerte/ });
     expect(screen.getByText(/Weitere Treffer/)).toBeTruthy();
   });
+  it("shows where a note mentions the search words when the match is in its content", async () => {
+    const hit = { ...note, id: "hit", path: "Logistik/Ablauf.md" };
+    vi.mocked(api.searchNotes).mockResolvedValue({ notes: [hit], truncated: false, excerpts: { hit: "Erst die \u0002Bestellung\u0003 pruefen" } });
+    render(NotesWorkspace, { vault, onDirtyChange: vi.fn() });
+    await screen.findByRole("button", { name: "Ordner Projects" });
+    await fireEvent.input(screen.getByRole("searchbox"), { target: { value: "bestellung" } });
+
+    const row = await screen.findByRole("button", { name: /Ablauf/ });
+    expect(row.querySelector("mark")?.textContent).toBe("Bestellung");
+    expect(row.textContent).toContain("Erst die Bestellung pruefen");
+  });
+
   it("loads only the top level at first, and a folder when it is opened", async () => {
     render(NotesWorkspace, { vault, onDirtyChange: vi.fn() });
     const folder = await screen.findByRole("button", { name: "Ordner Projects" });

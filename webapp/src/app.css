@@ -3333,3 +3333,22 @@ input[type="checkbox"]:checked {
   color: var(--text-2);
   font-weight: 500;
 }
+
+/* Fundstellen der Volltextsuche */
+.note-excerpt,
+.jump-excerpt {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.excerpt mark {
+  background: transparent;
+  color: var(--text-1);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--line-strong);
+}

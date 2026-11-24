@@ -34,7 +34,8 @@ export interface Note {
   /** Dateien (PDFs, Bilder, Anhänge) stehen mit in der Liste; fehlt bei älteren Servern. */
   kind?: "NOTE" | "FILE"; sha256?: string | null; size?: number | null; revision?: number;
 }
-export interface NoteSearch { notes: Note[]; truncated: boolean }
+/** `excerpts`: Fundstelle je Notiz-ID, nur bei Treffern im Inhalt. */
+export interface NoteSearch { notes: Note[]; truncated: boolean; excerpts?: Record<string, string> }
 export interface FolderChild { path: string; hasChildren: boolean }
 export interface NotePage { epochId: string; complete: boolean; nextCursor: string | null; notes: Note[]; }
 export interface NoteContent { revision: number; updates: string[]; }
