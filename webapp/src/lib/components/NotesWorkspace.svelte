@@ -9,7 +9,9 @@
   import SharePanel from "./SharePanel.svelte";
   import Icon from "./Icon.svelte";
   import { withTransition } from "../motion";
-  let { vault, onDirtyChange, onPermissions = () => {}, requestedNote = null }: { vault: Vault; onDirtyChange: (dirty: boolean) => void; onPermissions?: (permissions: string[]) => void; requestedNote?: Note | null } = $props();
+  import SetupChecklist from "./SetupChecklist.svelte";
+  import { setupDismissed, setupSteps } from "../setupSteps";
+  let { vault, onDirtyChange, onPermissions = () => {}, requestedNote = null, onNavigate = () => {} }: { vault: Vault; onDirtyChange: (dirty: boolean) => void; onPermissions?: (permissions: string[]) => void; requestedNote?: Note | null; onNavigate?: (area: "manage" | "obsidian") => void } = $props();
   let lastRequest: Note | null = null;
   $effect(() => { if (requestedNote && requestedNote !== lastRequest) { lastRequest = requestedNote; select(requestedNote); } });
   /** Eine geladene Ebene des Baums: Unterordner und die Einträge direkt darin (ADR 0013). */
@@ -101,10 +103,22 @@
       if (!alive) return;
       onPermissions(permissions);
       complete = true;
+      if (permissions.includes("MANAGE")) api.listMembers(vault.id).then(list => { if (alive) members = list.length; }).catch(() => { /* Checkliste zeigt den Schritt dann offen */ });
     } catch (e) { if (alive) error = e instanceof Error ? e.message : "Notizen konnten nicht geladen werden."; }
     finally { if (alive) loading = false; }
   }
 
+  let members = $state<number | null>(null);
+  // svelte-ignore state_referenced_locally
+  let checklistHidden = $state(setupDismissed(vault.id));
+  const steps = $derived(setupSteps({ vaultId: vault.id, hasNotes: !!levels[""] && (levels[""].folders.length > 0 || levels[""].entries.length > 0),
+    members, canManage: permissions.includes("MANAGE") }));
+  const showChecklist = $derived(complete && !checklistHidden && steps.some(step => !step.done));
+  function setupStep(id: string) {
+    if (id === "note") showCreate = true;
+    else if (id === "invite") onNavigate("manage");
+    else onNavigate("obsidian");
+  }
   // Suche läuft auf dem Server (Titel und Pfad); nur die jeweils letzte Anfrage zählt.
   $effect(() => {
     const query = search.trim();
@@ -189,6 +203,6 @@
     {#if sharing}{#key JSON.stringify(sharing)}<SharePanel {vault} target={sharing} onClose={() => sharing = null} />{/key}{/if}
     {#if selected}<div class="note-actions"><button class="quiet back-to-list" onclick={() => select(null)}>Zur Notizliste</button>{#if selected.kind === "FILE"}<button class="secondary" onclick={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null}>Freigeben</button>{/if}</div>
     {#if similar}<section class="similar" aria-label="Ähnliche Notizen">{#if similar.length}<ul>{#each similar as other (other.noteId)}<li><button class="link" onclick={() => openSimilar(other.path)}>{other.path.split("/").pop()?.replace(/\.md$/i, "")}</button><span class="hint">{Math.round(other.similarity * 100)} % ähnlich{other.heading ? ` · „${other.heading}“` : ""}</span></li>{/each}</ul>{:else}<p class="hint">Noch nichts gefunden. Ähnlichkeiten entstehen beim Verlinken (KI → Verlinkung).</p>{/if}</section>{/if}{#key selected.id}{#if selected.kind === "FILE"}<FileViewer note={selected} {permissions} onChanged={changed} onDeleted={deleted} />{:else}<NoteEditor note={selected} {permissions} onChanged={changed} onDeleted={deleted} onDirtyChange={setDirty} onShare={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null} onSimilar={showSimilar} />{/if}{/key}
-    {:else}<div class="welcome-document"><div class="placeholder-lines" aria-hidden="true"><i></i><i></i><i></i></div><h3>Keine Notiz geöffnet</h3><p>Wähle links eine Notiz, um sie zu lesen{permissions.includes("WRITE") ? " und zu bearbeiten" : ""}. Was du hier speicherst, erscheint sofort in Obsidian bei allen, die den Vault verbunden haben.</p></div>{/if}
+    {:else if showChecklist}<div class="welcome-document"><SetupChecklist vaultId={vault.id} {steps} onStep={setupStep} onDismiss={() => checklistHidden = true} /></div>{:else}<div class="welcome-document"><div class="placeholder-lines" aria-hidden="true"><i></i><i></i><i></i></div><h3>Keine Notiz geöffnet</h3><p>Wähle links eine Notiz, um sie zu lesen{permissions.includes("WRITE") ? " und zu bearbeiten" : ""}. Was du hier speicherst, erscheint sofort in Obsidian bei allen, die den Vault verbunden haben.</p></div>{/if}
   </section>
 </div>

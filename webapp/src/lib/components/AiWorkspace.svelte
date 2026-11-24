@@ -237,7 +237,7 @@
 
 <section class="ai">
   <header class="intro">
-    <h2>Wissen aus Dokumenten</h2>
+    <h2>Dokumente einlesen</h2>
     <p>Lade Skripte, Artikel oder Mitschriften hoch. Eine KI liest sie und legt daraus verlinkte Notizen mit Quellenangabe an. Deine eigenen Notizen verändert sie nicht, und du kannst Änderungen später prüfen und rückgängig machen.</p>
   </header>
 
@@ -297,7 +297,6 @@
       </form>
     {/if}
 
-    <LinkingPanel {vault} {permissions} onStarted={() => void load()} />
 
     <section class="block">
       <h3>Verarbeitung</h3>
@@ -373,5 +372,6 @@
         </ul>
       {/if}
     </section>
+    <LinkingPanel {vault} {permissions} onStarted={() => void load()} />
   {/if}
 </section>

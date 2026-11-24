@@ -1,9 +1,12 @@
 <script lang="ts">
   import type { Vault } from "../api";
   import { obsidianConnectLink as connectLink, serverHost } from "../connectionConfig";
+  import { markConnectOpened } from "../setupSteps";
 
-  let { vaults, signedIn, onLogin, scopedVault = false }: {
+  let { vaults, signedIn, onLogin, scopedVault = false, onCopyConfig, copied = false }: {
     vaults: Vault[]; signedIn: boolean; onLogin: () => void;
+    /** Verbindungsdaten des Vaults in die Zwischenablage (nur aus einem Vault heraus). */
+    onCopyConfig?: () => void; copied?: boolean;
     /** Aus einem Vault heraus geöffnet: genau dieser eine Vault, Direkt-Verbinden ganz oben. */
     scopedVault?: boolean;
   } = $props();
@@ -17,13 +20,12 @@
 
 <article class="setup">
   {#if single}
-    <h2 class="scoped-title">„{single.name}“ in Obsidian öffnen</h2>
     <div class="quick">
       <div>
         <p class="quick-title">Obsidian und das Plugin hast du schon?</p>
         <p>Ein Klick – das Plugin legt für „{single.name}“ einen eigenen Obsidian-Vault an oder verbindet den geöffneten, wie du möchtest.</p>
       </div>
-      <a class="action primary" href={connectLink(single)}>Mit „{single.name}“ verbinden</a>
+      <a class="action primary" href={connectLink(single)} onclick={() => markConnectOpened(single.id)}>Mit „{single.name}“ verbinden</a>
     </div>
     <p class="lead">Noch nicht eingerichtet? Diese Schritte dauern etwa fünf Minuten – jeder Knopf öffnet Obsidian an der richtigen Stelle.</p>
   {:else}
@@ -63,7 +65,7 @@
         <p>Das Plugin fragt, in welchen Obsidian-Vault die Notizen sollen, meldet dich an und beginnt mit dem Abgleich.</p>
         <div class="connect">
           {#each vaults as vault (vault.id)}
-            <a class="action primary" href={connectLink(vault)}>Mit „{vault.name}“ verbinden</a>
+            <a class="action primary" href={connectLink(vault)} onclick={() => markConnectOpened(vault.id)}>Mit „{vault.name}“ verbinden</a>
           {/each}
         </div>
       {/if}
@@ -78,6 +80,7 @@
     <div>
       <h2>Ohne Knöpfe</h2>
       <p>In Obsidian unter <em>Einstellungen → StoneIntelligence</em> anmelden und bei <em>Synchronisieren mit</em> den Vault wählen. Unter <em>Erweitert</em> muss als Server <strong>{serverHost()}</strong> stehen – sonst dort die Verbindungsdaten aus dem Vault einfügen.</p>
+      {#if onCopyConfig}<button class="secondary" onclick={onCopyConfig}>{copied ? "Kopiert" : "Verbindungsdaten kopieren"}</button>{/if}
     </div>
   </section>
 </article>

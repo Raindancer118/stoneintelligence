@@ -1424,28 +1424,38 @@ kbd {
   font-size: 0.73rem;
 }
 .status {
-  font-size: 0.68rem;
-  padding: 5px 10px;
-  border-radius: 30px;
-  background: var(--surface-2);
-  color: var(--text-2);
-  white-space: nowrap;
-}
-.status-succeeded {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 2px 10px 2px 8px;
+  border-radius: 999px;
   background: var(--surface-2);
   color: var(--text-1);
+  white-space: nowrap;
+  --dot: var(--text-3);
+}
+.status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dot);
+}
+.status-succeeded {
+  --dot: var(--success);
 }
 .status-failed {
   background: var(--danger-soft);
   color: var(--danger);
+  --dot: var(--danger);
 }
 .status-running {
-  background: var(--warning-soft);
-  color: var(--warning);
+  --dot: var(--live);
 }
 .status-capacity {
   background: var(--warning-soft);
-  color: var(--warning);
+  --dot: var(--warning);
 }
 .row.stacked {
   display: block;
@@ -3242,4 +3252,84 @@ input[type="checkbox"]:checked {
   .skeleton-shapes {
     animation: none;
   }
+}
+.ai > .intro h2 {
+  font-size: 22px;
+  margin-bottom: 6px;
+}
+.ai > .intro p {
+  color: var(--text-2);
+  max-width: 720px;
+}
+
+/* Ersteinrichtung: abhakbare Liste statt Tour. */
+.setup-checklist header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.setup-checklist h3 {
+  font-size: 19px;
+  margin: 0;
+}
+.setup-checklist ol {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+}
+.setup-checklist li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 0;
+  border-bottom: var(--hairline) solid var(--hair-color);
+}
+.setup-checklist li > div {
+  display: grid;
+  gap: 2px;
+}
+.setup-checklist .check {
+  width: 19px;
+  height: 19px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  border: 1px solid var(--field-line);
+  border-radius: 3px;
+  display: grid;
+  place-items: center;
+}
+.setup-checklist li.done .check {
+  background: var(--tinte);
+  border-color: var(--tinte);
+}
+.setup-checklist li.done .check::after {
+  content: "";
+  width: 5px;
+  height: 10px;
+  border: solid var(--on-tinte);
+  border-width: 0 2.5px 2.5px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+.setup-checklist .link {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text-1);
+}
+.setup-checklist li.done .link {
+  color: var(--text-3);
+  text-decoration: none;
+  cursor: default;
+  opacity: 1;
+}
+.setup-checklist > .quiet {
+  min-height: 32px;
+  padding: 0 8px;
+  margin-left: -8px;
+  color: var(--text-2);
+  font-weight: 500;
 }

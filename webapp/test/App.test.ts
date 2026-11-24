@@ -77,7 +77,7 @@ describe("KI-Bereich", () => {
 
     await fireEvent.click(await screen.findByRole("button", { name: "Dokumente & KI" }));
 
-    await screen.findByRole("heading", { name: "Wissen aus Dokumenten" });
+    await screen.findByRole("heading", { name: "Dokumente einlesen" });
     expect(screen.getByRole("button", { name: "Dokumente & KI" }).getAttribute("aria-pressed")).toBe("true");
     expect(api.listAiJobs).toHaveBeenCalledWith("vault");
   });

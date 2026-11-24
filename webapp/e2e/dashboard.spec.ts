@@ -105,7 +105,7 @@ test("reads a document with AI and undoes the result", async ({ page }, testInfo
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   await page.goto("/");
   await page.getByRole("button", { name: "Dokumente & KI" }).click();
-  await expect(page.getByRole("heading", { name: "Wissen aus Dokumenten" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dokumente einlesen" })).toBeVisible();
 
   await page.getByLabel("KI-Dienst").selectOption("lokal");
   await page.getByLabel("Level der Dokumente").selectOption("2");

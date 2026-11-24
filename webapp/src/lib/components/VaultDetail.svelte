@@ -4,9 +4,8 @@
   import { onDestroy, onMount } from "svelte";
   import { LoadingGate } from "../loadingGate";
   import { api, ApiError, type Group, type Role, type Vault, type VaultMember } from "../api";
-  import { explainAccessError, permissionsLabel } from "../accessPlan";
+  import { explainAccessError, permissionWord, permissionsLabel, type Permission } from "../accessPlan";
   import { describeEvent, formatDate, type HistoryEvent } from "../historyText";
-  import { connectionConfigJson } from "../connectionConfig";
   import { idpLinkText, personLabel } from "../peopleText";
   import InvitePeople from "./InvitePeople.svelte";
 
@@ -38,7 +37,7 @@
     catch (e) { error = (e as Error).message; }
     finally { savingAreas = false; }
   }
-  const ALL_PERMISSIONS = ["READ", "WRITE", "DELETE", "CREATE", "MANAGE"];
+  const ALL_PERMISSIONS: Permission[] = ["READ", "WRITE", "CREATE", "DELETE", "MANAGE"];
 
   let roles = $state<Role[]>([]);
   let groups = $state<Group[]>([]);
@@ -47,7 +46,6 @@
   let editingRole = $state<Record<string, string>>({});
   let editingGroup = $state<Record<string, string>>({});
   let error = $state<string | null>(null);
-  let configCopied = $state(false);
 
   let newRoleName = $state("");
   let newRolePermissions = $state<Set<string>>(new Set());
@@ -201,11 +199,6 @@
     void change(() => api.deleteGroup(vault.id, group.id), ["groups", "members"]);
   }
 
-  async function copyConfig() {
-    try { await navigator.clipboard.writeText(connectionConfigJson(vault.id)); configCopied = true; }
-    catch { error = "Die Zwischenablage ist nicht erreichbar. Versuche es erneut."; }
-    setTimeout(() => (configCopied = false), 2000);
-  }
 </script>
 
 
@@ -221,7 +214,6 @@
 <InvitePeople {vault} />
 
 <section>
-  <h3>Mitglieder</h3>
   <table>
     <tbody>
       {#each members as member (member.subject)}
@@ -240,16 +232,10 @@
 {#if page === "settings"}
 <section class="admin-section"><h3>Große Vaults</h3><label class="toggle"><input type="checkbox" checked={vault.selectiveSync ?? false} disabled={savingAreas} onchange={e => setSelectiveSync(e.currentTarget.checked)} /> Nur Arbeitsbereiche synchronisieren</label><p class="hint">Jedes Obsidian lädt dann nur die Ordner, die seine Person wählt, statt des ganzen Vaults. Einzelne Geräte können es trotzdem umstellen.</p></section>
 <section class="admin-section"><h3>Vault umbenennen</h3><form onsubmit={e => { e.preventDefault(); void renameVault(); }}><label for="rename-vault">Neuer Vault-Name</label><input id="rename-vault" placeholder={vault.name} bind:value={vaultName} required maxlength="100" /><button class="primary" disabled={renamingVault}>Vault umbenennen</button></form></section>
-<section>
-  <h3>Plugin-Verbindung</h3>
-  <p class="hint">Meist reicht der Reiter „In Obsidian“ – ein Klick verbindet das Plugin mit diesem Server. Die Konfiguration brauchst du nur ohne Knöpfe (Plugin: Erweitert → Verbindungsdaten einfügen).</p>
-  <button class="secondary" onclick={copyConfig}>{configCopied ? "Kopiert" : "Konfiguration kopieren"}</button>
-</section>
 
 {/if}
 {#if page === "roles"}
 <section>
-  <h3>Rollen</h3>
   {#if roles.length === 0}
     <p class="hint">Noch keine Rollen.</p>
   {:else}
@@ -261,10 +247,10 @@
               oninput={(e) => (editingRole = { ...editingRole, [role.id]: e.currentTarget.value })} onchange={() => renameRole(role)} /></td>
             <td class="permissions">
               {#each ALL_PERMISSIONS as permission}
-                <label class="inline"><input type="checkbox" checked={role.permissions.includes(permission)} onchange={() => toggleRolePermission(role, permission)} />{permission}</label>
+                <label class="inline"><input type="checkbox" checked={role.permissions.includes(permission)} onchange={() => toggleRolePermission(role, permission)} />{permissionWord(permission)}</label>
               {/each}
             </td>
-            <td class="actions"><button class="link" onclick={() => deleteRole(role)}>löschen</button></td>
+            <td class="actions"><button class="link" onclick={() => deleteRole(role)}>Löschen</button></td>
           </tr>
         {/each}
       </tbody>
@@ -276,7 +262,7 @@
       {#each ALL_PERMISSIONS as permission}
         <label>
           <input type="checkbox" checked={newRolePermissions.has(permission)} onchange={() => togglePermission(permission)} />
-          {permission}
+          {permissionWord(permission)}
         </label>
       {/each}
     </fieldset>
@@ -287,7 +273,6 @@
 {/if}
 {#if page === "groups"}
 <section>
-  <h3>Gruppen</h3>
   {#if !groups.length && !loading}<p class="hint">Noch keine Gruppen. Fasse Menschen zusammen, die dieselben Rechte brauchen.</p>{/if}
   {#each groups as group (group.id)}
     <div class="group">
@@ -316,7 +301,7 @@
         {#each group.memberSubjects as subject}
           <li>
             {personLabel(subject, group.memberNames?.[subject])}
-            <button class="link" onclick={() => removeMember(group.id, subject)}>entfernen</button>
+            <button class="link" onclick={() => removeMember(group.id, subject)}>Entfernen</button>
           </li>
         {/each}
         {#if group.memberSubjects.length === 0}
