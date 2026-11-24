@@ -15,4 +15,10 @@ class McpAdapterApplicationStartupTest {
         assertThat(context.getBeansWithAnnotation(org.springframework.boot.autoconfigure.SpringBootApplication.class))
             .containsKey("mcpAdapterApplication");
     }
+
+    // Compose-Portfreigabe und Container-Healthcheck zeigen auf 8082.
+    @Test
+    void should_listenOnThePortTheContainerExpects(ApplicationContext context) {
+        assertThat(context.getEnvironment().getProperty("server.port")).isEqualTo("8082");
+    }
 }

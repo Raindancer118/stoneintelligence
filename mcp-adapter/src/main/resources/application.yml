@@ -2,6 +2,10 @@ spring:
   application:
     name: mcp-adapter
 
+# Compose, EXPOSE und Healthcheck erwarten 8082; ohne das lief der Adapter auf 8080 und war nie erreichbar.
+server:
+  port: ${SERVER_PORT:8082}
+
 stoneintelligence:
   platform-api:
     base-url: ${STONEINTELLIGENCE_PLATFORM_API_URL:http://localhost:8080}
