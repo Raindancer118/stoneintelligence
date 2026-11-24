@@ -186,6 +186,14 @@ export const api = {
     if (!response.ok) rejected(response, await problemDetail(response));
     return await response.blob();
   },
+  /** Ganzes Protokoll als Datei (nur Verwaltende), `csv` oder `jsonl`. */
+  auditExport: async (vaultId: string, format: "csv" | "jsonl") => {
+    const response = await fetch(`${baseUrl}/api/v1/vaults/${vaultId}/audit/export?format=${format}`, {
+      signal: AbortSignal.timeout(300_000), headers: { Authorization: `Bearer ${await bearer()}` },
+    });
+    if (!response.ok) rejected(response, await problemDetail(response));
+    return await response.blob();
+  },
   createNote: (vaultId: string, path: string) => request<Note>(`/api/v1/vaults/${vaultId}/notes`,
     { method: "POST", body: JSON.stringify({ path, noteLevel: 1 }) }),
   renameNote: (vaultId: string, noteId: string, path: string) => request<Note>(`/api/v1/vaults/${vaultId}/notes/${noteId}`,

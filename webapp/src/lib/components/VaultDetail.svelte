@@ -14,6 +14,17 @@
   // svelte-ignore state_referenced_locally
   let page = $state(pages[0] ?? "members");
   let loading = $state(true);
+  let exporting = $state(false);
+  async function exportLog(format: "csv" | "jsonl") {
+    exporting = true; error = null;
+    try {
+      const url = URL.createObjectURL(await api.auditExport(vault.id, format));
+      const link = Object.assign(document.createElement("a"), { href: url, download: `protokoll-${vault.name}.${format}` });
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (e) { error = e instanceof Error ? e.message : "Das Protokoll konnte nicht exportiert werden."; }
+    finally { exporting = false; }
+  }
   let skeleton = $state(false);
   const gate = new LoadingGate(visible => skeleton = visible);
   $effect(() => gate.set(loading));
@@ -338,7 +349,7 @@
 {/if}
 {#if page === "log"}
 <section>
-  <h3>Protokoll</h3>
+  <div class="log-export"><span class="hint">Das ganze Protokoll als Datei, etwa für eure Sicherheitsüberwachung:</span><button class="secondary" disabled={exporting} onclick={() => exportLog("csv")}>Als CSV herunterladen</button><button class="secondary" disabled={exporting} onclick={() => exportLog("jsonl")}>Als JSON Lines</button></div>
   {#if log === null}
     <button class="secondary" onclick={loadLog}>Letzte Ereignisse anzeigen</button>
   {:else if log.length === 0}

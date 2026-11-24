@@ -5,7 +5,7 @@ import { api } from "../src/lib/api";
 vi.mock("../src/lib/api", async (original) => ({ ...(await original<typeof import("../src/lib/api")>()), api: {
   listRoles: vi.fn(), listGroups: vi.fn(), listMembers: vi.fn(), createGroup: vi.fn(), createRole: vi.fn(),
   listInvitations: vi.fn(), searchPeople: vi.fn(), removeFromVault: vi.fn(), deleteRole: vi.fn(), updateRole: vi.fn(),
-  renameGroup: vi.fn(), deleteGroup: vi.fn(), vaultLog: vi.fn(), setSelectiveSync: vi.fn(),
+  renameGroup: vi.fn(), deleteGroup: vi.fn(), vaultLog: vi.fn(), setSelectiveSync: vi.fn(), auditExport: vi.fn(),
 } }));
 const group = { id: "group", name: "Team", memberSubjects: [], roleIds: [] };
 beforeEach(() => {
@@ -89,4 +89,20 @@ describe("large vaults", () => {
     await waitFor(() => expect(api.setSelectiveSync).toHaveBeenCalledWith("vault", true));
     expect(renamed).toHaveBeenCalledWith({ ...vault, selectiveSync: true });
   });
+
+  it("downloads the whole log as CSV from the log page", async () => {
+    const vault = { id: "vault", name: "Konzern", createdAt: "" };
+    vi.mocked(api.auditExport).mockResolvedValue(new Blob(["\"occurred_at\"\r\n"], { type: "text/csv" }));
+    URL.createObjectURL = vi.fn(() => "blob:log");
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    render(VaultDetail, { vault, me: "tom", pages: ["settings", "log"] });
+    await fireEvent.click(await screen.findByRole("button", { name: "Protokoll" }));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Als CSV herunterladen" }));
+
+    await waitFor(() => expect(click).toHaveBeenCalled());
+    expect(api.auditExport).toHaveBeenCalledWith(vault.id, "csv");
+  });
 });
+
