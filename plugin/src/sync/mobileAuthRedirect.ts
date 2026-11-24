@@ -17,6 +17,32 @@ export interface PendingAuthCallback {
 }
 
 /**
+ * Wartet auf den Redirect, gibt aber nach `timeoutMs` auf und verdraengt einen frueheren, nie
+ * beantworteten Login - sonst bliebe "Warte auf Anmeldung..." nach abgebrochenem Browser ewig stehen.
+ */
+export function awaitMobileRedirect(
+  state: string,
+  current: { pending: PendingAuthCallback | null },
+  timeoutMs = 5 * 60_000,
+): Promise<string> {
+  current.pending?.reject(new Error("login cancelled"));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (current.pending === entry) {
+        current.pending = null;
+      }
+      reject(new Error("login timed out"));
+    }, timeoutMs);
+    const entry: PendingAuthCallback = {
+      state,
+      resolve: (code) => { clearTimeout(timer); resolve(code); },
+      reject: (error) => { clearTimeout(timer); reject(error); },
+    };
+    current.pending = entry;
+  });
+}
+
+/**
  * Loest die auf den `obsidian://`-Redirect wartende Promise auf (oder lehnt sie ab) - reine
  * Funktion, getrennt von `registerObsidianProtocolHandler`, damit sie ohne Plugin-/Obsidian-
  * Laufzeit testbar ist. `pending === null` heisst: kein Login laeuft gerade, der Aufruf wird

@@ -1,20 +1,27 @@
 <script lang="ts">
+  import Skeleton from "./Skeleton.svelte";
   import { withTransition } from "../motion";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
+  import { LoadingGate } from "../loadingGate";
   import { api, ApiError, type Group, type Role, type Vault, type VaultMember } from "../api";
-  import { explainAccessError, permissionsLabel } from "../accessPlan";
+  import { explainAccessError, permissionWord, permissionsLabel, type Permission } from "../accessPlan";
   import { describeEvent, formatDate, type HistoryEvent } from "../historyText";
-  import { connectionConfigJson } from "../connectionConfig";
   import { idpLinkText, personLabel } from "../peopleText";
   import InvitePeople from "./InvitePeople.svelte";
 
-  let { vault, me = "", onRenamed = () => {}, onLeft = () => {} }: { vault: Vault; me?: string; onRenamed?: (vault: Vault) => void; onLeft?: () => void } = $props();
+  let { vault, me = "", onRenamed = () => {}, onLeft = () => {}, pages = ["members", "roles", "groups", "log", "settings"] }: { vault: Vault; me?: string; onRenamed?: (vault: Vault) => void; onLeft?: () => void; pages?: string[] } = $props();
 
-  let page = $state("members");
+  // svelte-ignore state_referenced_locally
+  let page = $state(pages[0] ?? "members");
   let loading = $state(true);
+  let skeleton = $state(false);
+  const gate = new LoadingGate(visible => skeleton = visible);
+  $effect(() => gate.set(loading));
+  onDestroy(() => gate.dispose());
   let vaultName = $state("");
   let renamingVault = $state(false);
-  const adminPages = [{ id: "members", label: "Mitglieder" }, { id: "roles", label: "Rollen" }, { id: "groups", label: "Gruppen" }, { id: "log", label: "Protokoll" }, { id: "settings", label: "Vault-Einstellungen" }];
+  const allPages = [{ id: "members", label: "Mitglieder" }, { id: "roles", label: "Rollen" }, { id: "groups", label: "Gruppen" }, { id: "settings", label: "Allgemein" }, { id: "log", label: "Protokoll" }];
+  const adminPages = $derived(allPages.filter(item => pages.includes(item.id)));
   async function renameVault() {
     if (!vaultName.trim() || renamingVault) return;
     renamingVault = true;
@@ -30,7 +37,7 @@
     catch (e) { error = (e as Error).message; }
     finally { savingAreas = false; }
   }
-  const ALL_PERMISSIONS = ["READ", "WRITE", "DELETE", "CREATE", "MANAGE"];
+  const ALL_PERMISSIONS: Permission[] = ["READ", "WRITE", "CREATE", "DELETE", "MANAGE"];
 
   let roles = $state<Role[]>([]);
   let groups = $state<Group[]>([]);
@@ -39,7 +46,6 @@
   let editingRole = $state<Record<string, string>>({});
   let editingGroup = $state<Record<string, string>>({});
   let error = $state<string | null>(null);
-  let configCopied = $state(false);
 
   let newRoleName = $state("");
   let newRolePermissions = $state<Set<string>>(new Set());
@@ -193,26 +199,21 @@
     void change(() => api.deleteGroup(vault.id, group.id), ["groups", "members"]);
   }
 
-  async function copyConfig() {
-    try { await navigator.clipboard.writeText(connectionConfigJson(vault.id)); configCopied = true; }
-    catch { error = "Die Zwischenablage ist nicht erreichbar. Versuche es erneut."; }
-    setTimeout(() => (configCopied = false), 2000);
-  }
 </script>
 
-<header class="admin-intro"><h2>Mitglieder & Rechte</h2><p>Ein guter Ort für Zusammenarbeit beginnt mit den richtigen Zugängen.</p></header>
-<nav class="admin-tabs" aria-label="Verwaltungsbereiche">{#each adminPages as item}<button class:active={page === item.id} aria-pressed={page === item.id} onclick={() => void withTransition(() => page = item.id, "tab")}>{item.label}</button>{/each}</nav>
-{#if loading}<p role="status">Verwaltung wird geladen…</p>{/if}
+
+{#if adminPages.length > 1}<nav class="admin-tabs" aria-label="Verwaltungsbereiche">{#each adminPages as item}<button class:active={page === item.id} aria-pressed={page === item.id} onclick={() => void withTransition(() => page = item.id, "tab")}>{item.label}</button>{/each}</nav>{/if}
+{#if skeleton}<Skeleton kind="list" gated label="Verwaltung wird geladen…" />{:else if loading}<p class="sr-only" role="status">Verwaltung wird geladen…</p>{/if}
 
 {#if error}
   <div class="feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={refresh}>Erneut versuchen</button></div>
 {/if}
 
+{#if !skeleton}
 {#if page === "members"}
 <InvitePeople {vault} />
 
 <section>
-  <h3>Mitglieder</h3>
   <table>
     <tbody>
       {#each members as member (member.subject)}
@@ -231,16 +232,10 @@
 {#if page === "settings"}
 <section class="admin-section"><h3>Große Vaults</h3><label class="toggle"><input type="checkbox" checked={vault.selectiveSync ?? false} disabled={savingAreas} onchange={e => setSelectiveSync(e.currentTarget.checked)} /> Nur Arbeitsbereiche synchronisieren</label><p class="hint">Jedes Obsidian lädt dann nur die Ordner, die seine Person wählt, statt des ganzen Vaults. Einzelne Geräte können es trotzdem umstellen.</p></section>
 <section class="admin-section"><h3>Vault umbenennen</h3><form onsubmit={e => { e.preventDefault(); void renameVault(); }}><label for="rename-vault">Neuer Vault-Name</label><input id="rename-vault" placeholder={vault.name} bind:value={vaultName} required maxlength="100" /><button class="primary" disabled={renamingVault}>Vault umbenennen</button></form></section>
-<section>
-  <h3>Plugin-Verbindung</h3>
-  <p class="hint">Meist reicht der Reiter „In Obsidian“ – ein Klick verbindet das Plugin mit diesem Server. Die Konfiguration brauchst du nur ohne Knöpfe (Plugin: Erweitert → Verbindungsdaten einfügen).</p>
-  <button class="secondary" onclick={copyConfig}>{configCopied ? "Kopiert" : "Konfiguration kopieren"}</button>
-</section>
 
 {/if}
 {#if page === "roles"}
 <section>
-  <h3>Rollen</h3>
   {#if roles.length === 0}
     <p class="hint">Noch keine Rollen.</p>
   {:else}
@@ -252,10 +247,10 @@
               oninput={(e) => (editingRole = { ...editingRole, [role.id]: e.currentTarget.value })} onchange={() => renameRole(role)} /></td>
             <td class="permissions">
               {#each ALL_PERMISSIONS as permission}
-                <label class="inline"><input type="checkbox" checked={role.permissions.includes(permission)} onchange={() => toggleRolePermission(role, permission)} />{permission}</label>
+                <label class="inline"><input type="checkbox" checked={role.permissions.includes(permission)} onchange={() => toggleRolePermission(role, permission)} />{permissionWord(permission)}</label>
               {/each}
             </td>
-            <td class="actions"><button class="link" onclick={() => deleteRole(role)}>löschen</button></td>
+            <td class="actions"><button class="link" onclick={() => deleteRole(role)}>Löschen</button></td>
           </tr>
         {/each}
       </tbody>
@@ -267,7 +262,7 @@
       {#each ALL_PERMISSIONS as permission}
         <label>
           <input type="checkbox" checked={newRolePermissions.has(permission)} onchange={() => togglePermission(permission)} />
-          {permission}
+          {permissionWord(permission)}
         </label>
       {/each}
     </fieldset>
@@ -278,7 +273,6 @@
 {/if}
 {#if page === "groups"}
 <section>
-  <h3>Gruppen</h3>
   {#if !groups.length && !loading}<p class="hint">Noch keine Gruppen. Fasse Menschen zusammen, die dieselben Rechte brauchen.</p>{/if}
   {#each groups as group (group.id)}
     <div class="group">
@@ -307,7 +301,7 @@
         {#each group.memberSubjects as subject}
           <li>
             {personLabel(subject, group.memberNames?.[subject])}
-            <button class="link" onclick={() => removeMember(group.id, subject)}>entfernen</button>
+            <button class="link" onclick={() => removeMember(group.id, subject)}>Entfernen</button>
           </li>
         {/each}
         {#if group.memberSubjects.length === 0}
@@ -362,4 +356,5 @@
 </section>
 
 
+{/if}
 {/if}

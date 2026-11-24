@@ -38,12 +38,34 @@ public class VaultAnnouncementService {
 
     private final java.util.List<java.util.function.Consumer<VaultId>> accessListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
+    private final ClusterBus cluster;
+
     public VaultAnnouncementService() {
-        this(System::nanoTime);
+        this(System::nanoTime, ClusterBus.single());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public VaultAnnouncementService(ClusterBus cluster) {
+        this(System::nanoTime, cluster);
     }
 
     VaultAnnouncementService(java.util.function.LongSupplier nanoClock) {
+        this(nanoClock, ClusterBus.single());
+    }
+
+    VaultAnnouncementService(java.util.function.LongSupplier nanoClock, ClusterBus cluster) {
         this.nanoClock = nanoClock;
+        this.cluster = cluster;
+        cluster.subscribe(this::onRemote);
+    }
+
+    /** Ankuendigungen einer anderen Instanz an die eigenen Verbindungen; Rechte prueft jede Verbindung selbst. */
+    private void onRemote(ClusterMessage message) {
+        switch (message) {
+            case ClusterMessage.VaultEvent m -> sendNow(m.vaultId(), m.messageType(), m.noteId(), m.path(), m.kind());
+            case ClusterMessage.AccessChanged m -> accessChangedHere(m.vaultId());
+            default -> { }
+        }
     }
 
     public void subscribe(VaultId vaultId, VaultSubscriber subscriber) {
@@ -104,16 +126,21 @@ public class VaultAnnouncementService {
      */
     public void announceAccessChanged(VaultId vaultId) {
         afterCommit(() -> {
-            // Zuerst die Caches (VaultAccessGuard), damit die Verbindungen gleich gegen den neuen Stand pruefen.
-            accessListeners.forEach(listener -> listener.accept(vaultId));
-            for (var subscriber : subscribers.getOrDefault(vaultId, Set.of())) {
-                try {
-                    subscriber.accessChanged();
-                } catch (SyncSessionSendException failedSend) {
-                    unsubscribe(vaultId, subscriber);
-                }
-            }
+            accessChangedHere(vaultId);
+            cluster.publish(new ClusterMessage.AccessChanged(vaultId));
         });
+    }
+
+    private void accessChangedHere(VaultId vaultId) {
+        // Zuerst die Caches (VaultAccessGuard), damit die Verbindungen gleich gegen den neuen Stand pruefen.
+        accessListeners.forEach(listener -> listener.accept(vaultId));
+        for (var subscriber : subscribers.getOrDefault(vaultId, Set.of())) {
+            try {
+                subscriber.accessChanged();
+            } catch (SyncSessionSendException failedSend) {
+                unsubscribe(vaultId, subscriber);
+            }
+        }
     }
 
     /**
@@ -134,7 +161,8 @@ public class VaultAnnouncementService {
      */
     public void announceNoteUpdated(VaultId vaultId, NoteId noteId, java.util.function.Supplier<java.util.Optional<String>> path) {
         var vaultSubscribers = subscribers.getOrDefault(vaultId, Set.of());
-        if (vaultSubscribers.stream().noneMatch(subscriber -> subscriber.wantsContentUpdates() && !subscriber.hasJoined(noteId))) {
+        if (!cluster.hasPeers()
+                && vaultSubscribers.stream().noneMatch(subscriber -> subscriber.wantsContentUpdates() && !subscriber.hasJoined(noteId))) {
             return;
         }
         var now = nanoClock.getAsLong();
@@ -152,7 +180,10 @@ public class VaultAnnouncementService {
      * JOIN wurde still verworfen und die Verbindung wartete bis zum Timeout.
      */
     private void announce(VaultId vaultId, byte messageType, NoteId noteId, String path, NoteKind kind) {
-        afterCommit(() -> sendNow(vaultId, messageType, noteId, path, kind));
+        afterCommit(() -> {
+            sendNow(vaultId, messageType, noteId, path, kind);
+            cluster.publish(new ClusterMessage.VaultEvent(vaultId, messageType, noteId, kind, path));
+        });
     }
 
     private static void afterCommit(Runnable action) {

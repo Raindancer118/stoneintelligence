@@ -293,9 +293,19 @@ final class JobProcessor {
         return text.length() > 500 ? text.substring(0, 500) : text;
     }
 
-    /** Der Name erscheint in der Quellnotiz; nie ein Pfad. */
+    private static final int MAX_FILE_NAME_CHARS = 100;
+
+    /**
+     * Der Name erscheint in der Quellnotiz; nie ein Pfad. Steuerzeichen (NUL macht {@code Files.write} zum
+     * Fehler) fallen weg, und ein zu langer Name wird gekuerzt (Dateisysteme erlauben 255 Bytes) - die Endung bleibt.
+     */
     static String safeFileName(String fileName) {
-        var name = fileName == null ? "" : fileName.replaceAll(".*[/\\\\]", "").strip();
+        var name = fileName == null ? "" : fileName.replaceAll(".*[/\\\\]", "").replaceAll("\\p{Cntrl}", "").strip();
+        if (name.length() > MAX_FILE_NAME_CHARS) {
+            var dot = name.lastIndexOf('.');
+            var extension = dot > 0 && name.length() - dot <= 10 ? name.substring(dot) : "";
+            name = name.substring(0, MAX_FILE_NAME_CHARS - extension.length()) + extension;
+        }
         return name.isEmpty() || name.startsWith(".") ? "Dokument" + name : name;
     }
 

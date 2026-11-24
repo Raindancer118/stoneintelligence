@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Skeleton from "./Skeleton.svelte";
   import { onMount } from "svelte";
   import { api, type InvitationInfo } from "../api";
 
@@ -34,7 +35,7 @@
     <h1>Einladung nicht gefunden</h1>
     <p class="error" role="alert">{error}</p><button class="secondary" onclick={load}>Erneut versuchen</button>
   {:else if !info}
-    <p role="status">Einladung wird geladen…</p>
+    <Skeleton kind="panel" rows={3} label="Einladung wird geladen…" />
   {:else}
     <h1>{info.invitedBy} lädt dich zu „{info.vaultName}“ ein</h1>
     {#if info.state !== "PENDING"}

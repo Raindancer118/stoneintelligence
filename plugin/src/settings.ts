@@ -157,7 +157,18 @@ export function wsUrlFor(settings: Pick<StoneIntelligenceSettings, "platformApiU
   return settings.platformApiUrl.trim().replace(/\/+$/, "").replace(/^http(s?):/i, "ws$1:");
 }
 
+/** Immer ausgeschlossen, auf jeder Ebene und unabhaengig von den Nutzereinstellungen (Tooling-Muell, nie Wissen). */
+export const BUILT_IN_EXCLUDED_FOLDERS: readonly string[] = [
+  "node_modules", ".git", ".venv", "venv", "__pycache__", ".trash", ".obsidian",
+];
+
+const isBuiltInExcluded = (path: string): boolean =>
+  path.split("/").some((segment) => BUILT_IN_EXCLUDED_FOLDERS.includes(segment));
+
 export function isExcluded(path: string, folders: string[]): boolean {
+  if (isBuiltInExcluded(path)) {
+    return true;
+  }
   return folders.some((folder) => {
     const prefix = folder.trim().replace(/^\/+|\/+$/g, "");
     return prefix.length > 0 && path.startsWith(`${prefix}/`);

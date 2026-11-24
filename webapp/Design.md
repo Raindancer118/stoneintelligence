@@ -1,85 +1,63 @@
 # StoneIntelligence webapp — Design
 
-Stand 27.09.2026. Entstanden aus einer von drei Varianten (Codex-Lauf „A", Feature-Brief ohne
-Design-Vorgaben); Tom hat Look und Layout von A gewählt und den Akzent auf Schiefer (Slate)
-umstellen lassen, passend zum Logo (facettierter Schieferstein).
+Stand 24.11.2026. Toms Hausstil: ruhig wie Banking, monochrom, Tinte als Aktion, Haarlinien statt
+Schatten. Löst die Fassung vom 27.09. (Cremepapier, Schiefer-Leiste, Georgia, Federn) ab.
 
 ## Farbe
 
-Warme Papierflächen, dunkle Schiefer-Navigation, ein Akzent: Schiefer-Blaugrau. Kupfer nur für
-Fehler/Warnungen.
+Tokens in `src/app.css` (`:root` hell, `:root[data-theme="dark"]` dunkel). Neutrale ohne Farbstich.
 
-| Token | Wert | Verwendung |
-|---|---|---|
-| `--bg` | `#f5f3ed` | Seitenhintergrund |
-| `--surface` / `--surface-raised` | `#faf9f5` / `#fffefa` | Panels, Dokument, Eingaben |
-| `--line` | `#deded3` | Trennlinien |
-| `--ink` / `--ink-dim` | `#27292b` / `#606366` | Text / Sekundärtext |
-| `--slate` | `#394658` | Akzent: Hauptknöpfe, aktive Einträge, Links |
-| `--slate-soft` | `#e6e9ed` | Hintergrund aktiver Einträge |
-| `--rust` / `--accent` | `#a04429` | Fehler, Löschen |
-| Navigation | `#26292d` | dunkle Leiste links (eigene Token-Überschreibung im Block `.main-navigation`) |
+| Token | Hell | Dunkel | Wofür |
+|---|---|---|---|
+| `--canvas` / `--surface` / `--surface-2` | `#fafafa` / `#fff` / `#f0f0f0` | `#161616` / `#202020` / `#2a2a2a` | Seite, Karten, Flächen und Skeletons |
+| `--line` / `--line-strong` / `--field-line` | `#e1e1e1` / `#c5c5c5` / `#8c8c8c` | `#393939` / `#545454` / `#6e6e6e` | Haarlinien, Buttons, Feldrahmen (3:1) |
+| `--text-1/2/3` | `#161616` / `#4d4d4d` / `#6c6c6c` | `#f2f2f2` / `#b7b7b7` / `#898989` | Text |
+| `--tinte` | `#181b1f` | `#c3c7ce` | Primäraktion, Auswahlbalken, Fokus |
+| `--live` | `#2e9e52` | `#4cb86a` | Nur Lebendiges (laufende KI-Jobs), nie Textfarbe |
+| `--success/--warning/--danger` | | | Bedeutung, mit `-soft`-Hintergrund |
 
-## Typografie
+Alte Namen (`--ink`, `--slate`, `--bg` …) sind Aliase. Hell/Dunkel: Schalter in der Kopfzeile
+(`ThemeToggle`, gespeichert unter `stone.theme`), sonst Systemeinstellung.
 
-Public Sans (selbst gehostet, `@fontsource`) für UI und Fließtext, Georgia für redaktionelle
-Überschriften (Vault-Name, Notiztitel, Abschnittsköpfe). Kleine Versal-Labels mit Tracking als
-Überzeilen.
+## Typo, Form, Tiefe
+
+- Plus Jakarta Sans 400–600, JetBrains Mono für Pfade, Code, Tastenkürzel. Satzschreibung, keine Versalien.
+- Notizpfade stehen überall in Mono – das eine wiederkehrende Detail.
+- Radien 4–8, Buttons 40 hoch. Karten: Haarlinie, kein Schatten. Schatten nur auf Menüs und Dialogen.
+- Linien 0,5 px auf 2x-Schirmen (`--hairline`), sonst 1 px.
 
 ## Aufbau
 
-- **Navigation links, einklappbar** (Zustand in `localStorage`, Schlüssel
-  `stone.navigation.collapsed`): Marke, Vault-Auswahl + „Neuer Vault", Bereiche Notizen,
-  In Obsidian, KI-Wissen, Mitglieder & Rechte (nur mit MANAGE). Unten „Obsidian einrichten",
-  Konto, Abmelden. Auf dem Handy öffnet ein Menüknopf die Leiste.
-- **Kopfzeile:** Brotkrumen und Schnellsprung (Strg/⌘+K).
-- **Notizen:** links Suche, Ordner-/Sortierfilter und aufklappbarer Ordnerbaum, rechts das
-  Dokument (Lesen/Bearbeiten, Speichern, Export). Ähnliche Notizen und Freigabe über der Notiz.
-- **Mitglieder & Rechte:** Unterreiter Mitglieder (mit Einladen), Rollen, Gruppen, Protokoll,
-  Vault-Einstellungen.
-- **Rechtslinks** (Datenschutz, Impressum) in der Fußzeile jeder Ansicht.
+- **Leiste (252 px):** Vaults, darunter die Bereiche **Notizen · Dokumente & KI · Mitglieder & Rechte ·
+  Einstellungen · Obsidian verbinden**. Verwaltung nur mit MANAGE; die App fragt die Rechte selbst ab.
+  Aktiver Eintrag = Balken links, keine Füllung. Einklappen über das Icon neben dem Logo.
+- **Kopfzeile:** „Vault / Bereich“, Schnellsprung (Strg/⌘+K), Hell/Dunkel.
+- **Notizen:** keine Seitenüberschrift. Liste links (Suche + Neue Notiz oben, Sortierung und
+  Aktualisieren klein darunter, Freigabe des Ordners am Ende). Rechts **eine** Leiste je Notiz: Pfad und
+  Titel, Lesen/Bearbeiten, Speichern (nur beim Bearbeiten), Freigeben, „Mehr“ (ähnliche Notizen,
+  Versionen, Umbenennen, Herunterladen, Neu laden, Löschen).
+- **Ohne geöffnete Notiz:** Checkliste „Vault einrichten“ (erste Notiz, Leute einladen, Obsidian
+  verbinden), bis alles erledigt oder ausgeblendet ist (`setupSteps.ts`). Den Obsidian-Schritt zählt der
+  geöffnete Verbinden-Link – ob ein Gerät verbunden ist, sieht der Server nicht.
+- **Unter einem Bereich oder Reiter keine zweite Überschrift mit demselben Namen.**
 
-## Daten und Suche
+## Laden
 
-Die Übersicht lädt beim Öffnen alle Seiten (nur Pfade/Metadaten, 500 pro Anfrage) und zeigt sie
-schon während des Ladens. Die Suche (Notizbereich und Schnellsprung) läuft über
-`GET /api/v1/vaults/{id}/notes/search` auf dem Server, verzögert und nur mit der jeweils letzten
-Anfrage. Inhalte werden nie für eine Suche geladen.
+Skeletons in der Form des Inhalts (`Skeleton.svelte`: tree, document, list, panel, notes), Fläche 2,
+Pulsieren 1,6 s. Erst nach 300 ms; wo ein Ladezustand Inhalt ersetzt, hält `LoadingGate` sie mindestens
+400 ms (`gated`). Screenreader hören den Ladetext, die Formen sind `aria-hidden`. Keine Spinner für Inhalte.
 
 ## Bewegung
 
-Leise und kurz: Bewegung zeigt, wohin etwas geht, sie soll nicht auffallen. Alles in `app.css`
-(Abschnitte „Bewegung"), Bereichs-, Notiz-, Reiter- und Lesen/Bearbeiten-Wechsel zusätzlich über
-View Transitions aus `src/lib/motion.ts` (Typen `area`, `note`, `tab`). Keine Animationsbibliothek.
-
-- Tokens: `--ease-out`, `--ease-in-out`, `--ease-spring` (Federkurve als `linear()`); Dauern
-  140/260/520ms; Wege in der App höchstens 4–8px.
-- Federn (Tom mag sie): Markierung des aktiven Bereichs und Reiters, Pfeile, Akzentleisten,
-  Schnellsprung-Dialog, Checkboxen, Blätter der Anmeldeseite.
-- Bereichswechsel: Inhalt blendet mit kurzem Weg von unten ein, die Markierung des aktiven
-  Bereichs wandert. Notizwechsel: nur das Dokument, seitlich. Reiter: Überblenden.
-- App-Auftritt: Leiste und Kopfzeile blenden ein, Bereiche leicht gestaffelt; aktiver Bereich mit
-  schmaler Leiste links; Bereichstitel wird enthüllt.
-- Ordnerbaum: kurzer gestaffelter Aufbau, Pfeil dreht, Akzentleiste bei Überfahren/Auswahl.
-- Notizinhalt: Blöcke kurz nacheinander, in langen Notizen spätere Blöcke beim Scrollen (`view()`).
-- Karten in Verwaltung/KI: leicht gestaffelt, heben sich beim Überfahren um 1px.
-- Schnellsprung: Hintergrund mit Unschärfe, Dialog federt herein. Kopfzeile sticky mit Scroll-Kante.
-- Anmeldeseite bewusst kräftiger: Überschrift steigt auf, Blätter federn aus 40px/−8° herein,
-  treiben langsam, Linien zeichnen sich. Laden: Logo atmet; selten ein dezenter Lichtreflex.
-- Laufende KI-Jobs pulsieren deutlich (1,6s, bis 55 % Deckkraft).
-- **Bewusst nicht:** Lichtfleck am Zeiger, Glanz über Knöpfe, Bewegung an Navigationssymbolen
-  (von Tom nach Probe am 27.09.2026 abgelehnt).
-- `prefers-reduced-motion`: alle Animationen, Übergänge und View Transitions aus; `motion.ts`
-  startet dann gar keine Transition.
+Nur ease-out (`--ease-out`), Dauern als Tokens (`--dur-press` 120 … `--dur-drawer` 400). Drücken
+`scale(.97)`. Keine Federn, kein Glanz, kein Atmen, keine Parallaxe; Dauerbewegung nur bei Skeletons.
+View Transitions aus `src/lib/motion.ts` bleiben (Bereich, Notiz, Reiter). `prefers-reduced-motion`
+schaltet alles ab.
 
 ## Technik
 
-- **Ein Stylesheet:** alle Styles in `src/app.css`, keine `<style>`-Blöcke in Komponenten.
-  Einzige Ausnahme sind datengetriebene Custom Properties im Markup (z. B. `--depth` für die
-  Einrückung im Baum).
-- Sichtbarer Fokus, 48px-Touchziele, `prefers-reduced-motion` schaltet Übergänge ab.
-
-## Frühere Richtungen
-
-„Funktionale Klarheit" (Creme/Waldgrün, Tabs oben, Verwaltung als eine lange Seite) bis
-27.09.2026; eine eigene Variante „Werkstatt" (Graphit/Bernstein) wurde zugunsten von A verworfen.
+- **Ein Stylesheet:** alles in `src/app.css`, keine `<style>`-Blöcke. Ausnahme: datengetriebene
+  Custom Properties im Markup (`--depth` im Baum).
+- `accessPlan.ts`, `historyText.ts`, `versionText.ts` sind exakte Kopien aus `plugin/src/sync/`
+  (Test prüft das) – Änderungen immer im Plugin machen.
+- Sichtbarer Fokus (2 px Tinte), Feldrahmen mit 3:1 Kontrast.

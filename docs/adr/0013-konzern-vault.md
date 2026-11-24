@@ -1,6 +1,6 @@
 # ADR 0013: Ein Vault für einen ganzen Konzern
 
-Status: Angenommen (2026-09-29), Schritte 1–5 umgesetzt (s. Nachträge)
+Status: Angenommen (2026-09-29), Schritte 1–7 umgesetzt (s. Nachträge)
 
 ## Kontext
 
@@ -196,3 +196,24 @@ Bekannte Grenzen: Die Prüfung „mindestens eine verwaltende Person" zählt nur
 SCIM die letzte direkt eingetragene verwaltende Person, hat der Vault keine Verwaltung mehr, bis jemand
 mit Datenbankzugriff eine einträgt. Die Gruppen-Schlüssel richten sich nach der Einstellung zum
 Zeitpunkt des Schreibens; wer sie ändert, lässt den IdP einmal vollständig abgleichen.
+
+## Nachtrag: Schritte 6 und 7 (23.11.2026)
+
+- **Schritt 6 (V23):** `note_states` hält je Notiz einen mit `Y.mergeUpdates` zusammengeführten Zustand bis
+  Revision n. JOIN, Web-Editor, KI-Schreiben und „Wiederherstellen" lesen `SnapshotStore.current()` (Zustand
+  plus Updates danach); nur der Versionsverlauf liest weiter das volle Log. Der `NoteStateCompactor` schreibt
+  den Zustand im Hintergrund, sobald ein Beitritt mehr als 200 Updates bekam
+  (`stoneintelligence.sync.compaction-threshold`), je Notiz höchstens ein Lauf gleichzeitig, nie für
+  verschlüsselte Notizen. Ein älterer Zustand überschreibt nie einen neueren. Die Tabelle ist ein Cache und darf
+  geleert werden.
+- **Bridge-Pool:** `YjsBridge` hält bis zu `stoneintelligence.yjs.contexts` GraalJS-Contexts (Standard: Kerne,
+  höchstens 8), weitere entstehen erst bei Bedarf.
+- **Schritt 7:** `STONEINTELLIGENCE_CLUSTER=true` schaltet den `PostgresClusterBus` ein (Kanal
+  `stoneintelligence_cluster`, eine dauerhaft belegte Pool-Verbindung). Verteilt werden Verweise: Update
+  gespeichert (Empfänger liest es nur, wenn bei ihm jemand im Raum ist), Cursor (inline, über 7900 Bytes
+  verworfen), Cursor weg, Notiz gelöscht, Vault-Ankündigungen und Rechteänderungen. Fremde Cursor liegen unter
+  `Instanz/Session` und gehen wie eigene an Spätkommende. Ohne die Variable bleibt alles wie bisher.
+
+Bekannte Grenzen: Während die Lausch-Verbindung neu aufgebaut wird, gehen Nachrichten verloren; Bestand holt der
+Feed nach, ein verpasstes Live-Update eine offene Notiz erst beim nächsten Beitreten. Rate-Limits gelten weiter je
+Instanz. Schritt 8 (Lasttest) steht aus.

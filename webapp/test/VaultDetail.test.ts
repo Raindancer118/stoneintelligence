@@ -28,7 +28,7 @@ describe("vault detail loading", () => {
     await screen.findByText("tom (du)");
     await fireEvent.click(screen.getByRole("button", { name: refresh === "listGroups" ? "Gruppen" : "Rollen", exact: true }));
     await fireEvent.input(screen.getByPlaceholderText(placeholder), { target: { value: "New team" } });
-    if (refresh === "listRoles") await fireEvent.click(screen.getByRole("checkbox", { name: "READ" }));
+    if (refresh === "listRoles") await fireEvent.click(screen.getByRole("checkbox", { name: "Lesen" }));
     await fireEvent.click(screen.getByRole("button", { name: button }));
     await waitFor(() => expect(api[refresh]).toHaveBeenCalledTimes(2));
     for (const resource of ["listRoles", "listGroups", "listMembers"] as const) {
@@ -82,7 +82,7 @@ describe("large vaults", () => {
     const renamed = vi.fn();
     render(VaultDetail, { vault, me: "tom", onRenamed: renamed });
     await screen.findByText("tom (du)");
-    await fireEvent.click(screen.getByRole("button", { name: "Vault-Einstellungen" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Allgemein" }));
 
     await fireEvent.click(screen.getByRole("checkbox", { name: /Nur Arbeitsbereiche synchronisieren/ }));
 

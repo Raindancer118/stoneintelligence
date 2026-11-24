@@ -56,7 +56,7 @@ describe("note editor", () => {
     render(NoteEditor, props());
     await screen.findByText("Original text");
 
-    await fireEvent.click(screen.getByRole("button", { name: "Änderungsverlauf" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Versionen und Verlauf" }));
 
     expect(await screen.findByText(/Zuletzt bearbeitet von anna/)).toBeTruthy();
     expect(screen.getByText(/Zuletzt geöffnet von ben/)).toBeTruthy();

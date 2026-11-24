@@ -75,11 +75,29 @@ describe("KI-Bereich", () => {
     vi.mocked(api.listChangeSets).mockResolvedValue([]);
     render(App);
 
-    await fireEvent.click(await screen.findByRole("button", { name: "KI-Wissen" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Dokumente & KI" }));
 
-    await screen.findByRole("heading", { name: "Wissen aus Dokumenten" });
-    expect(screen.getByRole("button", { name: "KI-Wissen" }).getAttribute("aria-pressed")).toBe("true");
+    await screen.findByRole("heading", { name: "Dokumente einlesen" });
+    expect(screen.getByRole("button", { name: "Dokumente & KI" }).getAttribute("aria-pressed")).toBe("true");
     expect(api.listAiJobs).toHaveBeenCalledWith("vault");
+  });
+});
+
+describe("Verwaltung", () => {
+  it("shows management areas from the vault's own permissions, without opening the notes first", async () => {
+    vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(api.listVaults).mockResolvedValue([{ id: "vault", name: "My notes", createdAt: "" }]);
+    vi.mocked(api.permissions).mockResolvedValue(["READ", "MANAGE"]);
+    vi.mocked(api.aiServices).mockResolvedValue([]);
+    vi.mocked(api.listAiJobs).mockResolvedValue([]);
+    vi.mocked(api.listChangeSets).mockResolvedValue([]);
+    render(App);
+    // Sofort weiter, bevor der Notizbereich ueberhaupt geladen ist.
+    await fireEvent.click(await screen.findByRole("button", { name: "Dokumente & KI" }));
+
+    expect(await screen.findByRole("button", { name: "Mitglieder & Rechte" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Einstellungen" })).toBeTruthy();
+    expect(api.permissions).toHaveBeenCalledWith("vault");
   });
 });
 
@@ -114,7 +132,7 @@ describe("invitation links", () => {
 
     await screen.findByRole("heading", { name: "Team-Notizen", level: 1 });
     expect(window.location.pathname).toBe("/");
-    expect(screen.getByRole("button", { name: "In Obsidian" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Obsidian verbinden" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("returns to the invitation after the login callback", async () => {
@@ -148,9 +166,10 @@ describe("setup page", () => {
     await screen.findByRole("link", { name: "Mit „Team“ verbinden" });
   });
 
+  // Mit Vault fuehrt der Bereich "Obsidian verbinden" durch die Einrichtung; der Link gilt fuer den Start ohne Vault.
   it("links to the setup from the dashboard", async () => {
     vi.mocked(getUser).mockResolvedValue({ profile: { sub: "tom" } } as Awaited<ReturnType<typeof getUser>>);
-    vi.mocked(api.listVaults).mockResolvedValue([{ id: "v", name: "My notes", createdAt: "" }]);
+    vi.mocked(api.listVaults).mockResolvedValue([]);
     vi.mocked(api.permissions).mockResolvedValue(["READ"]);
     vi.mocked(api.listNotes).mockResolvedValue({ epochId: "e", notes: [], complete: true, nextCursor: null });
     render(App);
@@ -171,7 +190,7 @@ describe("setup page", () => {
     vi.mocked(api.listNotes).mockResolvedValue({ epochId: "e", notes: [], complete: true, nextCursor: null });
     render(App);
 
-    await fireEvent.click(await screen.findByRole("button", { name: "In Obsidian" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Obsidian verbinden" }));
 
     const links = await screen.findAllByRole("link", { name: "Mit „My notes“ verbinden" });
     expect(links[0].getAttribute("href")).toContain("stoneVault=2f719285-2483-4e59-89e0-334af2813a70");

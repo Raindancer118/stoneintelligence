@@ -40,9 +40,26 @@ public class SyncRelayService {
     private final ConcurrentHashMap<NoteId, ConcurrentHashMap<String, byte[]>> latestAwarenessBySession =
         new ConcurrentHashMap<>();
 
+    private final java.util.function.BiConsumer<NoteId, java.util.List<UpdateRecord>> onJoined;
+    private final ClusterBus cluster;
+
     public SyncRelayService(SnapshotStore snapshotStore, SyncRoomRegistry registry) {
+        this(snapshotStore, registry, (noteId, sent) -> { }, ClusterBus.single());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public SyncRelayService(SnapshotStore snapshotStore, SyncRoomRegistry registry, NoteStateCompactor compactor,
+                            ClusterBus cluster) {
+        this(snapshotStore, registry, compactor::joined, cluster);
+    }
+
+    SyncRelayService(SnapshotStore snapshotStore, SyncRoomRegistry registry,
+                     java.util.function.BiConsumer<NoteId, java.util.List<UpdateRecord>> onJoined, ClusterBus cluster) {
         this.snapshotStore = snapshotStore;
         this.registry = registry;
+        this.onJoined = onJoined;
+        this.cluster = cluster;
+        cluster.subscribe(this::onRemote);
     }
 
     private Object lockFor(NoteId noteId) {
@@ -56,9 +73,11 @@ public class SyncRelayService {
      * befindliche Historie wartet. Synchronisiert auf {@link #lockFor(NoteId)}, s. Klassendoc.
      */
     public void onJoin(NoteId noteId, SyncSession session) {
+        java.util.List<UpdateRecord> sent;
         synchronized (lockFor(noteId)) {
             registry.join(noteId, session);
-            for (var update : snapshotStore.listSince(noteId, 0)) {
+            sent = snapshotStore.current(noteId);
+            for (var update : sent) {
                 session.sendDocUpdate(noteId, update.payload());
             }
             var retainedAwareness = latestAwarenessBySession.get(noteId);
@@ -71,6 +90,7 @@ public class SyncRelayService {
             }
             session.sendCatchupComplete(noteId);
         }
+        onJoined.accept(noteId, sent);
     }
 
     /**
@@ -79,8 +99,9 @@ public class SyncRelayService {
      */
     public void onUpdate(NoteId noteId, SyncSession sender, byte[] payload, boolean ciphertext, String actor) {
         synchronized (lockFor(noteId)) {
-            snapshotStore.append(noteId, payload, ciphertext, actor);
+            var saved = snapshotStore.append(noteId, payload, ciphertext, actor);
             registry.broadcastExcept(noteId, sender, session -> session.sendDocUpdate(noteId, payload));
+            cluster.publish(new ClusterMessage.DocUpdated(noteId, saved.serverSequence()));
         }
     }
 
@@ -88,8 +109,10 @@ public class SyncRelayService {
     public java.util.Optional<UpdateRecord> saveIfCurrent(NoteId noteId, long expectedRevision, byte[] payload, String actor) {
         synchronized (lockFor(noteId)) {
             var appended = snapshotStore.appendIfCurrent(noteId, expectedRevision, payload, actor);
-            appended.ifPresent(update -> registry.broadcastExcept(noteId, null,
-                session -> session.sendDocUpdate(noteId, update.payload())));
+            appended.ifPresent(update -> {
+                registry.broadcastExcept(noteId, null, session -> session.sendDocUpdate(noteId, update.payload()));
+                cluster.publish(new ClusterMessage.DocUpdated(noteId, update.serverSequence()));
+            });
             return appended;
         }
     }
@@ -102,13 +125,19 @@ public class SyncRelayService {
     public void onAwarenessUpdate(NoteId noteId, SyncSession sender, byte[] payload) {
         latestAwarenessBySession.computeIfAbsent(noteId, id -> new ConcurrentHashMap<>()).put(sender.id(), payload);
         registry.broadcastExcept(noteId, sender, session -> session.sendAwarenessUpdate(noteId, payload));
+        cluster.publish(new ClusterMessage.Awareness(noteId, clusterKey(sender), payload));
+    }
+
+    /** Session-IDs zaehlen je Instanz ab 0 - ueber Instanzen hinweg erst mit deren ID eindeutig. */
+    private String clusterKey(SyncSession session) {
+        return cluster.instanceId() + "/" + session.id();
     }
 
     public void onLeave(NoteId noteId, SyncSession session) {
         registry.leave(noteId, session);
         var retained = latestAwarenessBySession.get(noteId);
-        if (retained != null) {
-            retained.remove(session.id());
+        if (retained != null && retained.remove(session.id()) != null) {
+            cluster.publish(new ClusterMessage.AwarenessGone(noteId, clusterKey(session)));
         }
     }
 
@@ -119,5 +148,43 @@ public class SyncRelayService {
     public void onNoteDeleted(NoteId noteId) {
         registry.notifyDeletedAndLeaveAll(noteId);
         latestAwarenessBySession.remove(noteId);
+        cluster.publish(new ClusterMessage.NoteDeleted(noteId));
+    }
+
+    /**
+     * Was eine andere Instanz gemeldet hat, nur an die eigenen Sitzungen - nie zurueck in den Bus.
+     * Fremde Cursor liegen unter ihrem Cluster-Schluessel, der nie mit einer eigenen Session-ID
+     * kollidiert, und werden Spaeterkommenden wie eigene mitgegeben.
+     */
+    private void onRemote(ClusterMessage message) {
+        switch (message) {
+            case ClusterMessage.DocUpdated m -> {
+                if (registry.sessionCount(m.noteId()) == 0) {
+                    return;
+                }
+                synchronized (lockFor(m.noteId())) {
+                    snapshotStore.listSince(m.noteId(), m.revision() - 1).stream()
+                        .filter(update -> update.serverSequence() == m.revision())
+                        .findFirst()
+                        .ifPresent(update -> registry.broadcastExcept(m.noteId(), null,
+                            session -> session.sendDocUpdate(m.noteId(), update.payload())));
+                }
+            }
+            case ClusterMessage.Awareness m -> {
+                latestAwarenessBySession.computeIfAbsent(m.noteId(), id -> new ConcurrentHashMap<>()).put(m.sessionKey(), m.payload());
+                registry.broadcastExcept(m.noteId(), null, session -> session.sendAwarenessUpdate(m.noteId(), m.payload()));
+            }
+            case ClusterMessage.AwarenessGone m -> {
+                var retained = latestAwarenessBySession.get(m.noteId());
+                if (retained != null) {
+                    retained.remove(m.sessionKey());
+                }
+            }
+            case ClusterMessage.NoteDeleted m -> {
+                registry.notifyDeletedAndLeaveAll(m.noteId());
+                latestAwarenessBySession.remove(m.noteId());
+            }
+            default -> { }
+        }
     }
 }

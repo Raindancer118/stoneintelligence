@@ -100,6 +100,32 @@ class DocumentLoaderTest {
         }
 
         @Test
+        @DisplayName("should ignore a metadata title left over from a slide template")
+        void should_fallBackToFileName_when_metadataTitleAppearsNowhereInTheDocument() throws Exception {
+            Path pdf = textPdf("Beschaffungslogistik", "Lieferantenauswahl und Bestellmengen");
+            Path renamed = pdf.resolveSibling("LuP Folien Beschaffungslogistik.pdf");
+            Files.move(pdf, renamed);
+            try (PDDocument document = org.apache.pdfbox.Loader.loadPDF(renamed.toFile())) {
+                document.getDocumentInformation().setTitle("10 uL System for epMotion");
+                document.save(renamed.toFile());
+            }
+
+            assertThat(load(renamed).title()).isEqualTo("LuP Folien Beschaffungslogistik");
+        }
+
+        @Test
+        @DisplayName("should keep a metadata title that the title page confirms")
+        void should_useMetadataTitle_when_firstPagesContainIt() throws Exception {
+            Path pdf = textPdf("Einfuehrung in die Produktionslogistik", "Inhalt");
+            try (PDDocument document = org.apache.pdfbox.Loader.loadPDF(pdf.toFile())) {
+                document.getDocumentInformation().setTitle("Einfuehrung in die Produktionslogistik");
+                document.save(pdf.toFile());
+            }
+
+            assertThat(load(pdf).title()).isEqualTo("Einfuehrung in die Produktionslogistik");
+        }
+
+        @Test
         @DisplayName("should hash the file so the same document is recognised again")
         void should_computeStableHash_when_loadingTwice() throws Exception {
             Path pdf = textPdf("Inhalt");

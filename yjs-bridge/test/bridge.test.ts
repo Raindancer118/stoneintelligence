@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { base64ToBytes, bytesToBase64, change, textOf } from "../src/bridge";
+import { base64ToBytes, bytesToBase64, change, merge, textOf } from "../src/bridge";
 
 function docFrom(updates: string[]): Y.Doc {
   const doc = new Y.Doc();
@@ -48,5 +48,30 @@ describe("yjs bridge", () => {
       expect(Array.from(base64ToBytes(bytesToBase64(bytes.slice(0, length))))).toEqual(Array.from(bytes.slice(0, length)));
     }
     expect(bytesToBase64(new Uint8Array([104, 105]))).toBe("aGk=");
+  });
+
+  it("merges a history into one update that joins like the full history", () => {
+    const history: string[] = [];
+    for (const text of ["a", "ab", "abc", "ac", "Ende: ac 😀"]) {
+      history.push(change(history, text) as string);
+    }
+
+    const state = merge(history);
+
+    expect(textOf([state])).toBe("Ende: ac 😀");
+    // A client that already had part of the history converges with one that gets only the state.
+    const partial = docFrom(history.slice(0, 2));
+    Y.applyUpdate(partial, base64ToBytes(state));
+    expect(partial.getText("content").toString()).toBe("Ende: ac 😀");
+    // An edit made offline against the old history still applies on top of the state.
+    const offline = docFrom(history.slice(0, 3));
+    const before = Y.encodeStateVector(offline);
+    offline.getText("content").insert(0, "X");
+    const late = bytesToBase64(Y.encodeStateAsUpdate(offline, before));
+    expect(textOf([state, late])).toBe(textOf([...history, late]));
+  });
+
+  it("merges an empty history into an update of an empty note", () => {
+    expect(textOf([merge([])])).toBe("");
   });
 });

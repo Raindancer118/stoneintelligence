@@ -48,7 +48,40 @@ public final class SourceNoteWriter {
     public Path fileFor(SourceDocument document) {
         Path current = config.vault().sourcesDir().resolve(NoteFileName.forTitle(document.title()));
         Path legacy = config.vault().sourcesDir().resolve(NoteFileName.forTitle(document.title()).replace(' ', '-'));
-        return !store.exists(current) && store.exists(legacy) ? legacy : current;
+        Path preferred = !store.exists(current) && store.exists(legacy) ? legacy : current;
+        if (belongsTo(preferred, document)) {
+            return preferred;
+        }
+        // Another document already has a source note under this title: two decks named "Folien"
+        // must not end up as one note listing both documents' notes.
+        String name = NoteFileName.forTitle(document.title());
+        String stem = name.substring(0, name.length() - 3);
+        for (int number = 2; ; number++) {
+            Path candidate = config.vault().sourcesDir().resolve(stem + " (" + number + ").md");
+            if (belongsTo(candidate, document)) {
+                return candidate;
+            }
+        }
+    }
+
+    /** Free, this document's own, or a note without any source block (written by a person). */
+    private boolean belongsTo(Path file, SourceDocument document) {
+        if (!store.exists(file)) {
+            return true;
+        }
+        try {
+            List<String> sources = ManagedBlock.ids(store.read(file)).stream()
+                    .filter(id -> id.startsWith(BLOCK_PREFIX)).toList();
+            return sources.isEmpty() || sources.contains(blockId(document));
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    private static final String BLOCK_PREFIX = "src-";
+
+    private static String blockId(SourceDocument document) {
+        return BLOCK_PREFIX + document.sha256().substring(0, 8);
     }
 
     /** @param noteLinks wikilinks to the notes of this run - already resolved to existing files */
@@ -116,7 +149,7 @@ public final class SourceNoteWriter {
             noteLinks.forEach(link -> block.append("- ").append(link).append('\n'));
         }
 
-        String blockId = "src-" + document.sha256().substring(0, 8);
+        String blockId = blockId(document);
         String existing = store.exists(file) ? store.read(file) : "";
         Frontmatter.Document parsed = Frontmatter.of(existing);
         String content = withoutLegacyProperties(parsed.frontmatter(), file)

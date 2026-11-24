@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FolderControllerTest {
 
@@ -39,5 +40,49 @@ class FolderControllerTest {
 
         assertThat(top).containsExactly(new FolderRepository.FolderChild("Abteilungen", true), new FolderRepository.FolderChild("Wiki", false));
         assertThat(below).containsExactly(new FolderRepository.FolderChild("Abteilungen/Vertrieb", false));
+    }
+
+    private void member(String subject, Set<Permission> permissions) {
+        var role = authorization.createRole(vaultId, "rolle-" + subject, permissions);
+        var group = authorization.createGroup(vaultId, "gruppe-" + subject);
+        authorization.assignRole(group.id(), role.id());
+        authorization.addMember(group.id(), subject);
+    }
+
+    @Test
+    void should_refuseDeletingFolderTree_whenItContainsASubfolderTheCallerMayNotDelete() {
+        member("ben", Set.of(Permission.READ, Permission.DELETE));
+        folderRepository.ensure(vaultId, "Abteilungen/Personal", "tom");
+        grants.put(vaultId, GrantTarget.folder("Abteilungen/Personal"), GrantScope.everyone(), Set.of(), "tom");
+
+        assertThatThrownBy(() -> controller.delete(vaultId.value().toString(), "Abteilungen", new TestingAuthenticationToken("ben", null)))
+            .isInstanceOf(ForbiddenException.class);
+
+        assertThat(folderRepository.list(vaultId)).contains("Abteilungen/Personal");
+        assertThat(grants.list(vaultId)).hasSize(1);
+    }
+
+    @Test
+    void should_refuseDeletingFolderTree_whenItWouldDropGrantsTheCallerMayNotManage() {
+        member("ben", Set.of(Permission.READ, Permission.DELETE));
+        folderRepository.ensure(vaultId, "Abteilungen/Vertrieb", "tom");
+        grants.put(vaultId, GrantTarget.folder("Abteilungen/Vertrieb"), GrantScope.user("ben"), Set.of(Permission.READ, Permission.DELETE), "tom");
+
+        assertThatThrownBy(() -> controller.delete(vaultId.value().toString(), "Abteilungen", new TestingAuthenticationToken("ben", null)))
+            .isInstanceOf(ForbiddenException.class);
+
+        assertThat(grants.list(vaultId)).hasSize(1);
+    }
+
+    @Test
+    void should_deleteFolderTreeWithItsGrants_whenCallerManagesEverythingInIt() {
+        member("tom", java.util.EnumSet.allOf(Permission.class));
+        folderRepository.ensure(vaultId, "Abteilungen/Personal", "tom");
+        grants.put(vaultId, GrantTarget.folder("Abteilungen/Personal"), GrantScope.everyone(), Set.of(), "tom");
+
+        controller.delete(vaultId.value().toString(), "Abteilungen", new TestingAuthenticationToken("tom", null));
+
+        assertThat(folderRepository.list(vaultId)).isEmpty();
+        assertThat(grants.list(vaultId)).isEmpty();
     }
 }

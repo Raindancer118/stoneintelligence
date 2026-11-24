@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Skeleton from "./Skeleton.svelte";
   import { onDestroy, onMount } from "svelte";
   import { api, type Note } from "../api";
   import { formatSize, previewKind } from "../fileKinds";
@@ -34,7 +35,8 @@
       if (!alive) return;
       if (isText) textPreview = await blob.text();
       if (url) URL.revokeObjectURL(url);
-      url = URL.createObjectURL(blob);
+      // blob: teilt den Ursprung des Dashboards; ein als HTML gelieferter "PDF"-Anhang dürfte dort nie gerendert werden.
+      url = URL.createObjectURL(kind === "pdf" ? new Blob([blob], { type: "application/pdf" }) : blob);
     } catch (e) {
       if (alive) error = e instanceof Error ? e.message : "Die Datei konnte nicht geladen werden.";
     } finally {
@@ -87,7 +89,7 @@
       <div class="empty"><h3>Große Datei</h3><p>Sie wird erst geladen, wenn du sie ansehen oder herunterladen möchtest.</p>
         <button class="primary" onclick={load}>Datei laden ({formatSize(size)})</button></div>
     {:else if loading}
-      <p class="loading" role="status">Datei wird geladen…</p>
+      <Skeleton kind="document" label="Datei wird geladen…" />
     {:else if url}
       {#if isText && textPreview !== null}
         <pre aria-label="Textvorschau">{textPreview}</pre>

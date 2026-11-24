@@ -1,15 +1,25 @@
 <script lang="ts">
+  import Skeleton from "./Skeleton.svelte";
   import { withTransition } from "../motion";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
+  import { LoadingGate } from "../loadingGate";
   import { api, ApiError, type Note, type NoteContent, type NoteHistory } from "../api";
   import { activityLines, describeEvent } from "../historyText";
   import VersionHistory from "./VersionHistory.svelte";
   import { decodeContent, prepareUpdate, renderMarkdown, normalizeNotePath, downloadNote } from "../noteContent";
 
-  let { note, permissions, onChanged, onDeleted, onDirtyChange }: {
+  let { note, permissions, onChanged, onDeleted, onDirtyChange, onShare, onSimilar }: {
     note: Note; permissions: string[]; onChanged: (note: Note) => void;
     onDeleted: () => void; onDirtyChange: (dirty: boolean) => void;
+    onShare?: () => void; onSimilar?: () => void;
   } = $props();
+  let menu = $state<HTMLDetailsElement | null>(null);
+  /** Menüeintrag ausführen und das Menü schließen. */
+  function pick(action: () => void) { if (menu) menu.open = false; action(); }
+  let skeleton = $state(false);
+  const gate = new LoadingGate(visible => skeleton = visible);
+  $effect(() => gate.set(loading));
+  onDestroy(() => gate.dispose());
   let content = $state<NoteContent | null>(null);
   let baseline = $state("");
   let draft = $state("");
@@ -109,42 +119,42 @@
 
 <svelte:window onbeforeunload={beforeUnload} onkeydown={shortcut} />
 <article class="document" aria-label="Notiz">
-  <header class="document-heading">
+  <header class="document-bar">
     <div class="title-block"><p class="path">{note.path}</p><h2>{note.path.split("/").pop()?.replace(/\.md$/i, "")}</h2></div>
-    <span class="save-state" aria-live="polite">{saving ? "Wird gespeichert…" : dirty ? "Ungespeicherte Änderungen" : savedAt ? `Gespeichert um ${savedAt}` : ""}</span>
+    <div class="document-actions">
+      <span class="save-state" aria-live="polite">{saving ? "Wird gespeichert…" : dirty ? "Nicht gespeichert" : savedAt ? `Gespeichert um ${savedAt}` : ""}</span>
+      <div class="modes" role="group" aria-label="Ansicht">
+        <button class:chosen={mode === "read"} aria-pressed={mode === "read"} onclick={() => void withTransition(() => mode = "read", "note")}>Lesen</button>
+        {#if writable}<button class:chosen={mode === "edit"} aria-pressed={mode === "edit"} disabled={!content || loading || saving} onclick={() => void withTransition(() => mode = "edit", "note")}>Bearbeiten</button>{/if}
+      </div>
+      {#if writable && mode === "edit"}<button class="primary" disabled={!dirty || loading || saving || conflict || busy} onclick={save}>{saving ? "Speichert…" : "Speichern"}</button>{/if}
+      {#if onShare}<button class="secondary" onclick={onShare}>Freigeben</button>{/if}
+      <details class="more-menu" bind:this={menu}><summary aria-label="Weitere Aktionen">Mehr</summary>
+        <div class="menu" role="group" aria-label="Weitere Aktionen">
+          {#if onSimilar}<button class="quiet" onclick={() => pick(onSimilar!)}>Ähnliche Notizen</button>{/if}
+          <button class="quiet" aria-expanded={showHistory} onclick={() => pick(toggleHistory)}>Versionen und Verlauf</button>
+          {#if permissions.includes("WRITE")}<button class="quiet" disabled={saving || busy} onclick={() => pick(() => { newPath = note.path; renaming = true; })}>Umbenennen / verschieben</button>{/if}
+          <button class="quiet" disabled={!content || loading} onclick={() => pick(() => downloadNote(note.path, draft))}>Als Markdown herunterladen</button>
+          <button class="quiet" disabled={loading || saving || busy} onclick={() => pick(load)}>Neu laden</button>
+          {#if permissions.includes("DELETE")}<button class="quiet menu-danger" disabled={saving || busy} onclick={() => pick(remove)}>Notiz löschen</button>{/if}
+        </div>
+      </details>
+    </div>
   </header>
-  <div class="document-toolbar">
-    <div class="modes" aria-label="Ansicht">
-      <button class:chosen={mode === "read"} aria-pressed={mode === "read"} onclick={() => void withTransition(() => mode = "read", "note")}>Lesen</button>
-      {#if writable}<button class:chosen={mode === "edit"} aria-pressed={mode === "edit"} disabled={!content || loading || saving} onclick={() => void withTransition(() => mode = "edit", "note")}>Bearbeiten</button>{/if}
-    </div>
-    <div class="actions">
-      <button class="quiet" disabled={!content || loading} onclick={() => downloadNote(note.path, draft)}>Markdown exportieren</button>
-      {#if writable}<button class="primary" disabled={!dirty || loading || saving || conflict || busy} onclick={save}>{saving ? "Speichert…" : "Speichern"}</button>{/if}
-    </div>
-  </div>
+  {#if renaming}<form class="rename-form" onsubmit={(e) => { e.preventDefault(); void rename(); }}><label for="new-path">Neuer Pfad</label><input id="new-path" bind:value={newPath} required disabled={busy} /><button class="primary" disabled={busy}>Pfad speichern</button><button type="button" class="quiet" onclick={() => renaming = false}>Abbrechen</button></form>{/if}
   {#if error}<div class="feedback error" role="alert"><p>{error}</p><button class="secondary" disabled={loading || saving} onclick={load}>{conflict ? "Serverstand laden" : "Erneut laden"}</button></div>{/if}
   {#if note.noteLevel === 101}
     <div class="empty"><h3>Verschlüsselte Notiz</h3><p>Öffne diese Notiz im Obsidian-Plugin. Der Browser hat keinen Zugriff auf deinen Schlüssel.</p></div>
-  {:else if loading}
-    <p class="loading" role="status">Notiz wird geladen…</p>
+  {:else if loading || skeleton}
+    {#if skeleton}<Skeleton kind="document" gated label="Notiz wird geladen…" />{:else}<p class="sr-only" role="status">Notiz wird geladen…</p>{/if}
   {:else if content}
     {#if mode === "edit"}
       <div class="writing"><label class="sr-only" for="note-body">Markdown-Inhalt</label><textarea id="note-body" aria-label="Markdown-Inhalt" spellcheck="true" bind:value={draft} disabled={saving || busy} placeholder="Deine Notiz beginnt hier…"></textarea><p class="hint">Markdown wird unterstützt. Speichern mit Strg+S oder ⌘S.</p></div>
     {:else}
       <div class="reading">{#if draft}<div class="markdown">{@html preview}</div>{:else}<div class="empty"><h3>Hier ist Platz für deine Gedanken.</h3><p>{writable ? "Wähle Bearbeiten, um diese Notiz zu füllen." : "Diese Notiz hat noch keinen Inhalt."}</p></div>{/if}</div>
     {/if}
-    <footer class="document-footer"><span>{words} {words === 1 ? "Wort" : "Wörter"}</span><span>{writable ? "Änderungen werden beim Speichern übertragen." : "Du kannst diese Notiz lesen."}</span></footer>
+    <footer class="document-footer"><span>{words} {words === 1 ? "Wort" : "Wörter"}</span>{#if !writable}<span>Nur lesen</span>{/if}</footer>
   {/if}
-  <details class="details"><summary>Details und Aktionen</summary>
-    <dl><div><dt>Erstellt von</dt><dd>{note.createdBy}</dd></div><div><dt>Erstellt am</dt><dd>{date(note.createdAt)}</dd></div></dl>
-    <div class="detail-actions">
-      <button class="secondary" disabled={loading || saving || busy} onclick={load}>Inhalt aktualisieren</button>
-      <button class="secondary" aria-expanded={showHistory} onclick={toggleHistory}>Änderungsverlauf</button>
-      {#if permissions.includes("WRITE")}<button class="secondary" disabled={saving || busy} onclick={() => { newPath = note.path; renaming = !renaming; }}>Umbenennen / verschieben</button>{/if}
-      {#if permissions.includes("DELETE")}<button class="danger" disabled={saving || busy} onclick={remove}>Notiz löschen</button>{/if}
-    </div>
-    {#if renaming}<form class="rename-form" onsubmit={(e) => { e.preventDefault(); void rename(); }}><label for="new-path">Neuer Pfad</label><input id="new-path" bind:value={newPath} required disabled={busy} /><button class="primary" disabled={busy}>Pfad speichern</button><button type="button" class="quiet" onclick={() => renaming = false}>Abbrechen</button></form>{/if}
-    {#if showHistory}<section class="history" aria-label="Änderungsverlauf">{#if historyLoading}<p role="status">Verlauf wird geladen…</p>{:else if history}<ul class="activity">{#each history.activity ? activityLines(history.activity) : [] as line}<li>{line}</li>{/each}</ul>{#if note.noteLevel !== 101}<VersionHistory {note} {writable} {dirty} onRestored={afterRestore} />{/if}<h4>Protokoll</h4>{#if history.events.length}<ol>{#each [...history.events].reverse() as event}<li><strong>{describeEvent(event)}</strong><span>{date(event.occurredAt)}</span></li>{/each}</ol>{:else}<p>Noch keine Einträge.</p>{/if}{/if}</section>{/if}
-  </details>
+  {#if showHistory}<div class="history-panel"><dl class="note-facts"><div><dt>Angelegt von</dt><dd>{note.createdBy}</dd></div><div><dt>Angelegt am</dt><dd>{date(note.createdAt)}</dd></div></dl>
+  <section class="history" aria-label="Änderungsverlauf">{#if historyLoading}<Skeleton kind="list" rows={3} label="Verlauf wird geladen…" />{:else if history}<ul class="activity">{#each history.activity ? activityLines(history.activity) : [] as line}<li>{line}</li>{/each}</ul>{#if note.noteLevel !== 101}<VersionHistory {note} {writable} {dirty} onRestored={afterRestore} />{/if}<h4>Protokoll</h4>{#if history.events.length}<ol>{#each [...history.events].reverse() as event}<li><strong>{describeEvent(event)}</strong><span>{date(event.occurredAt)}</span></li>{/each}</ol>{:else}<p>Noch keine Einträge.</p>{/if}{/if}</section></div>{/if}
 </article>

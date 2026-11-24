@@ -74,4 +74,13 @@ export function change(updates: string[], next: string): string | null {
   }
 }
 
-(globalThis as unknown as { yjsBridge: unknown }).yjsBridge = { textOf, change };
+/**
+ * Die Historie als EIN Update (ADR 0013, Schritt 5): Beitretende bekommen diesen Zustand statt
+ * zehntausender Einzel-Updates. Ergebnis ist ein normales Update, kein Snapshot - Clients, die
+ * Teile davon schon kennen, wenden es idempotent an.
+ */
+export function merge(updates: string[]): string {
+  return bytesToBase64(Y.mergeUpdates(updates.map(base64ToBytes)));
+}
+
+(globalThis as unknown as { yjsBridge: unknown }).yjsBridge = { textOf, change, merge };

@@ -26,6 +26,10 @@ lauf 2026-09-20
 [ -f "$TMP/db/stoneintelligence-2026-09-20.dump" ] || fehler "kein Dump"
 docker cp "$TMP/db/stoneintelligence-2026-09-20.dump" "$NAME:/tmp/t.dump"
 docker exec "$NAME" pg_restore -l /tmp/t.dump | grep -q "TABLE DATA public notizen" || fehler "Dump ohne Daten"
+# Echte Wiederherstellung in eine frische Datenbank (docs/operations.md, Abschnitt Restore)
+docker exec "$NAME" createdb -U si restore_test
+docker exec "$NAME" pg_restore -U si -d restore_test --no-owner --exit-on-error /tmp/t.dump || fehler "Restore fehlgeschlagen"
+[ "$(docker exec "$NAME" psql -U si -d restore_test -tA -c 'SELECT count(*) FROM notizen')" = "2" ] || fehler "Restore ohne Daten"
 [ "$(cat "$TMP/kopie/aktuell/ab/cd/abcd1")" = "pdf" ] || fehler "Datei nicht kopiert"
 
 # 2. Eine geloeschte Datei bleibt 30 Tage im Papierkorb der Sicherung, dann ist sie weg

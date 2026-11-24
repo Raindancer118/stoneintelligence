@@ -71,7 +71,7 @@ public final class PdfLoader implements DocumentLoader {
     public SourceDocument load(Path file) throws IOException {
         List<Integer> skipped = new ArrayList<>();
         boolean truncated;
-        String title;
+        java.util.Optional<MetadataTitle> metadataTitle;
         String[] texts;
         List<Integer> scans = new ArrayList<>();
         List<OcrResult> read;
@@ -80,7 +80,7 @@ public final class PdfLoader implements DocumentLoader {
             int available = document.getNumberOfPages();
             int limit = Math.min(available, config.ingest().maxPages());
             truncated = limit < available;
-            title = metadataTitle(document).orElse(Documents.titleFromFileName(file));
+            metadataTitle = metadataTitle(document);
             texts = new String[limit + 1];
 
             PDFTextStripper stripper = new PDFTextStripper();
@@ -153,6 +153,9 @@ public final class PdfLoader implements DocumentLoader {
                     + (skipped.size() == 1 ? "Seite " : "Seiten ")
                     + String.join(", ", skipped.stream().map(String::valueOf).toList()) + ")");
         }
+        String title = metadataTitle.filter(candidate -> confirmed(candidate, file, pages))
+                .map(MetadataTitle::text)
+                .orElse(Documents.titleFromFileName(file));
         return new SourceDocument(file, title, DocumentKind.PDF, pages, skipped, truncated,
                 Documents.sha256(file), unreadable);
     }
@@ -205,13 +208,14 @@ public final class PdfLoader implements DocumentLoader {
      * {@code Microsoft Word - } prefix — and using those makes every note cite a source called
      * "(anonymous)". The file name is the better fallback.
      */
-    private static java.util.Optional<String> metadataTitle(PDDocument document) {
+    private static java.util.Optional<MetadataTitle> metadataTitle(PDDocument document) {
         var info = document.getDocumentInformation();
         if (info == null || info.getTitle() == null) {
             return java.util.Optional.empty();
         }
         String title = info.getTitle().trim();
-        if (title.startsWith("Microsoft Word - ")) {
+        boolean fromWordExport = title.startsWith("Microsoft Word - ");
+        if (fromWordExport) {
             title = title.substring("Microsoft Word - ".length()).trim();
         }
         title = title.replaceAll("(?i)\\.(pdf|docx?|odt|tex)$", "").trim();
@@ -220,7 +224,48 @@ public final class PdfLoader implements DocumentLoader {
         boolean useless = title.length() < 3
                 || PLACEHOLDER_TITLES.contains(comparable)
                 || comparable.chars().noneMatch(Character::isLetter);
-        return useless ? java.util.Optional.empty() : java.util.Optional.of(title);
+        if (useless) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(new MetadataTitle(title, fromWordExport));
+    }
+
+    /** @param fromWordExport Word writes the name of the .docx it exported from - the document's own name */
+    private record MetadataTitle(String text, boolean fromWordExport) {
+    }
+
+    /** Pages a real title shows up on: the title slide, sometimes after a cover or agenda. */
+    private static final int TITLE_PAGES = 3;
+
+    /**
+     * Whether the document backs its metadata title. Slide decks inherit the title of whatever
+     * template they started from - two lecture decks once both arrived as "10 µL System for
+     * epMotion", which then named their source notes, overview and links. A real title appears on
+     * the first pages or in the file name; one that appears in neither is not this document's.
+     */
+    private static boolean confirmed(MetadataTitle candidate, Path file, List<Page> pages) {
+        if (candidate.fromWordExport()) {
+            return true;
+        }
+        java.util.Set<String> words = significantWords(candidate.text());
+        if (words.isEmpty()) {
+            return false;
+        }
+        StringBuilder evidence = new StringBuilder(Documents.titleFromFileName(file)).append('\n');
+        pages.stream().limit(TITLE_PAGES).forEach(page -> evidence.append(page.text()).append('\n'));
+        java.util.Set<String> present = significantWords(evidence.toString());
+        long found = words.stream().filter(present::contains).count();
+        return found * 10 >= words.size() * 6L;
+    }
+
+    private static java.util.Set<String> significantWords(String text) {
+        java.util.Set<String> words = new java.util.HashSet<>();
+        for (String word : text.toLowerCase(java.util.Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+            if (word.length() >= 3 || (word.length() >= 2 && word.chars().allMatch(Character::isDigit))) {
+                words.add(word);
+            }
+        }
+        return words;
     }
 
     private static byte[] renderPng(PDFRenderer renderer, int pageNumber) throws IOException {

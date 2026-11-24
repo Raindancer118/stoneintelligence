@@ -60,7 +60,7 @@
 {#if settings}
   <section class="block linking" aria-label="Verlinkung">
     <h3>Verlinkung</h3>
-    <p class="hint">Nennt eine Notiz den Titel oder einen Alias einer anderen, wird die Stelle zum Link – nur eingefügtes Markup, der Text bleibt, wie er ist. Das geschieht auf dem Server, ohne externe KI; jeder Lauf lässt sich unten unter „Änderungen der KI“ rückgängig machen.</p>
+    <p class="hint">Nennt eine Notiz den Titel oder einen Alias einer anderen, wird die Stelle zum Link – nur eingefügtes Markup, der Text bleibt, wie er ist. Das geschieht auf dem Server, ohne externe KI; jeder Lauf lässt sich oben unter „Änderungen der KI“ rückgängig machen.</p>
     <label class="mode">Was verlinkt wird
       <select value={settings.mode ?? "LITERAL"} disabled={!manage || busy} onchange={e => save({ mode: e.currentTarget.value as "LITERAL" | "SEMANTIC" | "AI" })}>
         <option value="LITERAL">Nur wörtliche Nennungen</option>

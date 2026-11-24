@@ -37,9 +37,10 @@ public class VaultController {
     }
 
     @PostMapping("/api/v1/vaults")
+    @org.springframework.transaction.annotation.Transactional
     public VaultResponse create(@RequestBody CreateVaultRequest request, Authentication authentication) {
         var actor = authentication.getName();
-        var vault = vaults.create(request.name());
+        var vault = vaults.create(DisplayNames.require(request.name()));
         var ownerRole = authorization.createRole(vault.id(), "owner", EnumSet.allOf(Permission.class));
         var ownerGroup = authorization.createGroup(vault.id(), "owners");
         authorization.assignRole(ownerGroup.id(), ownerRole.id());
@@ -84,10 +85,7 @@ public class VaultController {
         if (request.name() == null && request.selectiveSync() == null) {
             throw new de.tstieh.stoneintelligence.platform.identity.InvalidGrantException("nothing to change");
         }
-        if (request.name() != null && request.name().isBlank()) {
-            throw new de.tstieh.stoneintelligence.platform.identity.InvalidGrantException("a vault needs a name");
-        }
-        var updated = request.name() == null ? vaults.findById(vId) : vaults.rename(vId, request.name().strip());
+        var updated = request.name() == null ? vaults.findById(vId) : vaults.rename(vId, DisplayNames.require(request.name()));
         if (request.selectiveSync() != null) {
             updated = vaults.setSelectiveSync(vId, request.selectiveSync());
         }

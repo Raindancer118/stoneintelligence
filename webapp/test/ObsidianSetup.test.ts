@@ -58,8 +58,18 @@ describe("Obsidian einrichten", () => {
     render(ObsidianSetup, { vaults: [{ id: "2f719285-2483-4e59-89e0-334af2813a70", name: "Team", createdAt: "" }], signedIn: true,
       onLogin: vi.fn(), scopedVault: true });
 
-    expect(screen.getByRole("heading", { name: "„Team“ in Obsidian öffnen" })).toBeTruthy();
+    // Die Seitenueberschrift kommt jetzt aus dem Bereich "Obsidian verbinden"; der Verbinden-Knopf bleibt der erste Link.
+    expect(screen.getAllByRole("link")[0].textContent).toBe("Mit „Team“ verbinden");
     expect(screen.getAllByRole("link", { name: "Mit „Team“ verbinden" })).toHaveLength(2);
   });
-});
 
+  it("offers the connection data for manual setup when opened from a vault", async () => {
+    const copy = vi.fn();
+    render(ObsidianSetup, { vaults: [{ id: "2f719285-2483-4e59-89e0-334af2813a70", name: "Team", createdAt: "" }], signedIn: true,
+      onLogin: vi.fn(), scopedVault: true, onCopyConfig: copy });
+
+    screen.getByRole("button", { name: "Verbindungsdaten kopieren" }).click();
+
+    expect(copy).toHaveBeenCalled();
+  });
+});

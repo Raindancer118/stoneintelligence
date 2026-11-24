@@ -72,7 +72,8 @@ describe("notes workspace", () => {
     URL.revokeObjectURL = vi.fn();
     render(NotesWorkspace, { vault, onDirtyChange: vi.fn() });
 
-    await screen.findByText(/1 Notiz, 1 Datei/);
+    // Der Zaehler ist weg (er zaehlte nur geladene Ordner); Datei und Notiz stehen nebeneinander in der Liste.
+    await screen.findByRole("button", { name: new RegExp(note.path.split("/").pop()!.replace(/\.md$/, "")) });
     await fireEvent.click(await screen.findByRole("button", { name: /Skript\.pdf.*PDF/ }));
 
     await screen.findByRole("link", { name: "Herunterladen" });

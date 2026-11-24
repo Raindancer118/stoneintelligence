@@ -5,7 +5,10 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoders;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 
 /**
  * Baut den produktiven {@link JwtDecoder} explizit selbst statt Spring Boots eigene
@@ -21,7 +24,13 @@ import org.springframework.security.oauth2.jwt.JwtDecoders;
 public class OidcJwtDecoderConfig {
 
     @Bean
-    public JwtDecoder jwtDecoder(@Value("${STONEINTELLIGENCE_OIDC_ISSUER_URI}") String issuerUri) {
-        return JwtDecoders.fromIssuerLocation(issuerUri);
+    public JwtDecoder jwtDecoder(@Value("${STONEINTELLIGENCE_OIDC_ISSUER_URI}") String issuerUri,
+                                 @Value("${STONEINTELLIGENCE_OIDC_AUDIENCE:}") String audience) {
+        NimbusJwtDecoder decoder = JwtDecoders.fromIssuerLocation(issuerUri);
+        if (!audience.isBlank()) {
+            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(JwtValidators.createDefaultWithIssuer(issuerUri),
+                new AudienceValidator(audience.strip())));
+        }
+        return decoder;
     }
 }

@@ -73,4 +73,14 @@ final class InterceptingSnapshotStore implements SnapshotStore {
             throw new RuntimeException(e);
         }
     }
+
+    @Override
+    public java.util.Optional<NoteState> state(NoteId noteId) {
+        return delegate.state(noteId);
+    }
+
+    @Override
+    public void saveState(NoteId noteId, long revision, byte[] state) {
+        delegate.saveState(noteId, revision, state);
+    }
 }

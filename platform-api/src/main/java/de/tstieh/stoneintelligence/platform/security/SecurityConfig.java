@@ -143,6 +143,12 @@ public class SecurityConfig {
         return http.build();
     }
 
+    /** Der groesste JSON-Body ist ein 2-MiB-Yjs-Update als Base64 (NoteContentController). */
+    @Bean
+    public RequestSizeLimitFilter requestSizeLimitFilter(@Value("${stoneintelligence.max-request-bytes:4194304}") long maxBytes) {
+        return new RequestSizeLimitFilter(maxBytes);
+    }
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         var configuration = new CorsConfiguration();

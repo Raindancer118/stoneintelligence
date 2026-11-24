@@ -41,6 +41,9 @@ export const PRESETS: { id: PresetId; label: string; permissions: Permission[] |
 ];
 
 const ORDER: Permission[] = ["READ", "WRITE", "CREATE", "DELETE", "MANAGE"];
+export function permissionWord(permission: Permission): string {
+  return WORDS[permission];
+}
 const WORDS: Record<Permission, string> = {
   READ: "Lesen", WRITE: "Bearbeiten", CREATE: "Anlegen", DELETE: "Löschen", MANAGE: "Verwalten",
 };

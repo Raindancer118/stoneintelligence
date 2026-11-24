@@ -126,4 +126,23 @@ public class JdbcSnapshotStore implements SnapshotStore {
             .forEach(entry -> revisions.put(entry.getKey(), entry.getValue()));
         return revisions;
     }
+
+    @Override
+    public java.util.Optional<NoteState> state(NoteId noteId) {
+        return jdbcClient.sql("SELECT revision, state FROM platform.note_states WHERE note_id = :noteId")
+            .param("noteId", noteId.value())
+            .query((rs, rowNum) -> new NoteState(rs.getLong("revision"), rs.getBytes("state")))
+            .optional();
+    }
+
+    @Override
+    public void saveState(NoteId noteId, long revision, byte[] state) {
+        jdbcClient.sql("""
+                INSERT INTO platform.note_states (note_id, revision, state) VALUES (:noteId, :revision, :state)
+                ON CONFLICT (note_id) DO UPDATE SET revision = EXCLUDED.revision, state = EXCLUDED.state, updated_at = now()
+                WHERE platform.note_states.revision < EXCLUDED.revision
+                """)
+            .param("noteId", noteId.value()).param("revision", revision).param("state", state)
+            .update();
+    }
 }
