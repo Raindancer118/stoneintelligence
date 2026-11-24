@@ -145,4 +145,98 @@ public class HistoryController {
                 event.noteId() == null ? null : event.noteId().value().toString(), path, paths);
         }
     }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper()
+        .findAndRegisterModules().disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    private static final int EXPORT_PAGE = 1000;
+
+    /**
+     * Das Protokoll als Datei, etwa fuer ein SIEM: {@code format} csv oder jsonl, {@code from}/{@code to} als
+     * ISO-Zeitpunkt (leer = alles). Nur fuer Verwaltende; sichtbar ist, was auch das Protokoll im Dashboard zeigt.
+     */
+    @GetMapping("/api/v1/vaults/{vaultId}/audit/export")
+    public void exportLog(@PathVariable String vaultId, @RequestParam(defaultValue = "csv") String format,
+                          @RequestParam(defaultValue = "") String from, @RequestParam(defaultValue = "") String to,
+                          Authentication auth, jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        var vId = VaultId.of(vaultId);
+        access.require(vId, auth.getName(), Permission.MANAGE);
+        var csv = switch (format) {
+            case "csv" -> true;
+            case "jsonl" -> false;
+            default -> throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "format must be csv or jsonl");
+        };
+        var start = instant(from, Instant.EPOCH);
+        var end = instant(to, Instant.now().plusSeconds(1));
+        var visible = visibility(vId, auth.getName());
+
+        response.setCharacterEncoding("UTF-8");
+        response.setContentType(csv ? "text/csv" : "application/x-ndjson");
+        response.setHeader("Content-Disposition", "attachment; filename=\"stoneintelligence-audit-" + vaultId + (csv ? ".csv\"" : ".jsonl\""));
+        var out = response.getWriter();
+        if (csv) {
+            out.write(csvLine(List.of("occurred_at", "actor", "action", "path", "note_id", "details")));
+        }
+        var paths = new HashMap<NoteId, Optional<String>>();
+        AuditEvent after = null;
+        while (true) {
+            var page = audit.listBetween(vId, start, end, after, EXPORT_PAGE);
+            for (var event : page) {
+                var fallback = event.noteId() == null ? null
+                    : paths.computeIfAbsent(event.noteId(), id -> notes.findById(vId, id).map(Note::path)).orElse(null);
+                var shown = visible.apply(event, fallback);
+                if (shown.isEmpty()) {
+                    continue;
+                }
+                var path = shown.get().paths().isEmpty() ? "" : shown.get().paths().getLast();
+                var noteId = event.noteId() == null ? "" : event.noteId().value().toString();
+                if (csv) {
+                    out.write(csvLine(List.of(event.occurredAt().toString(), event.actor(), event.action(), path, noteId,
+                        JSON.writeValueAsString(event.payload()))));
+                } else {
+                    var line = new java.util.LinkedHashMap<String, Object>();
+                    line.put("occurredAt", event.occurredAt().toString());
+                    line.put("actor", event.actor());
+                    line.put("action", event.action());
+                    line.put("path", path);
+                    line.put("noteId", noteId);
+                    line.put("details", event.payload());
+                    out.write(JSON.writeValueAsString(line) + "\n");
+                }
+            }
+            if (page.size() < EXPORT_PAGE) {
+                break;
+            }
+            after = page.getLast();
+        }
+        out.flush();
+    }
+
+    private static Instant instant(String value, Instant fallback) {
+        if (value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Instant.parse(value.strip());
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "from/to must be ISO instants like 2026-01-31T00:00:00Z");
+        }
+    }
+
+    /** Alles in Anfuehrungszeichen; was mit = + - @ beginnt, bekommt ein ' davor (keine Formel in Excel). */
+    static String csvLine(List<String> cells) {
+        var line = new StringBuilder();
+        for (var cell : cells) {
+            if (!line.isEmpty()) {
+                line.append(',');
+            }
+            var value = cell == null ? "" : cell;
+            if (!value.isEmpty() && "=+-@\t\r".indexOf(value.charAt(0)) >= 0) {
+                value = "'" + value;
+            }
+            line.append('"').append(value.replace("\"", "\"\"")).append('"');
+        }
+        return line.append("\r\n").toString();
+    }
 }

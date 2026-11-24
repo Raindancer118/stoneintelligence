@@ -92,4 +92,23 @@ public class AuditService implements AuditRecorder, AuditReader {
             .query(MAPPER)
             .list();
     }
+
+    @Override
+    public List<AuditEvent> listBetween(VaultId vaultId, java.time.Instant from, java.time.Instant to, AuditEvent after, int limit) {
+        return jdbcClient.sql("""
+                SELECT * FROM platform.audit_events
+                WHERE vault_id = :vaultId AND occurred_at >= :from AND occurred_at < :to
+                  AND (CAST(:afterAt AS timestamptz) IS NULL OR (occurred_at, id) > (CAST(:afterAt AS timestamptz), CAST(:afterId AS uuid)))
+                ORDER BY occurred_at, id
+                LIMIT :limit
+                """)
+            .param("vaultId", vaultId.value())
+            .param("from", java.sql.Timestamp.from(from))
+            .param("to", java.sql.Timestamp.from(to))
+            .param("afterAt", after == null ? null : java.sql.Timestamp.from(after.occurredAt()))
+            .param("afterId", after == null ? null : after.id())
+            .param("limit", limit)
+            .query(MAPPER)
+            .list();
+    }
 }

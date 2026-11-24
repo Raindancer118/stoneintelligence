@@ -99,4 +99,24 @@ class AuditServiceIT {
 
         assertThat(recent).extracting(AuditEvent::action).hasSize(3).doesNotContain("OTHER", "EVENT_0", "EVENT_1");
     }
+
+    @Test
+    void should_pageThroughAPeriod_oldestFirst_withoutGapsOrRepeats() {
+        var vault = de.tstieh.stoneintelligence.domain.id.VaultId.newId();
+        for (int i = 0; i < 5; i++) {
+            auditService.record(vault, null, "tom", "export.test-" + i, java.util.Map.of("i", i));
+        }
+        var from = java.time.Instant.now().minusSeconds(3600);
+        var to = java.time.Instant.now().plusSeconds(60);
+
+        var first = auditService.listBetween(vault, from, to, null, 2);
+        var second = auditService.listBetween(vault, from, to, first.getLast(), 2);
+        var third = auditService.listBetween(vault, from, to, second.getLast(), 2);
+
+        var actions = new java.util.ArrayList<String>();
+        java.util.stream.Stream.of(first, second, third).flatMap(java.util.List::stream).forEach(e -> actions.add(e.action()));
+        assertThat(actions).containsExactlyInAnyOrder("export.test-0", "export.test-1", "export.test-2", "export.test-3", "export.test-4");
+        assertThat(third).hasSize(1);
+        assertThat(auditService.listBetween(vault, to, to.plusSeconds(60), null, 10)).isEmpty();
+    }
 }

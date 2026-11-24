@@ -12,4 +12,10 @@ public interface AuditReader {
 
     /** Die juengsten {@code limit} Ereignisse des Vaults, neueste zuerst. */
     List<AuditEvent> listRecent(VaultId vaultId, int limit);
+
+    /**
+     * Ereignisse mit {@code from <= occurredAt < to}, aelteste zuerst, nach {@code after} (Blaettern;
+     * {@code null} = von vorn). Fuer den Export.
+     */
+    List<AuditEvent> listBetween(VaultId vaultId, java.time.Instant from, java.time.Instant to, AuditEvent after, int limit);
 }

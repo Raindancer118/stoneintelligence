@@ -47,6 +47,14 @@ class HistoryControllerTest {
         public List<AuditEvent> listRecent(VaultId vaultId, int limit) {
             return events.reversed().stream().filter(e -> e.vaultId().equals(vaultId)).limit(limit).toList();
         }
+
+        @Override
+        public List<AuditEvent> listBetween(VaultId vaultId, Instant from, Instant to, AuditEvent after, int limit) {
+            return events.stream().filter(e -> e.vaultId().equals(vaultId)
+                    && !e.occurredAt().isBefore(from) && e.occurredAt().isBefore(to)
+                    && (after == null || events.indexOf(e) > events.indexOf(after)))
+                .limit(limit).toList();
+        }
     }
 
     private final FakeAuthorizationRepository authorization = new FakeAuthorizationRepository();
@@ -134,5 +142,50 @@ class HistoryControllerTest {
             .containsExactly("note.created", "note.content-updated", "note.deleted");
         assertThat(controller.noteHistory(vault(), secret.id().value().toString(), new TestingAuthenticationToken("ben", null)).events())
             .isEmpty();
+    }
+
+    private String export(String actor, String format, String from, String to) throws Exception {
+        var response = new org.springframework.mock.web.MockHttpServletResponse();
+        controller.exportLog(vault(), format, from, to, new TestingAuthenticationToken(actor, null), response);
+        return response.getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void should_exportTheVaultLogAsCsv_oldestFirst() throws Exception {
+        var csv = export("tom", "csv", "", "").lines().toList();
+
+        assertThat(csv.getFirst()).isEqualTo("\"occurred_at\",\"actor\",\"action\",\"path\",\"note_id\",\"details\"");
+        assertThat(csv).hasSize(6);
+        assertThat(csv.get(1)).startsWith("\"2026-09-26T08:01:00Z\",\"tom\",\"note.created\",\"Team/plan.md\"");
+    }
+
+    // Ein Pfad wie "=HYPERLINK(...)" wuerde in Excel zur Formel.
+    @Test
+    void should_neutraliseFormulas_inCsvCells() throws Exception {
+        var evil = notes.create(vaultId, "=HYPERLINK(\"http://x\")\".md", NoteLevel.of(1), "tom");
+        audit.record(vaultId, evil.id(), "tom", "note.created", Map.of("path", evil.path()));
+
+        var csv = export("tom", "csv", "", "");
+
+        assertThat(csv).contains("\"'=HYPERLINK(\"\"http://x\"\")\"\".md\"");
+    }
+
+    @Test
+    void should_exportJsonLines_withinTheRequestedPeriod() throws Exception {
+        var lines = export("tom", "jsonl", "2026-09-26T08:02:00Z", "2026-09-26T08:04:00Z").lines().toList();
+
+        assertThat(lines).hasSize(2);
+        assertThat(lines.getFirst()).contains("\"action\":\"note.created\"").contains("Privat/geheim.md");
+    }
+
+    @Test
+    void should_refuseTheExport_toPeopleWhoDoNotManageTheVault() {
+        assertThatThrownBy(() -> export("ben", "csv", "", "")).isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void should_refuseUnknownFormatsAndPeriods() {
+        assertThatThrownBy(() -> export("tom", "xml", "", "")).isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        assertThatThrownBy(() -> export("tom", "csv", "gestern", "")).isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     }
 }
