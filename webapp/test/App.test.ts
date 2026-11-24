@@ -11,7 +11,7 @@ vi.mock("../src/lib/api", async (original) => ({ ...(await original<typeof impor
   listVaults: vi.fn(), permissions: vi.fn(), listNotes: vi.fn(), searchNotes: vi.fn(), describeInvitation: vi.fn(), acceptInvitation: vi.fn(),
   aiServices: vi.fn(), listAiJobs: vi.fn(), listChangeSets: vi.fn(),
 } }));
-beforeEach(() => { vi.resetAllMocks(); window.history.replaceState({}, "", "/"); });
+beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.permissions).mockResolvedValue([]); window.history.replaceState({}, "", "/"); });
 afterEach(cleanup);
 describe("dashboard startup", () => {
   it("shows login without querying vaults when no valid session exists", async () => {
