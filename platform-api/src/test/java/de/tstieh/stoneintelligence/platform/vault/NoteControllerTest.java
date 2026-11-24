@@ -26,10 +26,11 @@ class NoteControllerTest {
     private final FakeAccessGrantRepository grants = new FakeAccessGrantRepository(notes);
     private final VaultAnnouncementService announcements = new VaultAnnouncementService();
     private final FakeSnapshotStore snapshots = new FakeSnapshotStore();
+    private final de.tstieh.stoneintelligence.platform.search.FakeNoteTextIndex texts = new de.tstieh.stoneintelligence.platform.search.FakeNoteTextIndex();
     private final NoteController controller = new NoteController(notes,
         new SyncRelayService(snapshots, new SyncRoomRegistry()), (vault, note, actor, action, payload) -> { },
         new VaultAccessGuard(authorization, grants), announcements, snapshots,
-        new FolderRegistry(new FakeFolderRepository(), announcements, grants), new FakeFileVersionRepository(notes));
+        new FolderRegistry(new FakeFolderRepository(), announcements, grants), new FakeFileVersionRepository(notes), texts);
     private final VaultId vaultId = VaultId.newId();
     private final AtomicInteger accessChecks = new AtomicInteger();
 
@@ -89,5 +90,54 @@ class NoteControllerTest {
             new TestingAuthenticationToken("tom", null));
 
         assertThat(page.notes()).hasSize(1);
+    }
+
+    private NoteController.SearchResponse search(String query, String actor) {
+        return controller.search(vaultId.value().toString(), query, 50, "note,file", new TestingAuthenticationToken(actor, null));
+    }
+
+    private de.tstieh.stoneintelligence.domain.notelevel.NoteLevel level() {
+        return NoteLevel.of(1);
+    }
+
+    @Test
+    void should_findNotesByTheirContent_withTheMatchingPassage() {
+        var plan = notes.create(vaultId, "Projekte/Plan.md", level(), "tom");
+        texts.upsert(plan.id(), vaultId, 1, "Die Bestellmengen werden nach Andler berechnet");
+        notes.create(vaultId, "Projekte/Andere.md", level(), "tom");
+
+        var found = search("bestell", "tom");
+
+        assertThat(found.notes()).extracting(NoteController.ListedNoteResponse::path).containsExactly("Projekte/Plan.md");
+        assertThat(found.excerpts().get(plan.id().value().toString()))
+            .contains(de.tstieh.stoneintelligence.platform.search.NoteTextIndex.MARK_START + "Bestellmengen");
+    }
+
+    @Test
+    void should_listPathMatchesFirst_andEachNoteOnce() {
+        var titled = notes.create(vaultId, "Logistik/Bestellung.md", level(), "tom");
+        texts.upsert(titled.id(), vaultId, 1, "Bestellung bei Lieferant A");
+        var content = notes.create(vaultId, "Logistik/Ablauf.md", level(), "tom");
+        texts.upsert(content.id(), vaultId, 1, "Erst die Bestellung pruefen");
+
+        var found = search("bestellung", "tom");
+
+        assertThat(found.notes()).extracting(NoteController.ListedNoteResponse::path)
+            .containsExactly("Logistik/Bestellung.md", "Logistik/Ablauf.md");
+    }
+
+    // Inhaltstreffer laufen durch dieselbe Rechtepruefung - sonst verriete die Suche gesperrte Texte.
+    @Test
+    void should_hideContentMatches_thatThePersonMayNotRead() {
+        authorization.addMember(authorization.listGroups(vaultId).getFirst().id(), "anna");
+        grants.put(vaultId, de.tstieh.stoneintelligence.platform.identity.GrantTarget.folder("Privat"),
+            de.tstieh.stoneintelligence.platform.identity.GrantScope.user("anna"), java.util.Set.of(), "tom");
+        var secret = notes.create(vaultId, "Privat/Gehalt.md", level(), "tom");
+        texts.upsert(secret.id(), vaultId, 1, "Gehaltsband fuer Anna");
+
+        var found = search("gehalt", "anna");
+
+        assertThat(found.notes()).isEmpty();
+        assertThat(found.excerpts()).isEmpty();
     }
 }

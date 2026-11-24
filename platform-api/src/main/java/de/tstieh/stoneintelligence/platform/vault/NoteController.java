@@ -1,5 +1,8 @@
 package de.tstieh.stoneintelligence.platform.vault;
 
+import de.tstieh.stoneintelligence.platform.search.NoteTextIndex;
+import de.tstieh.stoneintelligence.platform.search.SearchQuery;
+
 import java.time.Instant;
 import java.util.List;
 import de.tstieh.stoneintelligence.domain.id.NoteId;
@@ -40,10 +43,12 @@ public class NoteController {
     private final SnapshotStore snapshots;
     private final FolderRegistry folders;
     private final de.tstieh.stoneintelligence.platform.files.FileVersionRepository fileVersions;
+    private final NoteTextIndex texts;
 
     public NoteController(NoteRepository notes, SyncRelayService relay, AuditRecorder audit, VaultAccessGuard access,
                           VaultAnnouncementService announcements, SnapshotStore snapshots, FolderRegistry folders,
-                          de.tstieh.stoneintelligence.platform.files.FileVersionRepository fileVersions) {
+                          de.tstieh.stoneintelligence.platform.files.FileVersionRepository fileVersions, NoteTextIndex texts) {
+        this.texts = texts;
         this.folders = folders;
         this.fileVersions = fileVersions;
         this.notes = notes;
@@ -167,9 +172,27 @@ public class NoteController {
         var max = Math.clamp(limit, 1, 200);
         var vId = VaultId.of(vaultId);
         access.requireMember(vId, authentication.getName());
-        var readable = access.readableNotes(vId, authentication.getName(), notes.search(vId, query, parseKinds(kinds), SEARCH_CANDIDATES));
+        var kindSet = parseKinds(kinds);
+        var candidates = new java.util.LinkedHashMap<NoteId, Note>();
+        notes.search(vId, query, kindSet, SEARCH_CANDIDATES).forEach(note -> candidates.put(note.id(), note));
+        var tsquery = SearchQuery.tsquery(query);
+        var contentIds = java.util.List.<NoteId>of();
+        if (tsquery.isPresent() && kindSet.contains(NoteKind.NOTE)) {
+            // Titeltreffer zuerst, dann Inhaltstreffer nach Relevanz - jede Notiz nur einmal.
+            contentIds = texts.matching(vId, tsquery.get(), SEARCH_CANDIDATES).stream()
+                .filter(id -> !candidates.containsKey(id)).toList();
+            var byId = new java.util.HashMap<NoteId, Note>();
+            notes.findByIds(vId, contentIds).forEach(note -> byId.put(note.id(), note));
+            contentIds.stream().map(byId::get).filter(java.util.Objects::nonNull).forEach(note -> candidates.put(note.id(), note));
+        }
+        var readable = access.readableNotes(vId, authentication.getName(), List.copyOf(candidates.values()));
         var shown = readable.size() > max ? readable.subList(0, max) : readable;
-        return new SearchResponse(listed(vId, authentication.getName(), shown), readable.size() > max);
+        var shownContent = shown.stream().map(Note::id).filter(java.util.Set.copyOf(contentIds)::contains).toList();
+        var excerpts = new java.util.LinkedHashMap<String, String>();
+        if (!shownContent.isEmpty()) {
+            texts.excerpts(vId, shownContent, tsquery.get()).forEach((id, text) -> excerpts.put(id.value().toString(), text));
+        }
+        return new SearchResponse(listed(vId, authentication.getName(), shown), readable.size() > max, excerpts);
     }
 
     private List<ListedNoteResponse> listed(VaultId vId, String actor, List<Note> readable) {
@@ -327,7 +350,8 @@ public class NoteController {
         }
     }
 
-    public record SearchResponse(List<ListedNoteResponse> notes, boolean truncated) {
+    /** {@code excerpts}: Fundstelle je Notiz-ID fuer Inhaltstreffer, Treffer zwischen U+0002 und U+0003. */
+    public record SearchResponse(List<ListedNoteResponse> notes, boolean truncated, java.util.Map<String, String> excerpts) {
     }
 
     public record ReconciliationResponse(java.util.UUID epochId, boolean complete, String nextCursor, List<ListedNoteResponse> notes) {
