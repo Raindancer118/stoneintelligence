@@ -45,6 +45,11 @@ describe("Obsidian community directory rules", () => {
     }
   });
 
+  it("keeps the root manifest.json the directory reads in sync with the plugin manifest", () => {
+    const rootManifest = JSON.parse(readFileSync(join(root, "..", "manifest.json"), "utf8"));
+    expect(rootManifest).toEqual(manifest);
+  });
+
   it("never writes dynamic HTML", () => {
     for (const { path, text } of files) {
       expect(text, path).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML/);
