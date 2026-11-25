@@ -1,4 +1,4 @@
-package de.tstieh.stoneintelligence.worker.embed;
+package de.tstieh.stoneintelligence.domain.text;
 
 import org.junit.jupiter.api.Test;
 
@@ -32,5 +32,15 @@ class NoteChunkerTest {
     @Test
     void should_stillEmbedTheTitle_ofAnEmptyNote() {
         assertThat(NoteChunker.chunks("Leer", "")).singleElement().satisfies(chunk -> assertThat(chunk.text()).isEqualTo("Leer"));
+    }
+
+    @Test
+    void should_offerTheBodyWithoutTheTitlePrefix_forQuotingPassages() {
+        var chunks = NoteChunker.chunks("Photosynthese", "# Photosynthese\n\n## Lichtreaktion\n\nIm Thylakoid.\n");
+
+        assertThat(chunks).singleElement().satisfies(chunk -> {
+            assertThat(chunk.heading()).isEqualTo("Lichtreaktion");
+            assertThat(chunk.body()).isEqualTo("Im Thylakoid.");
+        });
     }
 }
