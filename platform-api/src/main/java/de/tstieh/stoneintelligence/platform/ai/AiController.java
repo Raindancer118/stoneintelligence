@@ -123,7 +123,7 @@ public class AiController {
     public JobResponse cancel(@PathVariable String vaultId, @PathVariable UUID jobId, Authentication auth) {
         var vId = VaultId.of(vaultId);
         access.require(vId, auth.getName(), Permission.CREATE);
-        if (!jobs.cancel(vId, jobId, auth.getName())) {
+        if (!jobs.cancelShared(vId, jobId, auth.getName())) {
             throw new AiWriteRefusedException("Nur wartende oder laufende Verarbeitungen lassen sich abbrechen");
         }
         return jobs.list(vId, LIST_LIMIT).stream().filter(job -> job.id().equals(jobId)).findFirst().map(JobResponse::from)

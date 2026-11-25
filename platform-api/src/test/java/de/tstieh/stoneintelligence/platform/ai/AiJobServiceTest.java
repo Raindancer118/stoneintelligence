@@ -170,6 +170,18 @@ class AiJobServiceTest {
             assertThatThrownBy(() -> service.startAsk(VaultId.newId(), "tom", "gibtsnicht")).isInstanceOf(AiWriteRefusedException.class);
         }
 
+        // Fragen sind privat: die gemeinsame Jobliste zeigt sie nicht, und andere koennen sie nicht abbrechen.
+        @Test
+        void should_keepQuestionsOutOfTheSharedJobList_andOutOfTheSharedCancel() {
+            var question = service.startAsk(vaultId, "tom", "gemini");
+            var upload = service.upload(vaultId, "anna", "gemini", 1, List.of(pdf("a.pdf"))).getFirst();
+
+            assertThat(service.list(vaultId, 10)).extracting(AiJob::id).containsExactly(upload.id());
+            assertThat(service.cancelShared(vaultId, question.id(), "anna")).isFalse();
+            assertThat(jobs.find(vaultId, question.id()).orElseThrow().open()).isTrue();
+            assertThat(service.cancelShared(vaultId, upload.id(), "anna")).isTrue();
+        }
+
         @Test
         void should_cancelAQuestion_withoutRevertingAnything() {
             var job = service.startAsk(vaultId, "tom", "gemini");

@@ -34,6 +34,8 @@ public class AskService {
     public static final int MAX_QUESTION_LENGTH = 1_000;
     static final int MIN_QUESTION_LENGTH = 5;
     static final int MAX_OPEN_PER_PERSON = 3;
+    /** multilingual-e5-small, wie bei den gespeicherten Abschnitten (ADR 0012). */
+    private static final int EMBEDDING_DIMENSIONS = 384;
     private static final int HISTORY_LIMIT = 50;
     private static final int EXCERPT_LENGTH = 240;
     private static final int MAX_ANSWER_LENGTH = 20_000;
@@ -152,6 +154,16 @@ public class AskService {
     public Passages passages(UUID jobId, float[] questionVector) {
         var question = forJob(jobId);
         var vaultId = question.vaultId();
+        if (questionVector != null) {
+            if (questionVector.length != EMBEDDING_DIMENSIONS) {
+                throw new AiWriteRefusedException("Der Vektor der Frage braucht " + EMBEDDING_DIMENSIONS + " Werte");
+            }
+            for (var value : questionVector) {
+                if (!Float.isFinite(value)) {
+                    throw new AiWriteRefusedException("Vektoren dürfen nur endliche Zahlen enthalten");
+                }
+            }
+        }
         if (!access.membership(vaultId, question.askedBy()).isMember()) {
             throw new AiWriteRefusedException("Die fragende Person ist nicht mehr Mitglied dieses Vaults");
         }

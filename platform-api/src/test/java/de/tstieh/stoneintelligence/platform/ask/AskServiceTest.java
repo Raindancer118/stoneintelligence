@@ -207,6 +207,18 @@ class AskServiceTest {
         }
 
         @Test
+        void should_refuseAQuestionVectorOfTheWrongSize_orWithNonFiniteValues() {
+            var view = ask.ask(vault, "ben", "Wo steht das genau?", "lokal");
+            claim();
+            var nan = new float[384];
+            nan[3] = Float.NaN;
+
+            assertThatThrownBy(() -> ask.passages(view.question().jobId(), new float[10])).isInstanceOf(AiWriteRefusedException.class);
+            assertThatThrownBy(() -> ask.passages(view.question().jobId(), nan)).isInstanceOf(AiWriteRefusedException.class);
+            assertThat(audited).isEmpty();
+        }
+
+        @Test
         void should_onlyServeRunningQuestionJobs() {
             var view = ask.ask(vault, "ben", "Wo steht das genau?", null);
 

@@ -117,8 +117,14 @@ public class AiJobService {
             MAX_ATTEMPTS, AiJob.Kind.ASK), clock.get());
     }
 
+    /** Die gemeinsame Jobliste des Vaults - ohne Fragen, die sehen nur ihre Fragenden (ADR 0017). */
     public List<AiJob> list(VaultId vaultId, int limit) {
-        return jobs.list(vaultId, limit);
+        return jobs.list(vaultId, limit).stream().filter(job -> job.kind() != AiJob.Kind.ASK).toList();
+    }
+
+    /** Wie {@link #cancel}, aber nur fuer Jobs der gemeinsamen Liste - eine fremde Frage bricht man nicht ab. */
+    public boolean cancelShared(VaultId vaultId, UUID jobId, String actor) {
+        return jobs.find(vaultId, jobId).filter(job -> job.kind() != AiJob.Kind.ASK).isPresent() && cancel(vaultId, jobId, actor);
     }
 
     /**
