@@ -55,8 +55,17 @@ class AiServiceTest {
     }
 
     @Test
+    void should_markAServiceAsLocal_withAnOptionalFourthField() {
+        var directory = AiServiceDirectory.parse("gemini|Gemini|1; lokal|Ollama lokal|1,2|local");
+
+        assertThat(directory.find("gemini").orElseThrow().local()).isFalse();
+        assertThat(directory.find("lokal").orElseThrow().local()).isTrue();
+        assertThat(AiServiceResponse.from(directory.find("lokal").orElseThrow()).local()).isTrue();
+    }
+
+    @Test
     void should_refuseToStart_withABrokenServiceConfiguration() {
-        for (var broken : List.of("gemini|Gemini", "gemini|Gemini|x", "gemini|Gemini|101", "|Gemini|1")) {
+        for (var broken : List.of("gemini|Gemini|1|remote", "a|b|1|local|x", "gemini|Gemini", "gemini|Gemini|x", "gemini|Gemini|101", "|Gemini|1")) {
             assertThatThrownBy(() -> AiServiceDirectory.parse(broken), broken).isInstanceOf(IllegalArgumentException.class);
         }
     }

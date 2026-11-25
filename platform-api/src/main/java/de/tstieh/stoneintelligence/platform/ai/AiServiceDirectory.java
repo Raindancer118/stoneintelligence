@@ -23,7 +23,8 @@ public final class AiServiceDirectory {
 
     /**
      * Liest {@code STONEINTELLIGENCE_AI_SERVICES}: {@code id|Name|Levels} je Dienst, durch {@code ;}
-     * getrennt, Levels durch {@code ,} - z. B. {@code gemini|Gemini|1; lokal|Ollama lokal|1,2}. Leer =
+     * getrennt, Levels durch {@code ,}, optional {@code |local} fuer einen Dienst auf eigener Infrastruktur -
+     * z. B. {@code gemini|Gemini|1; lokal|Ollama lokal|1,2|local}. Leer =
      * keine KI. Eine fehlerhafte Angabe verhindert den Start, statt still einen Dienst wegzulassen.
      */
     public static AiServiceDirectory parse(String setting) {
@@ -36,8 +37,8 @@ public final class AiServiceDirectory {
                 continue;
             }
             var parts = entry.strip().split("\\|", -1);
-            if (parts.length != 3) {
-                throw new IllegalArgumentException("AI service must be 'id|Name|levels', was: " + entry.strip());
+            if (parts.length < 3 || parts.length > 4 || parts.length == 4 && !parts[3].strip().equals("local")) {
+                throw new IllegalArgumentException("AI service must be 'id|Name|levels' or 'id|Name|levels|local', was: " + entry.strip());
             }
             var levels = new java.util.HashSet<Integer>();
             for (var level : parts[2].split(",")) {
@@ -47,7 +48,7 @@ public final class AiServiceDirectory {
                     throw new IllegalArgumentException("AI service " + parts[0].strip() + " has an invalid level: " + level.strip());
                 }
             }
-            services.add(new AiService(parts[0].strip(), parts[1].strip(), levels));
+            services.add(new AiService(parts[0].strip(), parts[1].strip(), levels, parts.length == 4));
         }
         return new AiServiceDirectory(services);
     }

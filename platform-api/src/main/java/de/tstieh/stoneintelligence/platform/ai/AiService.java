@@ -10,12 +10,22 @@ import de.tstieh.stoneintelligence.domain.notelevel.NoteLevel;
  * festgelegt, welche Note-Levels er verarbeiten darf - z. B. ein externer Anbieter nur Level 1,
  * ein selbst gehostetes Modell auch interne Levels (ADR 0008).
  *
+ * <p>{@code local}: laeuft auf eigener Infrastruktur, Auszuege verlassen den Server nicht - dann ist
+ * keine Einwilligung der Verfasser noetig (ADR 0017).
+ *
+ * <p>{@code local}: laeuft auf eigener Infrastruktur, Auszuege verlassen den Server nicht - dann ist
+ * keine Einwilligung der Verfasser noetig (ADR 0017).
+ *
  * <p>Level 100 (keine Synchronisation) und 101 (E2EE) sind nie erlaubt: deren Inhalt kennt der
  * Server gar nicht bzw. nur als Ciphertext - das laesst sich nicht wegkonfigurieren.
  */
-public record AiService(String id, String name, Set<Integer> allowedLevels) {
+public record AiService(String id, String name, Set<Integer> allowedLevels, boolean local) {
 
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,39}");
+
+    public AiService(String id, String name, Set<Integer> allowedLevels) {
+        this(id, name, allowedLevels, false);
+    }
 
     public AiService {
         if (id == null || !ID.matcher(id).matches()) {
