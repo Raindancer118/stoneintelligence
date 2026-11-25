@@ -127,6 +127,28 @@ In BRAT `Raindancer118/stoneintelligence` als Plugin-Repository eintragen. Oder 
 
 <br>
 
+## Offenlegung · Disclosures
+
+**Deutsch.** Das Plugin braucht ein Konto und einen StoneIntelligence-Server; ohne beides tut es nichts.
+
+- **Konto:** Anmeldung über einen OIDC-Anbieter (gehostet: `portal.tstieh.de`, Authentik). Die Nutzung der gehosteten Instanz ist derzeit kostenlos, es gibt keine Zahlungspflicht.
+- **Netzwerk:** Das Plugin spricht nur mit dem eingestellten Server (voreingestellt `stoneintelligence.tstieh.de`, per HTTPS und WebSocket) und dem Anmeldeanbieter. Es überträgt Notizen und Dateien deines Vaults, Versionen, Rechte und Cursor-Positionen, damit gemeinsames Arbeiten funktioniert. Eigene Instanzen sind möglich, siehe „Eigene Instanz betreiben“.
+- **KI:** Notizen gehen nur dann an einen externen KI-Anbieter, wenn das jeweilige Mitglied dem ausdrücklich zugestimmt hat (widerrufbar). Ohne Zustimmung bleibt alles auf dem Server.
+- **Telemetrie, Werbung:** keine. Das Plugin installiert oder aktualisiert sich nicht selbst.
+- **Dateien außerhalb des Vaults (nur Desktop):** Beim Verbinden oder Anlegen weiterer Vaults liest das Plugin die Vault-Liste von Obsidian, die Plugin-Einstellungen anderer Vaults und legt auf deinen Wunsch einen neuen Vault-Ordner an. Das passiert nur nach deiner Bestätigung.
+- **Quellcode und Lizenz:** Der Quellcode ist einsehbar, steht aber unter einer proprietären Lizenz ([LICENSE.md](LICENSE.md)).
+
+**English.** The plugin needs an account and a StoneIntelligence server; without both it does nothing.
+
+- **Account:** sign-in via an OIDC provider (hosted instance: `portal.tstieh.de`, Authentik). The hosted instance is currently free; no payment is required.
+- **Network use:** the plugin only talks to the configured server (default `stoneintelligence.tstieh.de`, HTTPS and WebSocket) and the identity provider. It sends your vault's notes and files, versions, permissions and cursor positions so that collaboration works. You can self-host the server, see "Eigene Instanz betreiben".
+- **AI:** notes are sent to an external AI provider only if the individual member has explicitly consented (revocable). Without consent everything stays on the server.
+- **Telemetry, ads:** none. The plugin does not install or update itself.
+- **Files outside the vault (desktop only):** when connecting or creating further vaults, the plugin reads Obsidian's vault list and other vaults' plugin settings and, on request, creates a new vault folder. This only happens after your confirmation.
+- **Source and license:** the source code is public but under a proprietary license ([LICENSE.md](LICENSE.md)).
+
+<br>
+
 ## Was drinsteckt
 
 <table>
