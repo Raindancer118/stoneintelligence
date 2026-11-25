@@ -1,3 +1,4 @@
+import { debugLog } from "../debugLog";
 import type { VaultSyncState } from "../settings";
 import { type FileAction, type FileMeta, type LocalFile, planFiles, type ServerFile, isSyncableFilePath } from "./filePlan";
 import { FileConflictError, HttpError, type NoteApiClient, type NoteStatus } from "./NoteApiClient";
@@ -221,7 +222,7 @@ export class FileSync {
       } else if (error instanceof HttpError && error.status >= 400 && error.status < 500 && error.status !== 409) {
         this.ports.report(path, `Server lehnte ab (HTTP ${error.status}).`);
       } else {
-        console.debug(`StoneIntelligence: Datei "${path}" nicht abgeglichen`, error);
+        debugLog(`StoneIntelligence: Datei "${path}" nicht abgeglichen`, error);
       }
     }
   }

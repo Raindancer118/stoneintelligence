@@ -1,3 +1,4 @@
+import { debugLog } from "../debugLog";
 import * as Y from "yjs";
 
 /** Der Teil von Obsidians `DataAdapter`, den der Store braucht (gleiche Methodennamen). */
@@ -44,7 +45,7 @@ export class NoteStateStore {
       Y.applyUpdate(new Y.Doc(), state);
       return state;
     } catch (error) {
-      console.warn(`StoneIntelligence: lokaler Sync-Zustand fuer ${noteId} unlesbar, wird neu aufgebaut`, error);
+      debugLog(`StoneIntelligence: lokaler Sync-Zustand fuer ${noteId} unlesbar, wird neu aufgebaut`, error);
       return null;
     }
   }

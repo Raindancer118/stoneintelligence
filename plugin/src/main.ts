@@ -58,6 +58,7 @@ import { ServerMirror } from "./sync/serverMirror";
 import { effectiveScope, inScope, isAreasMode, outOfScope, scopeKey } from "./sync/workAreas";
 import { presentStatus, type StatusPresentation } from "./ui/statusPresentation";
 import { type Collaborator, type LiveNote, StatusView, VIEW_TYPE_STATUS } from "./ui/StatusView";
+import { debugLog } from "./debugLog";
 
 /**
  * Sicherheitsnetz-Takt fuer den Abgleich. Anlage/Umbenennung/Loeschung UND Inhaltsaenderungen
@@ -519,7 +520,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       }
       this.activity.touch();
     } catch (error) {
-      console.debug("StoneIntelligence: Anzeigename konnte nicht aufgeloest werden", error);
+      debugLog("StoneIntelligence: Anzeigename konnte nicht aufgeloest werden", error);
     }
   }
 
@@ -680,7 +681,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         }
         newVaultPath = suggestVaultPath(basePath, link.vaultName, (path) => vaults.exists(path));
       } catch (error) {
-        console.warn("StoneIntelligence: Obsidian-Vaults nicht lesbar - nur Verbinden dieses Vaults", error);
+        debugLog("StoneIntelligence: Obsidian-Vaults nicht lesbar - nur Verbinden dieses Vaults", error);
       }
     }
     const knownState = this.settings.vaults[link.vaultId];
@@ -962,12 +963,12 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   private registerCommands(): void {
     // Befehls-IDs der Vorversion beibehalten - sonst verlieren Nutzer ihre Tastenkuerzel.
-    this.addCommand({ id: "stoneintelligence-resync-all", name: "Jetzt synchronisieren", callback: () => this.syncNow() });
-    this.addCommand({ id: "stoneintelligence-show-status", name: "Sync-Übersicht öffnen", callback: () => void this.activateStatusView() });
-    this.addCommand({ id: "stoneintelligence-fetch-from-vault", name: "Aus dem Vault holen…", callback: () => this.openFetchFromVault() });
-    this.addCommand({ id: "stoneintelligence-add-area", name: "Arbeitsbereich hinzufügen…", callback: () => this.openAreaPicker() });
+    this.addCommand({ id: "resync-all", name: "Jetzt synchronisieren", callback: () => this.syncNow() });
+    this.addCommand({ id: "show-status", name: "Sync-Übersicht öffnen", callback: () => void this.activateStatusView() });
+    this.addCommand({ id: "fetch-from-vault", name: "Aus dem Vault holen…", callback: () => this.openFetchFromVault() });
+    this.addCommand({ id: "add-area", name: "Arbeitsbereich hinzufügen…", callback: () => this.openAreaPicker() });
     this.addCommand({
-      id: "stoneintelligence-login",
+      id: "login",
       name: "Anmelden",
       checkCallback: (checking) => {
         if (checking) {
@@ -978,7 +979,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "stoneintelligence-logout",
+      id: "logout",
       name: "Abmelden",
       checkCallback: (checking) => {
         if (checking) {
@@ -989,7 +990,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "stoneintelligence-invite",
+      id: "invite",
       name: "Mitbearbeiter einladen",
       checkCallback: (checking) => {
         if (checking) {
@@ -1000,7 +1001,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "stoneintelligence-share-active",
+      id: "share-active",
       name: "Freigabe der aktuellen Datei",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
@@ -1013,7 +1014,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "stoneintelligence-share-vault",
+      id: "share-vault",
       name: "Freigaben für den ganzen Vault",
       checkCallback: (checking) => {
         if (checking) {
@@ -1024,7 +1025,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "stoneintelligence-vault-admin",
+      id: "vault-admin",
       name: "Vault-Verwaltung öffnen (Mitglieder, Gruppen, Rollen)",
       checkCallback: (checking) => {
         if (checking) {
@@ -1035,7 +1036,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "stoneintelligence-history-active",
+      id: "history-active",
       name: "Verlauf der aktuellen Datei",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
@@ -1048,7 +1049,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "stoneintelligence-similar-active",
+      id: "similar-active",
       name: "Ähnliche Notizen zur aktuellen Notiz",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
@@ -1062,7 +1063,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "stoneintelligence-ai-changes",
+      id: "ai-changes",
       name: "KI-Änderungen anzeigen und rückgängig machen",
       checkCallback: (checking) => {
         if (checking) {
@@ -1073,7 +1074,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "stoneintelligence-toggle-pause",
+      id: "toggle-pause",
       name: "Sync pausieren oder fortsetzen",
       callback: () => {
         this.setPaused(!this.settings.paused);
@@ -1081,7 +1082,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "stoneintelligence-resync-active",
+      id: "resync-active",
       name: "Aktuelle Notiz neu verbinden",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
@@ -1240,7 +1241,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     } catch (error) {
       // Aeltere Server kennen den Endpunkt nicht - dann eben ohne Ordner-Kennzeichen.
       this.sharedFolders = new Set();
-      console.debug("StoneIntelligence: Freigaben nicht abrufbar", error);
+      debugLog("StoneIntelligence: Freigaben nicht abrufbar", error);
     }
     this.applyAccessMarkers();
   }
@@ -1258,7 +1259,7 @@ export default class StoneIntelligencePlugin extends Plugin {
           applyReadOnly(view, this.readOnlyCompartment, readOnly);
           this.readOnlyViews.set(view, readOnly);
         } catch (error) {
-          console.debug("StoneIntelligence: Schreibschutz nicht anwendbar", file.path, error);
+          debugLog("StoneIntelligence: Schreibschutz nicht anwendbar", file.path, error);
         }
       }
     }
@@ -1386,7 +1387,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       serverFiles = entries.filter((entry) => entry.kind === "FILE")
         .map((entry) => ({ id: entry.id, path: entry.path, revision: entry.revision ?? 0, sha256: entry.sha256 ?? null }));
     } catch (error) {
-      console.debug("StoneIntelligence: Notizliste nicht abrufbar", error);
+      debugLog("StoneIntelligence: Notizliste nicht abrufbar", error);
       return;
     }
     if (vaultId !== this.settings.vaultId || !this.isReady()) {
@@ -1728,7 +1729,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       this.fileLimits = await this.noteApiClient.fileLimits();
       this.fileLimitsAt = Date.now();
     } catch (error) {
-      console.debug("StoneIntelligence: Datei-Grenzen nicht abrufbar", error);
+      debugLog("StoneIntelligence: Datei-Grenzen nicht abrufbar", error);
       return this.fileLimits ?? null;
     }
     return this.fileLimits;
@@ -1844,7 +1845,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       this.activity.reportProblem(path, `Server lehnte ab (HTTP ${error.status}).`);
     } else {
       // Netzwerkfehler: kein "Problem" der Notiz, der naechste Durchlauf versucht es erneut.
-      console.debug(`StoneIntelligence: Abgleich von "${path}" fehlgeschlagen`, error);
+      debugLog(`StoneIntelligence: Abgleich von "${path}" fehlgeschlagen`, error);
     }
   }
 
@@ -1960,7 +1961,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     try {
       serverFolders = await this.serverFolders(vaultId);
     } catch (error) {
-      console.debug("StoneIntelligence: Ordnerliste nicht abrufbar", error);
+      debugLog("StoneIntelligence: Ordnerliste nicht abrufbar", error);
       return;
     }
     if (serverFolders === null) {
@@ -2008,7 +2009,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         await this.app.fileManager.trashFile(folder);
         this.activity.log("deleted", path, "Ordner auf einem anderen Gerät gelöscht");
       } catch (error) {
-        console.debug(`StoneIntelligence: Ordner "${path}" nicht entfernbar`, error);
+        debugLog(`StoneIntelligence: Ordner "${path}" nicht entfernbar`, error);
       } finally {
         this.serverDrivenPaths.delete(path);
       }
@@ -2931,7 +2932,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       unbindEditor(session.view, this.liveBindingCompartment);
     } catch (error) {
       // View kann mit ihrem geschlossenen Leaf bereits zerstoert sein - harmlos.
-      console.debug("StoneIntelligence: Editor-Bindung konnte nicht geloest werden", path, error);
+      debugLog("StoneIntelligence: Editor-Bindung konnte nicht geloest werden", path, error);
     }
     window.clearTimeout(session.saveTimer ?? undefined);
     session.stopStateSaves();
