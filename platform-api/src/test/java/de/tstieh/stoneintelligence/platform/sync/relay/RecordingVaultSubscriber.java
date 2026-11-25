@@ -18,6 +18,7 @@ class RecordingVaultSubscriber implements VaultSubscriber {
     int accessChanges;
     boolean contentUpdates = true;
     boolean folderEvents = true;
+    boolean fileEvents = false;
     de.tstieh.stoneintelligence.platform.vault.SyncScope scope = de.tstieh.stoneintelligence.platform.vault.SyncScope.wholeVault();
 
     RecordingVaultSubscriber(String id) {
@@ -47,6 +48,11 @@ class RecordingVaultSubscriber implements VaultSubscriber {
     @Override
     public boolean wantsContentUpdates() {
         return contentUpdates;
+    }
+
+    @Override
+    public boolean wantsFileEvents() {
+        return fileEvents;
     }
 
     @Override

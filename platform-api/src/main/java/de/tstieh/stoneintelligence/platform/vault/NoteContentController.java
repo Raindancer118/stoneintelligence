@@ -49,6 +49,9 @@ public class NoteContentController {
         if (note.isFile()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Files have no note content - use the file endpoints");
         }
+        if (note.isCanvas()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Canvases can only be edited in Obsidian");
+        }
         if (note.level().value() == 101) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Encrypted notes require the Obsidian client");
         }

@@ -131,6 +131,29 @@ class SyncWebSocketHandlerTest {
         assertThat(writer.sentMessages).isEmpty();
     }
 
+    // ADR 0018: ein Canvas ist ein Yjs-Dokument - joinbar und beschreibbar wie eine Notiz.
+    @Test
+    void should_persistAndBroadcastDocUpdates_forACanvas() {
+        var vaultId = VaultId.newId();
+        var canvas = notes.create(vaultId, "Board.canvas", NoteLevel.of(1), "creator",
+            de.tstieh.stoneintelligence.platform.vault.NoteKind.CANVAS);
+        var role = authorization.createRole(vaultId, "writer", Set.of(Permission.READ, Permission.WRITE));
+        var group = authorization.createGroup(vaultId, "writers");
+        authorization.assignRole(group.id(), role.id());
+        authorization.addMember(group.id(), "writer-actor");
+        authorization.addMember(group.id(), "other-actor");
+
+        var writer = connect(vaultId, "writer-actor");
+        var other = connect(vaultId, "other-actor");
+        send(writer, SyncFrame.TYPE_JOIN, canvas.id(), new byte[0]);
+        send(other, SyncFrame.TYPE_JOIN, canvas.id(), new byte[0]);
+        other.sentMessages.clear();
+        send(writer, SyncFrame.TYPE_DOC_UPDATE, canvas.id(), "yjs".getBytes());
+
+        assertThat(snapshotStore.listSince(canvas.id(), 0)).hasSize(1);
+        assertThat(other.sentMessages).hasSize(1);
+    }
+
     @Test
     void should_notAcceptFurtherDocUpdates_forANoteAfterItWasDeleted() {
         // Regression (Codex-Verifikationsreview des Security-Fixes, s.

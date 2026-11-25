@@ -171,7 +171,7 @@ public class VaultAnnouncementService {
             return;
         }
         lastUpdateAnnouncement.put(noteId, now);
-        path.get().ifPresent(resolved -> announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_UPDATED, noteId, resolved, NoteKind.NOTE));
+        path.get().ifPresent(resolved -> announce(vaultId, SyncFrame.TYPE_VAULT_NOTE_UPDATED, noteId, resolved, NoteKind.ofYjsPath(resolved)));
     }
 
     /**
@@ -203,10 +203,10 @@ public class VaultAnnouncementService {
     private void sendNow(VaultId vaultId, byte messageType, NoteId noteId, String path, NoteKind kind) {
         for (var subscriber : subscribers.getOrDefault(vaultId, Set.of())) {
             try {
-                if (kind == NoteKind.FILE && !subscriber.wantsFileEvents()) {
+                if (kind != NoteKind.NOTE && !subscriber.wantsFileEvents()) {
                     continue;
                 }
-                if (kind == NoteKind.NOTE && messageType == SyncFrame.TYPE_VAULT_NOTE_UPDATED
+                if (kind != NoteKind.FILE && messageType == SyncFrame.TYPE_VAULT_NOTE_UPDATED
                         && (!subscriber.wantsContentUpdates() || subscriber.hasJoined(noteId))) {
                     continue;
                 }

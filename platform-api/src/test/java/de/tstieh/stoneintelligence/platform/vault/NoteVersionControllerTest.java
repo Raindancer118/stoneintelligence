@@ -189,8 +189,9 @@ class NoteVersionControllerTest {
     void should_refuseFilesAndEncryptedNotes() {
         var file = notes.create(vaultId, "Team/bild.png", NoteLevel.of(1), "tom", NoteKind.FILE);
         var sealed = notes.create(vaultId, "Team/tresor.md", NoteLevel.of(101), "tom");
+        var canvas = notes.create(vaultId, "Team/Board.canvas", NoteLevel.of(1), "tom", NoteKind.CANVAS);
 
-        for (var note : List.of(file, sealed)) {
+        for (var note : List.of(file, sealed, canvas)) {
             assertThatThrownBy(() -> controller.list(vault(), id(note), 100, as("tom")))
                 .isInstanceOfSatisfying(ResponseStatusException.class, e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
         }

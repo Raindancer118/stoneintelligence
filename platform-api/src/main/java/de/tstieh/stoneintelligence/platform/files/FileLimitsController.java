@@ -14,7 +14,11 @@ public class FileLimitsController {
     }
 
     @GetMapping("/api/v1/files/limits")
-    public FileLimits limits() {
-        return files.limits();
+    public LimitsResponse limits() {
+        var limits = files.limits();
+        return new LimitsResponse(limits.maxFileBytes(), limits.vaultQuotaBytes(), true);
     }
+
+    /** {@code canvas}: dieser Server synchronisiert Canvas live (ADR 0018) - das Plugin schaltet erst dann um. */
+    public record LimitsResponse(long maxFileBytes, long vaultQuotaBytes, boolean canvas) { }
 }

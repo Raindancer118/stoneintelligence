@@ -64,6 +64,16 @@ class JdbcNoteTextIndexIT {
         assertThat(index.claim(1000)).extracting(NoteTextIndex.Queued::noteId).contains(note);
     }
 
+    // ADR 0018: ein Canvas hat keinen Text - sein Yjs-Update stellt ihn nicht in die Warteschlange.
+    @Test
+    void should_notQueueACanvas_whenAnUpdateArrives() {
+        var vault = vault();
+        var canvas = new JdbcNoteRepository(jdbc).create(vault, "b-" + NoteId.newId().value() + ".canvas", NoteLevel.of(1), "tom", NoteKind.CANVAS).id();
+        new JdbcSnapshotStore(jdbc).append(canvas, new byte[] {1}, false, "tom");
+
+        assertThat(index.claim(1000)).extracting(NoteTextIndex.Queued::noteId).doesNotContain(canvas);
+    }
+
     @Test
     void should_findByWordPrefix_withinTheVaultOnly_andMarkThePassage() {
         var vault = vault();

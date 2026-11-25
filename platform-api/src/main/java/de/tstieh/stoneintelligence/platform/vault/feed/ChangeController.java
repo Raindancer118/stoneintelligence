@@ -135,6 +135,7 @@ public class ChangeController {
             switch (kind.strip().toLowerCase(Locale.ROOT)) {
                 case "note" -> parsed.add(NoteKind.NOTE);
                 case "file" -> parsed.add(NoteKind.FILE);
+                case "canvas" -> parsed.add(NoteKind.CANVAS);
                 default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown kind: " + kind);
             }
         }
