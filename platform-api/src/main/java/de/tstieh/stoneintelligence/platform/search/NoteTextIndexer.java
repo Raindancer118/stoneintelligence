@@ -51,20 +51,29 @@ public class NoteTextIndexer {
     int runOnce() {
         var claimed = index.claim(BATCH);
         for (var queued : claimed) {
+            java.util.List<UpdateRecord> updates;
             try {
-                var updates = snapshots.current(queued.noteId());
-                if (updates.isEmpty()) {
-                    continue;
-                }
-                if (updates.stream().anyMatch(UpdateRecord::ciphertext)) {
-                    index.remove(queued.noteId());
-                    continue;
-                }
+                updates = snapshots.current(queued.noteId());
+            } catch (RuntimeException e) {
+                // Datenbank: voruebergehend, spaeter erneut.
+                log.warn("Notiz {} nicht gelesen, neuer Versuch spaeter", queued.noteId().value(), e);
+                index.requeue(queued.noteId());
+                continue;
+            }
+            if (updates.isEmpty()) {
+                continue;
+            }
+            if (updates.stream().anyMatch(UpdateRecord::ciphertext)) {
+                index.remove(queued.noteId());
+                continue;
+            }
+            try {
                 var text = yjs.get().textOf(updates.stream().map(UpdateRecord::payload).toList());
                 index.upsert(queued.noteId(), queued.vaultId(), updates.getLast().serverSequence(), text);
             } catch (RuntimeException e) {
-                log.warn("Notiz {} nicht indiziert, neuer Versuch spaeter", queued.noteId().value(), e);
-                index.requeue(queued.noteId());
+                // Unlesbarer Inhalt bleibt unlesbar; die naechste Aenderung stellt die Notiz ohnehin neu ein.
+                log.debug("Notiz {} nicht indiziert: {}", queued.noteId().value(), e.getMessage());
+                index.remove(queued.noteId());
             }
         }
         return claimed.size();

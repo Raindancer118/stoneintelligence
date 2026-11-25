@@ -66,15 +66,30 @@ class NoteTextIndexerTest {
         assertThat(index.texts).doesNotContainKey(note);
     }
 
+    // Datenbank weg: voruebergehend, die Notiz kommt zurueck in die Warteschlange.
     @Test
-    void should_putANoteBack_whenReadingItFails() {
+    void should_putANoteBack_whenItsUpdatesCannotBeRead() {
         var note = noteWith("Inhalt");
-        var broken = new NoteTextIndexer(index, snapshots, () -> { throw new IllegalStateException("Bridge weg"); });
+        var unreachable = new de.tstieh.stoneintelligence.platform.sync.relay.InterceptingSnapshotStoreFailing(snapshots);
+        var indexer = new NoteTextIndexer(index, unreachable, () -> bridge);
 
-        broken.runOnce();
+        indexer.runOnce();
 
         assertThat(index.queue).extracting(NoteTextIndex.Queued::noteId).containsExactly(note);
         assertThat(index.texts).isEmpty();
+    }
+
+    // Unlesbarer Inhalt: dauerhaft - erneut versuchen hiesse alle 3 s dieselbe Arbeit, bis die naechste Aenderung kommt.
+    @Test
+    void should_dropANote_whoseContentCannotBeTurnedIntoText() {
+        var note = NoteId.newId();
+        snapshots.append(note, new byte[] {1, 2, 3}, false, "tom");
+        index.enqueue(note, vault);
+
+        indexer.runOnce();
+
+        assertThat(index.queue).isEmpty();
+        assertThat(index.texts).doesNotContainKey(note);
     }
 
     @Test
