@@ -2,6 +2,7 @@ import type { AreaState } from "./sync/workAreas";
 import type { StoredTokens } from "./sync/AuthentikAuthClient";
 import type { ConnectLink } from "./sync/connectLink";
 import type { FileMeta } from "./sync/filePlan";
+import type { PluginPolicy } from "./sync/pluginPolicy";
 import type { NoteMeta } from "./sync/reconcilePlan";
 
 /** Eine lokal ausgefuehrte Loeschung/Umbenennung, die der Server noch nicht bestaetigt hat. */
@@ -62,6 +63,10 @@ export interface StoneIntelligenceSettings {
   pendingConnect: ConnectLink | null;
   /** Eigenschaften einmalig ausgeblendet (s. propertiesDisplay) - danach entscheidet die Person. */
   propertiesDefaultApplied: boolean;
+  /** Zufällige Kennung dieser Plugin-Instanz im Geräteregister des Vaults (ADR 0019); bleibt über Vault-Wechsel gleich. */
+  deviceId: string;
+  /** Zuletzt gelesene Plugin-Richtlinie je Vault - gilt auch beim Start ohne Netz. */
+  pluginPolicies: Record<string, PluginPolicy>;
 }
 
 /**
@@ -83,6 +88,8 @@ export const DEFAULT_SETTINGS: StoneIntelligenceSettings = {
   vaults: {},
   pendingConnect: null,
   propertiesDefaultApplied: false,
+  deviceId: "",
+  pluginPolicies: {},
 };
 
 export function emptyVaultState(): VaultSyncState {
@@ -98,6 +105,7 @@ export function migrateSettings(raw: unknown): StoneIntelligenceSettings {
     ...(rest as Partial<StoneIntelligenceSettings>),
     vaults: { ...((rest.vaults as Record<string, VaultSyncState> | undefined) ?? {}) },
     excludedFolders: [...((rest.excludedFolders as string[] | undefined) ?? [])],
+    pluginPolicies: { ...((rest.pluginPolicies as Record<string, PluginPolicy> | undefined) ?? {}) },
   };
 
   // Frueher waren localhost-Werte der Default und wurden beim ersten Speichern mitgeschrieben -

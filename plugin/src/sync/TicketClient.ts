@@ -1,4 +1,5 @@
 import type { AccessTokenProvider } from "./NoteApiClient";
+import { gateErrorFrom } from "./deviceGate";
 import { obsidianFetch } from "./obsidianFetch";
 import { withRateLimitRetry } from "./retryFetch";
 
@@ -23,12 +24,20 @@ export class TicketClient {
     private readonly fetchImpl: typeof fetch = withRateLimitRetry(obsidianFetch),
   ) {}
 
-  async issueTicket(vaultId: string): Promise<SyncTicket> {
+  /** {@code deviceId}: die Geräte-Kennung (ADR 0019); der Server verweigert das Ticket, wenn das Gerät nicht synchronisieren darf. */
+  async issueTicket(vaultId: string, deviceId?: string): Promise<SyncTicket> {
     const response = await this.fetchImpl(
       `${this.baseUrl}/api/v1/vaults/${vaultId}/sync-tickets`,
-      { method: "POST", headers: { Authorization: `Bearer ${await this.getAccessToken()}` } },
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${await this.getAccessToken()}`, ...(deviceId ? { "X-Device-Id": deviceId } : {}) },
+      },
     );
     if (!response.ok) {
+      const refusal = await gateErrorFrom(response);
+      if (refusal) {
+        throw refusal;
+      }
       throw new Error(`failed to issue sync ticket: HTTP ${response.status}`);
     }
     return (await response.json()) as SyncTicket;

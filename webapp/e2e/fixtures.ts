@@ -29,6 +29,16 @@ export async function mockWorkspace(page: Page) {
   let grants: Record<string, unknown>[] = [];
   let linking = { enabled: false, linkHumanNotes: false, mode: "LITERAL", service: "gemini", maxLinksPerNote: 5, requestedBy: "Tom", lastRunAt: null, aiConsent: false, aiConsentCount: 0 };
   const asks: Record<string, unknown>[] = [];
+  // Plugin-Richtlinie und Geräte (ADR 0019)
+  let pluginPolicy: Record<string, any> = { mode: "OFF", allowed: [], alwaysAllowed: "stoneintelligence" };
+  const devices: Record<string, any>[] = [{ deviceId: "dev-anna-mac", subject: "Anna", person: "Anna Arendt", name: "Annas Mac", platform: "macos", obsidianVersion: "1.15.0",
+    pluginVersion: "0.34.0", restrictedMode: false, plugins: [{ id: "kanban", version: "2.0.51" }], firstSeen: "2026-11-24T08:00:00Z", lastSeen: "2026-11-25T08:00:00Z",
+    status: "COMPLIANT", compliant: true, offending: [], revoked: false, wipePending: false, wipedAt: null }];
+  const judge = () => devices.forEach(d => {
+    if (d.revoked || d.wipePending) return;
+    const offending = pluginPolicy.mode === "ENFORCE" ? d.plugins.filter((p: any) => !pluginPolicy.allowed.some((a: any) => a.id === p.id)).map((p: any) => `${p.id} ${p.version}`) : [];
+    d.offending = offending; d.compliant = offending.length === 0; d.status = d.compliant ? "COMPLIANT" : "NON_COMPLIANT";
+  });
   const notes = [{ id: noteId, vaultId, path: "Projekte/Kundenportal.md", noteLevel: 1, createdBy: "Tom", createdAt: "2026-09-19T09:00:00Z" }];
   // Kommentare (ADR 0016): ein Thread von Anna, der Tom erwähnt, dazu der passende Hinweis.
   const commentAuthor = (name: string) => name;
@@ -178,6 +188,14 @@ export async function mockWorkspace(page: Page) {
       { noteId: "n2", path: "Wissen/Zellatmung.md", kind: "UPDATED", at: "2026-09-23T09:01:10Z" },
       { noteId: "n3", path: "Quellen/Skript Kapitel 4.md", kind: "CREATED", at: "2026-09-23T09:01:20Z" }] });
     if (path.endsWith("/ai/change-sets")) return json(changeSets);
+    if (path.endsWith("/plugin-policy")) { if (request.method() === "PUT") { pluginPolicy = { ...pluginPolicy, ...request.postDataJSON() }; judge(); } return json(pluginPolicy); }
+    if (path.endsWith("/devices")) return json(devices);
+    if (/\/devices\/[^/]+\/(revoke|wipe|reinstate)$/.test(path)) {
+      const parts = path.split("/"); const device = devices.find(d => d.deviceId === parts.at(-2))!; const action = parts.at(-1)!;
+      if (action === "reinstate") { device.revoked = false; device.wipePending = false; judge(); }
+      else { device.revoked = true; device.wipePending = action === "wipe"; device.status = action === "wipe" ? "WIPE_PENDING" : "REVOKED"; device.compliant = false; }
+      return route.fulfill({ status: 204 });
+    }
     if (path.endsWith("/audit/retention")) return json({ days: null, minimumDays: 365 });
     if (path.endsWith("/audit")) return json([{ actor: "Tom", action: "note.created", payload: {}, occurredAt: "2026-09-19T09:00:00Z" }]);
     if (request.method() === "PATCH") { notes[0]!.path = request.postDataJSON().path; return json(notes[0]); }

@@ -8,8 +8,9 @@
   import { describeEvent, formatDate, retentionLabel, type HistoryEvent } from "../historyText";
   import { idpLinkText, personLabel } from "../peopleText";
   import InvitePeople from "./InvitePeople.svelte";
+  import DevicesPanel from "./DevicesPanel.svelte";
 
-  let { vault, me = "", onRenamed = () => {}, onLeft = () => {}, pages = ["members", "roles", "groups", "log", "settings"] }: { vault: Vault; me?: string; onRenamed?: (vault: Vault) => void; onLeft?: () => void; pages?: string[] } = $props();
+  let { vault, me = "", onRenamed = () => {}, onLeft = () => {}, pages = ["members", "roles", "groups", "log", "settings", "devices"] }: { vault: Vault; me?: string; onRenamed?: (vault: Vault) => void; onLeft?: () => void; pages?: string[] } = $props();
 
   // svelte-ignore state_referenced_locally
   let page = $state(pages[0] ?? "members");
@@ -31,7 +32,7 @@
   onDestroy(() => gate.dispose());
   let vaultName = $state("");
   let renamingVault = $state(false);
-  const allPages = [{ id: "members", label: "Mitglieder" }, { id: "roles", label: "Rollen" }, { id: "groups", label: "Gruppen" }, { id: "settings", label: "Allgemein" }, { id: "log", label: "Protokoll" }];
+  const allPages = [{ id: "members", label: "Mitglieder" }, { id: "roles", label: "Rollen" }, { id: "groups", label: "Gruppen" }, { id: "settings", label: "Allgemein" }, { id: "devices", label: "Geräte und Plugins" }, { id: "log", label: "Protokoll" }];
   const adminPages = $derived(allPages.filter(item => pages.includes(item.id)));
   async function renameVault() {
     if (!vaultName.trim() || renamingVault) return;
@@ -260,6 +261,10 @@
 </section>
 
 {#if !members.length && !loading}<p class="hint">Noch keine Mitglieder sichtbar.</p>{/if}
+{/if}
+{#if page === "devices"}
+<DevicesPanel {vault} />
+
 {/if}
 {#if page === "settings"}
 <section class="admin-section"><h3>Große Vaults</h3><label class="toggle"><input type="checkbox" checked={vault.selectiveSync ?? false} disabled={savingAreas} onchange={e => setSelectiveSync(e.currentTarget.checked)} /> Nur Arbeitsbereiche synchronisieren</label><p class="hint">Jedes Obsidian lädt dann nur die Ordner, die seine Person wählt, statt des ganzen Vaults. Einzelne Geräte können es trotzdem umstellen.</p></section>

@@ -4,6 +4,8 @@ import { obsidianFetch } from "./obsidianFetch";
 import type { CommentAnchor } from "./commentAnchor";
 import type { FeedChanges } from "./serverMirror";
 import type { AskLike } from "./askStatus";
+import type { DeviceReportResult } from "./deviceSession";
+import type { PluginPolicy } from "./pluginPolicy";
 import { withRateLimitRetry } from "./retryFetch";
 
 export type AccessTokenProvider = () => Promise<string>;
@@ -39,6 +41,18 @@ export interface CommentNotification {
   actorName: string; excerpt: string; createdAt: string; read: boolean;
 }
 export interface CommentNotifications { items: CommentNotification[]; unread: number; }
+
+/** Ein Gerät im Register (ADR 0019): letzte Meldung des Plugins und Bewertung gegen die Richtlinie. */
+export interface DeviceView {
+  deviceId: string; subject: string; person: string; name: string; platform: string; obsidianVersion: string; pluginVersion: string;
+  restrictedMode: boolean; plugins: { id: string; version: string | null }[]; firstSeen: string; lastSeen: string;
+  status: "COMPLIANT" | "NON_COMPLIANT" | "REVOKED" | "WIPE_PENDING" | "UNKNOWN"; compliant: boolean; offending: string[];
+  revoked: boolean; wipePending: boolean; wipedAt: string | null;
+}
+export interface DeviceReportBody {
+  name: string; platform: string; obsidianVersion: string; pluginVersion: string; restrictedMode: boolean;
+  plugins: { id: string; version: string }[]; wiped: boolean;
+}
 
 export interface GroupRef { id: string; name: string; }
 export interface VaultMember { subject: string; displayName?: string | null; groups: GroupRef[]; permissions: Permission[]; }
@@ -570,6 +584,36 @@ export class NoteApiClient {
 
   async setAuditRetention(vaultId: string, days: number | null): Promise<AuditRetention> {
     return this.send<AuditRetention>("PUT", `/api/v1/vaults/${vaultId}/audit/retention`, "failed to change audit retention", { days });
+  }
+
+  /** Plugin-Richtlinie des Vaults (ADR 0019); lesen darf jedes Mitglied, ändern nur Verwaltende. */
+  async pluginPolicy(vaultId: string): Promise<PluginPolicy> {
+    return this.json<PluginPolicy>(`/api/v1/vaults/${vaultId}/plugin-policy`, "failed to read plugin policy");
+  }
+
+  async setPluginPolicy(vaultId: string, policy: Pick<PluginPolicy, "mode" | "allowed">): Promise<PluginPolicy> {
+    return this.send<PluginPolicy>("PUT", `/api/v1/vaults/${vaultId}/plugin-policy`, "failed to change plugin policy", policy);
+  }
+
+  /** Meldet dieses Gerät (Plugins, Versionen); die Antwort sagt, ob es synchronisieren darf oder löschen soll. */
+  async reportDevice(vaultId: string, deviceId: string, report: DeviceReportBody): Promise<DeviceReportResult> {
+    return this.send<DeviceReportResult>("PUT", `/api/v1/vaults/${vaultId}/devices/${encodeURIComponent(deviceId)}`, "failed to report device", report);
+  }
+
+  async listDevices(vaultId: string): Promise<DeviceView[]> {
+    return this.json<DeviceView[]>(`/api/v1/vaults/${vaultId}/devices`, "failed to list devices");
+  }
+
+  async revokeDevice(vaultId: string, deviceId: string): Promise<void> {
+    await this.send<void>("POST", `/api/v1/vaults/${vaultId}/devices/${encodeURIComponent(deviceId)}/revoke`, "failed to revoke device", {});
+  }
+
+  async wipeDevice(vaultId: string, deviceId: string): Promise<void> {
+    await this.send<void>("POST", `/api/v1/vaults/${vaultId}/devices/${encodeURIComponent(deviceId)}/wipe`, "failed to wipe device", {});
+  }
+
+  async reinstateDevice(vaultId: string, deviceId: string): Promise<void> {
+    await this.send<void>("POST", `/api/v1/vaults/${vaultId}/devices/${encodeURIComponent(deviceId)}/reinstate`, "failed to reinstate device", {});
   }
 
   async renameVault(vaultId: string, name: string): Promise<VaultSummary> {

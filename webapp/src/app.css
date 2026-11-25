@@ -3821,3 +3821,45 @@ input[type="checkbox"]:checked {
     min-width: 100%;
   }
 }
+
+/* Plugin-Richtlinie und Geräte (ADR 0019) */
+.devices {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+.policy-form {
+  display: grid;
+  gap: 12px;
+  max-width: 560px;
+}
+.policy-form label {
+  font-weight: 600;
+}
+.policy-form textarea {
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+.device-person,
+.device-meta {
+  display: block;
+}
+.device-state {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 22px;
+}
+.device-state.is-ok {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.device-state.is-warn {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.device-state.is-bad {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
