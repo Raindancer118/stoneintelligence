@@ -21,7 +21,7 @@ export interface ContentSyncPorts {
   connect(noteId: string, doc: Y.Doc): Promise<{ disconnect(): void } | null>;
 }
 
-export type ContentSyncOutcome = "unchanged" | "pushed" | "pulled" | "merged" | "conflict" | "offline";
+export type ContentSyncOutcome = "unchanged" | "pushed" | "pulled" | "merged" | "conflict" | "offline" | "invalid";
 
 export interface ContentSyncResult {
   outcome: ContentSyncOutcome;
