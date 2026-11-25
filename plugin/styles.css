@@ -418,3 +418,120 @@
   font-style: italic;
   text-align: center;
 }
+
+/* Kommentare (ADR 0016) */
+.stoneintelligence-comments {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.stoneintelligence-comments-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.stoneintelligence-comments-head h4 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.stoneintelligence-comments-filter {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.stoneintelligence-thread {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+.stoneintelligence-thread.is-resolved {
+  background: var(--background-secondary);
+}
+.stoneintelligence-thread-quote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0;
+  padding: 2px 10px;
+  border-left: 2px solid var(--background-modifier-border-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+.stoneintelligence-badge {
+  padding: 0 6px;
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-warning, var(--background-secondary));
+  font-size: var(--font-ui-smaller);
+}
+.stoneintelligence-comment {
+  display: grid;
+  gap: 2px;
+}
+.stoneintelligence-comment + .stoneintelligence-comment {
+  padding-top: 8px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.stoneintelligence-comment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+.stoneintelligence-comment-meta strong {
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+.stoneintelligence-comment-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.stoneintelligence-mention {
+  padding: 0 4px;
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-hover);
+  font-weight: var(--font-medium);
+}
+.stoneintelligence-comment-actions,
+.stoneintelligence-thread-actions,
+.stoneintelligence-composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.stoneintelligence-composer {
+  position: relative;
+  display: grid;
+  gap: 6px;
+}
+.stoneintelligence-composer-field {
+  width: 100%;
+  resize: vertical;
+}
+.stoneintelligence-mention-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 80px;
+  z-index: var(--layer-popover);
+  padding: 4px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-s);
+}
+.stoneintelligence-mention-option {
+  padding: 4px 8px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+.stoneintelligence-mention-option.is-selected,
+.stoneintelligence-mention-option:hover {
+  background: var(--background-modifier-hover);
+}
