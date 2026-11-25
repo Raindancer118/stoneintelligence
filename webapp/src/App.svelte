@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import type { User } from "oidc-client-ts";
   import { completeLogin, getUser, login as startLogin, logout as startLogout, preferredUsername } from "./lib/auth";
-  import { api, type Note, type Vault } from "./lib/api";
+  import { api, type CommentNotification, type Note, type Vault } from "./lib/api";
   import Sidebar from "./lib/components/Sidebar.svelte";
   import InviteLanding from "./lib/components/InviteLanding.svelte";
   import ObsidianSetup from "./lib/components/ObsidianSetup.svelte";
@@ -12,6 +12,8 @@
   import Icon from "./lib/components/Icon.svelte";
   import QuickJump from "./lib/components/QuickJump.svelte";
   import ThemeToggle from "./lib/components/ThemeToggle.svelte";
+  import NotificationBell from "./lib/components/NotificationBell.svelte";
+  import { requestCommentFocus } from "./lib/commentFocus";
   import { connectionConfigJson } from "./lib/connectionConfig";
   import { withTransition } from "./lib/motion";
   import { onSessionExpired } from "./lib/session";
@@ -37,6 +39,17 @@
   function jumpToNote(note: Note) {
     // Ein offener Entwurf lebt im Notizbereich, der beim Wechsel selbst nachfragt - hier nicht doppelt.
     section = "notes"; setupPage = false; jumpNote = note; jumping = false; mobileOpen = false;
+  }
+  /** Vom Hinweis zur Notiz, auch in einem anderen Vault; das Kommentar-Panel öffnet der Editor. */
+  function openNotification(item: CommentNotification) {
+    const vault = vaults.find(v => v.id === item.vaultId);
+    if (!vault) return;
+    if (selected?.id !== vault.id) {
+      if (!mayLeave()) return;
+      selected = vault; dirty = false; canManage = false;
+    }
+    requestCommentFocus(item.noteId, item.threadId);
+    jumpToNote({ id: item.noteId, vaultId: item.vaultId, path: item.notePath, noteLevel: 1, createdBy: "", createdAt: "" });
   }
   async function copyConfig() {
     if (!selected) return;
@@ -195,7 +208,7 @@
       <div class="nav-bottom">{#if !selected}<a href="/setup" onclick={openSetup}><Icon name="obsidian" /><span>Obsidian einrichten</span></a>{/if}<div class="account"><span class="avatar">{preferredUsername(user).slice(0, 1).toUpperCase()}</span><span class="account-name">{preferredUsername(user)}<small>Dein Konto</small></span><button class="quiet" disabled={authBusy} onclick={() => authenticate(true)}>Abmelden</button></div></div>
     </aside>
     <div class="main-column">
-      <header class="app-header"><button class="mobile-toggle quiet" aria-label={mobileOpen ? "Menü schließen" : "Menü öffnen"} aria-expanded={mobileOpen} onclick={() => mobileOpen = !mobileOpen}><Icon name="panel" /></button><div class="breadcrumb">{#if setupPage}<strong>Obsidian einrichten</strong>{:else if selected}<span>{selected.name}</span><span aria-hidden="true">/</span><strong>{areas.find(a => a.id === section)?.label}</strong>{:else}<strong>Willkommen</strong>{/if}</div><button class="quick-trigger" onclick={() => jumping = true}><Icon name="search" /><span>Schnellsprung</span><kbd>⌘ K</kbd></button><ThemeToggle /></header>
+      <header class="app-header"><button class="mobile-toggle quiet" aria-label={mobileOpen ? "Menü schließen" : "Menü öffnen"} aria-expanded={mobileOpen} onclick={() => mobileOpen = !mobileOpen}><Icon name="panel" /></button><div class="breadcrumb">{#if setupPage}<strong>Obsidian einrichten</strong>{:else if selected}<span>{selected.name}</span><span aria-hidden="true">/</span><strong>{areas.find(a => a.id === section)?.label}</strong>{:else}<strong>Willkommen</strong>{/if}</div><button class="quick-trigger" onclick={() => jumping = true}><Icon name="search" /><span>Schnellsprung</span><kbd>⌘ K</kbd></button><NotificationBell onOpen={openNotification} /><ThemeToggle /></header>
       {#if sessionExpired}<div class="app-error feedback error" role="alert"><p>Deine Anmeldung ist abgelaufen. Ein offener Entwurf bleibt bis zur erneuten Anmeldung erhalten; exportiere ihn vorher, wenn er wichtig ist.</p><button class="secondary" disabled={authBusy} onclick={relogin}>Erneut anmelden</button></div>{/if}
       {#if error}<div class="app-error feedback error" role="alert"><p>{error}</p><button class="secondary" onclick={() => { error = ""; void refreshVaults().catch(e => error = e.message); }}>Erneut versuchen</button></div>{/if}
       <main id="workspace">
