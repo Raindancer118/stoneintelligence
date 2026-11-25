@@ -47,6 +47,16 @@ export function describeEvent(event: HistoryEvent): string {
       return `${who} hat die Datei „${fileName(event)}“ hinzugefügt`;
     case "file.content-updated":
       return `${who} hat eine neue Fassung von „${fileName(event)}“ hochgeladen`;
+    case "comment.created":
+      return `${who} hat „${name}“ kommentiert`;
+    case "comment.edited":
+      return `${who} hat einen Kommentar zu „${name}“ bearbeitet`;
+    case "comment.deleted":
+      return `${who} hat einen Kommentar zu „${name}“ gelöscht`;
+    case "comment.resolved":
+      return `${who} hat eine Kommentar-Diskussion zu „${name}“ gelöst`;
+    case "comment.reopened":
+      return `${who} hat eine Kommentar-Diskussion zu „${name}“ wieder geöffnet`;
     case "ACCESS_GRANTED":
       return `${who} hat für ${scopeText(payload)} ${placeText(payload)} ${permissionsLabel((payload.permissions ?? null) as Permission[] | null)} festgelegt`;
     case "ACCESS_REVOKED":

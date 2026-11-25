@@ -1,6 +1,7 @@
 import type { AiChangeSet, AiChangeSetView, AiRevertReport } from "../ui/aiChanges";
 import type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
 import { obsidianFetch } from "./obsidianFetch";
+import type { CommentAnchor } from "./commentAnchor";
 import type { FeedChanges } from "./serverMirror";
 import { withRateLimitRetry } from "./retryFetch";
 
@@ -23,6 +24,20 @@ export interface NoteListItem {
   /** Ob eine Freigabe diesen Eintrag betrifft - nur fuer Verwaltende gesetzt. */
   shared?: boolean | null;
 }
+
+export interface CommentView {
+  id: string; author: string; authorName: string; mine: boolean; body: string; createdAt: string; editedAt: string | null;
+}
+/** `anchor === null`: Kommentar zur ganzen Notiz. */
+export interface CommentThreadView {
+  id: string; noteId: string; anchor: CommentAnchor | null; resolved: boolean; resolvedByName: string | null;
+  resolvedAt: string | null; createdAt: string; comments: CommentView[];
+}
+export interface CommentNotification {
+  id: string; vaultId: string; vaultName: string; noteId: string; notePath: string; threadId: string; commentId: string;
+  actorName: string; excerpt: string; createdAt: string; read: boolean;
+}
+export interface CommentNotifications { items: CommentNotification[]; unread: number; }
 
 export interface GroupRef { id: string; name: string; }
 export interface VaultMember { subject: string; displayName?: string | null; groups: GroupRef[]; permissions: Permission[]; }
@@ -581,6 +596,44 @@ export class NoteApiClient {
   /** Notizen mit aehnlichem Inhalt - nur solche, die ich lesen darf; leer, solange noch kein Lauf indiziert hat. */
   async similarNotes(vaultId: string, noteId: string, limit = 10): Promise<SimilarNote[]> {
     return this.json<SimilarNote[]>(`/api/v1/vaults/${vaultId}/notes/${noteId}/similar?limit=${limit}`, "failed to find similar notes");
+  }
+
+  async listComments(vaultId: string, noteId: string): Promise<CommentThreadView[]> {
+    return this.json<CommentThreadView[]>(`/api/v1/vaults/${vaultId}/notes/${noteId}/comments`, "failed to load comments");
+  }
+
+  async startThread(vaultId: string, noteId: string, body: string, anchor: CommentAnchor | null): Promise<CommentThreadView> {
+    return this.send<CommentThreadView>("POST", `/api/v1/vaults/${vaultId}/notes/${noteId}/comments`, "failed to comment", anchor ? { body, anchor } : { body });
+  }
+
+  async replyToThread(vaultId: string, threadId: string, body: string): Promise<CommentThreadView> {
+    return this.send<CommentThreadView>("POST", `/api/v1/vaults/${vaultId}/comment-threads/${threadId}/replies`, "failed to reply", { body });
+  }
+
+  async editComment(vaultId: string, commentId: string, body: string): Promise<CommentThreadView> {
+    return this.send<CommentThreadView>("PATCH", `/api/v1/vaults/${vaultId}/comments/${commentId}`, "failed to edit comment", { body });
+  }
+
+  async deleteComment(vaultId: string, commentId: string): Promise<void> {
+    await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/comments/${commentId}`, "failed to delete comment");
+  }
+
+  async resolveThread(vaultId: string, threadId: string): Promise<CommentThreadView> {
+    return this.send<CommentThreadView>("POST", `/api/v1/vaults/${vaultId}/comment-threads/${threadId}/resolve`, "failed to resolve thread", {});
+  }
+
+  async reopenThread(vaultId: string, threadId: string): Promise<CommentThreadView> {
+    return this.send<CommentThreadView>("POST", `/api/v1/vaults/${vaultId}/comment-threads/${threadId}/reopen`, "failed to reopen thread", {});
+  }
+
+  /** Erwähnungen an mich, über alle Vaults; nur Notizen, die ich (noch) lesen darf. */
+  async notifications(): Promise<CommentNotifications> {
+    return this.json<CommentNotifications>("/api/v1/notifications", "failed to load notifications");
+  }
+
+  /** Ohne `ids` alle als gelesen markieren. */
+  async markNotificationsRead(ids: string[] = []): Promise<void> {
+    await this.send<void>("POST", "/api/v1/notifications/read", "failed to mark notifications read", { ids });
   }
 
   /** Eigene Einwilligung (Art. 49 DSGVO), dass Auszuege meiner Notizen bei der KI-geprueften Verlinkung an den Anbieter gehen. */
