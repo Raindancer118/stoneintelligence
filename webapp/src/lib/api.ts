@@ -11,6 +11,17 @@ export interface Vault {
   selectiveSync?: boolean;
 }
 
+/** Plugin-Richtlinie eines Vaults (ADR 0019); `version` leer: jede Version. */
+export interface PluginRule { id: string; version: string | null; }
+export interface PluginPolicy { mode: "OFF" | "ENFORCE"; allowed: PluginRule[]; alwaysAllowed: string; }
+export type DeviceStatus = "COMPLIANT" | "NON_COMPLIANT" | "REVOKED" | "WIPE_PENDING" | "UNKNOWN";
+/** Ein Gerät im Register: letzte Meldung des Plugins, bewertet gegen die aktuelle Richtlinie. */
+export interface Device {
+  deviceId: string; subject: string; person: string; name: string; platform: string; obsidianVersion: string; pluginVersion: string;
+  restrictedMode: boolean; plugins: PluginRule[]; firstSeen: string; lastSeen: string; status: DeviceStatus; compliant: boolean;
+  offending: string[]; revoked: boolean; wipePending: boolean; wipedAt: string | null;
+}
+
 /** Aufbewahrungsfrist des Protokolls in Tagen; `days === null`: unbegrenzt (ADR 0015). */
 export interface AuditRetention { days: number | null; minimumDays: number; }
 
@@ -361,6 +372,16 @@ export const api = {
   auditRetention: (vaultId: string) => request<AuditRetention>(`/api/v1/vaults/${vaultId}/audit/retention`),
   setAuditRetention: (vaultId: string, days: number | null) =>
     request<AuditRetention>(`/api/v1/vaults/${vaultId}/audit/retention`, { method: "PUT", body: JSON.stringify({ days }) }),
+  pluginPolicy: (vaultId: string) => request<PluginPolicy>(`/api/v1/vaults/${vaultId}/plugin-policy`),
+  setPluginPolicy: (vaultId: string, policy: Pick<PluginPolicy, "mode" | "allowed">) =>
+    request<PluginPolicy>(`/api/v1/vaults/${vaultId}/plugin-policy`, { method: "PUT", body: JSON.stringify(policy) }),
+  listDevices: (vaultId: string) => request<Device[]>(`/api/v1/vaults/${vaultId}/devices`),
+  revokeDevice: (vaultId: string, deviceId: string) =>
+    request<void>(`/api/v1/vaults/${vaultId}/devices/${encodeURIComponent(deviceId)}/revoke`, { method: "POST" }),
+  wipeDevice: (vaultId: string, deviceId: string) =>
+    request<void>(`/api/v1/vaults/${vaultId}/devices/${encodeURIComponent(deviceId)}/wipe`, { method: "POST" }),
+  reinstateDevice: (vaultId: string, deviceId: string) =>
+    request<void>(`/api/v1/vaults/${vaultId}/devices/${encodeURIComponent(deviceId)}/reinstate`, { method: "POST" }),
   setSelectiveSync: (vaultId: string, selectiveSync: boolean) =>
     request<Vault>(`/api/v1/vaults/${vaultId}`, { method: "PATCH", body: JSON.stringify({ selectiveSync }) }),
 };
