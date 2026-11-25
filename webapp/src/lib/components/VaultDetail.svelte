@@ -5,7 +5,7 @@
   import { LoadingGate } from "../loadingGate";
   import { api, ApiError, type Group, type Role, type Vault, type VaultMember } from "../api";
   import { explainAccessError, permissionWord, permissionsLabel, type Permission } from "../accessPlan";
-  import { describeEvent, formatDate, type HistoryEvent } from "../historyText";
+  import { describeEvent, formatDate, retentionLabel, type HistoryEvent } from "../historyText";
   import { idpLinkText, personLabel } from "../peopleText";
   import InvitePeople from "./InvitePeople.svelte";
 
@@ -47,6 +47,27 @@
     try { onRenamed(await api.setSelectiveSync(vault.id, enabled)); error = null; }
     catch (e) { error = (e as Error).message; }
     finally { savingAreas = false; }
+  }
+  const RETENTION_CHOICES = [365, 730, 1095, 1825, 3650];
+  let retention = $state<number | null | undefined>(undefined);
+  let retentionLoading = $state(false);
+  let retentionOptions = $derived(retention && !RETENTION_CHOICES.includes(retention) ? [...RETENTION_CHOICES, retention].sort((a, b) => a - b) : RETENTION_CHOICES);
+  $effect(() => {
+    if (page !== "settings" || retention !== undefined || retentionLoading) return;
+    retentionLoading = true;
+    api.auditRetention(vault.id)
+      .then(loaded => { retention = loaded.days; })
+      .catch(e => { error = (e as Error).message; })
+      .finally(() => { retentionLoading = false; });
+  });
+  async function setRetention(select: HTMLSelectElement) {
+    const days = select.value === "" ? null : Number(select.value);
+    if (days !== null && !window.confirm(`Protokolleinträge, die älter als ${retentionLabel(days)} sind, werden bei der nächsten nächtlichen Bereinigung gelöscht. Einträge der KI bleiben. Frist setzen?`)) {
+      select.value = retention === null || retention === undefined ? "" : String(retention);
+      return;
+    }
+    try { retention = (await api.setAuditRetention(vault.id, days)).days; error = null; }
+    catch (e) { error = (e as Error).message; select.value = retention === null || retention === undefined ? "" : String(retention); }
   }
   const ALL_PERMISSIONS: Permission[] = ["READ", "WRITE", "CREATE", "DELETE", "MANAGE"];
 
@@ -242,6 +263,14 @@
 {/if}
 {#if page === "settings"}
 <section class="admin-section"><h3>Große Vaults</h3><label class="toggle"><input type="checkbox" checked={vault.selectiveSync ?? false} disabled={savingAreas} onchange={e => setSelectiveSync(e.currentTarget.checked)} /> Nur Arbeitsbereiche synchronisieren</label><p class="hint">Jedes Obsidian lädt dann nur die Ordner, die seine Person wählt, statt des ganzen Vaults. Einzelne Geräte können es trotzdem umstellen.</p></section>
+<section class="admin-section retention"><h3>Aufbewahrung des Protokolls</h3>
+  {#if retentionLoading}<Skeleton kind="panel" rows={1} label="Aufbewahrung wird geladen…" />
+  {:else if retention !== undefined}<label>Protokoll aufbewahren
+    <select value={retention === null ? "" : String(retention)} onchange={e => void setRetention(e.currentTarget)}>
+      <option value="">Unbegrenzt</option>
+      {#each retentionOptions as days}<option value={String(days)}>{retentionLabel(days)}</option>{/each}
+    </select></label>{/if}
+  <p class="hint">Ältere Ereignisse werden jede Nacht gelöscht. Einträge der KI und ihrer Änderungssätze bleiben immer erhalten. Jede Änderung der Frist steht selbst im Protokoll.</p></section>
 <section class="admin-section"><h3>Vault umbenennen</h3><form onsubmit={e => { e.preventDefault(); void renameVault(); }}><label for="rename-vault">Neuer Vault-Name</label><input id="rename-vault" placeholder={vault.name} bind:value={vaultName} required maxlength="100" /><button class="primary" disabled={renamingVault}>Vault umbenennen</button></form></section>
 
 {/if}
