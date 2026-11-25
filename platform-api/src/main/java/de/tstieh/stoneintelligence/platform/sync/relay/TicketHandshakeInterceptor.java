@@ -19,6 +19,7 @@ public class TicketHandshakeInterceptor implements HandshakeInterceptor {
 
     public static final String ATTR_VAULT_ID = "vaultId";
     public static final String ATTR_ACTOR = "actor";
+    public static final String ATTR_DEVICE_ID = "deviceId";
 
     private final TicketService ticketService;
 
@@ -49,6 +50,9 @@ public class TicketHandshakeInterceptor implements HandshakeInterceptor {
 
         attributes.put(ATTR_VAULT_ID, claims.get().vaultId());
         attributes.put(ATTR_ACTOR, claims.get().actor());
+        if (claims.get().deviceId() != null) {
+            attributes.put(ATTR_DEVICE_ID, claims.get().deviceId());
+        }
         return true;
     }
 

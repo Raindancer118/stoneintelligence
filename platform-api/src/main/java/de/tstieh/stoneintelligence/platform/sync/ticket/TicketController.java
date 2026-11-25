@@ -2,11 +2,13 @@ package de.tstieh.stoneintelligence.platform.sync.ticket;
 
 import java.time.Instant;
 import de.tstieh.stoneintelligence.domain.id.VaultId;
+import de.tstieh.stoneintelligence.platform.device.DeviceGate;
 import de.tstieh.stoneintelligence.platform.identity.Permission;
 import de.tstieh.stoneintelligence.platform.vault.VaultAccessGuard;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -28,19 +30,24 @@ public class TicketController {
 
     private final TicketService ticketService;
     private final VaultAccessGuard access;
+    private final DeviceGate devices;
 
-    public TicketController(TicketService ticketService, VaultAccessGuard access) {
+    public TicketController(TicketService ticketService, VaultAccessGuard access, DeviceGate devices) {
         this.ticketService = ticketService;
         this.access = access;
+        this.devices = devices;
     }
 
     @PostMapping("/api/v1/vaults/{vaultId}/sync-tickets")
-    public IssuedTicketResponse issueTicket(@PathVariable String vaultId, Authentication authentication) {
+    public IssuedTicketResponse issueTicket(@PathVariable String vaultId, Authentication authentication,
+                                            @RequestHeader(name = "X-Device-Id", required = false) String deviceId) {
         var actor = authentication.getName();
         var vId = VaultId.of(vaultId);
         access.requireMember(vId, actor);
+        // Gesperrte, ungemeldete oder gegen die Plugin-Richtlinie verstossende Geraete bekommen kein Ticket (ADR 0019).
+        devices.requireAllowed(vId, deviceId);
 
-        var ticket = ticketService.issue(vId, actor);
+        var ticket = ticketService.issue(vId, actor, deviceId);
         return new IssuedTicketResponse(ticket.token(), ticket.expiresAt());
     }
 

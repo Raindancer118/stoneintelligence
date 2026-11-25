@@ -44,9 +44,13 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
     private final VaultAnnouncementService announcements;
     private final de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker activity;
     private final de.tstieh.stoneintelligence.platform.identity.BlockedSubjects blocked;
+    private final de.tstieh.stoneintelligence.platform.device.DeviceGate devices;
 
     /** Ein per SCIM gesperrtes Konto (ADR 0013) - das Plugin meldet sich dann neu an und bekommt 401. */
     public static final int CLOSE_ACCOUNT_DEACTIVATED = 4401;
+
+    /** Das Geraet ist gesperrt, soll geloescht werden oder verstoesst gegen die Plugin-Richtlinie (ADR 0019). */
+    public static final int CLOSE_DEVICE_REFUSED = 4403;
 
     /** Offene Verbindungen, damit sich die einer gesperrten Person sofort schliessen lassen. */
     private final Map<String, WebSocketSession> openSessions = new ConcurrentHashMap<>();
@@ -71,6 +75,16 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
                                 VaultAnnouncementService announcements,
                                 de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker activity,
                                 de.tstieh.stoneintelligence.platform.identity.BlockedSubjects blocked) {
+        this(relay, notes, access, announcements, activity, blocked, de.tstieh.stoneintelligence.platform.device.DeviceGate.OPEN);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public SyncWebSocketHandler(SyncRelayService relay, NoteRepository notes, VaultAccessGuard access,
+                                VaultAnnouncementService announcements,
+                                de.tstieh.stoneintelligence.platform.vault.NoteActivityTracker activity,
+                                de.tstieh.stoneintelligence.platform.identity.BlockedSubjects blocked,
+                                de.tstieh.stoneintelligence.platform.device.DeviceGate devices) {
+        this.devices = devices;
         this.blocked = blocked;
         this.relay = relay;
         this.notes = notes;
@@ -84,6 +98,13 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
         // Das Ticket wurde vor der Sperre ausgestellt - es lebt nur Sekunden, gilt dann aber nicht mehr.
         if (blocked.isBlocked(actorOf(session))) {
             new WebSocketSyncSession(session).close(CLOSE_ACCOUNT_DEACTIVATED, "account deactivated");
+            return;
+        }
+        // Auch das Ticket eines Geraets, das zwischen Ausstellung und Verbinden gesperrt wurde, gilt dann nicht mehr.
+        try {
+            devices.requireAllowed(vaultIdOf(session), deviceIdOf(session));
+        } catch (de.tstieh.stoneintelligence.platform.device.DeviceGateException refused) {
+            new WebSocketSyncSession(session).close(CLOSE_DEVICE_REFUSED, refused.code());
             return;
         }
         openSessions.put(session.getId(), session);
@@ -232,6 +253,20 @@ public class SyncWebSocketHandler extends BinaryWebSocketHandler {
                 new WebSocketSyncSession(session).close(CLOSE_ACCOUNT_DEACTIVATED, "account deactivated");
             }
         }
+    }
+
+    /** Sperrt oder loescht die Verwaltung ein Geraet, endet dessen offene Verbindung sofort. */
+    @org.springframework.context.event.EventListener
+    public void onDeviceRefused(de.tstieh.stoneintelligence.platform.device.DeviceRefused event) {
+        for (var session : openSessions.values()) {
+            if (event.vaultId().equals(vaultIdOf(session)) && event.deviceId().equals(deviceIdOf(session))) {
+                new WebSocketSyncSession(session).close(CLOSE_DEVICE_REFUSED, "device refused");
+            }
+        }
+    }
+
+    private String deviceIdOf(WebSocketSession session) {
+        return (String) session.getAttributes().get(TicketHandshakeInterceptor.ATTR_DEVICE_ID);
     }
 
     private VaultId vaultIdOf(WebSocketSession session) {

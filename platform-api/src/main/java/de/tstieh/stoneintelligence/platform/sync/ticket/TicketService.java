@@ -30,15 +30,20 @@ public class TicketService {
     }
 
     public SyncTicket issue(VaultId vaultId, String actor) {
+        return issue(vaultId, actor, null);
+    }
+
+    /** {@code deviceId}: die meldende Plugin-Instanz (ADR 0019); der Relay prueft sie beim Verbinden erneut. */
+    public SyncTicket issue(VaultId vaultId, String actor, String deviceId) {
         var now = clock.instant();
-        var ticket = new SyncTicket(newToken(), vaultId, actor, now, now.plus(ttl));
+        var ticket = new SyncTicket(newToken(), vaultId, actor, now, now.plus(ttl), deviceId);
         store.put(ticket);
         return ticket;
     }
 
     public Optional<TicketClaims> redeem(String token) {
         return store.takeIfValid(token, clock.instant())
-            .map(ticket -> new TicketClaims(ticket.vaultId(), ticket.actor()));
+            .map(ticket -> new TicketClaims(ticket.vaultId(), ticket.actor(), ticket.deviceId()));
     }
 
     private String newToken() {

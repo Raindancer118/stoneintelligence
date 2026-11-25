@@ -16,7 +16,8 @@ public class JdbcTicketStore implements TicketStore {
         VaultId.of(rs.getString("vault_id")),
         rs.getString("actor"),
         rs.getTimestamp("issued_at").toInstant(),
-        rs.getTimestamp("expires_at").toInstant()
+        rs.getTimestamp("expires_at").toInstant(),
+        rs.getString("device_id")
     );
 
     private final JdbcClient jdbcClient;
@@ -28,8 +29,8 @@ public class JdbcTicketStore implements TicketStore {
     @Override
     public void put(SyncTicket ticket) {
         jdbcClient.sql("""
-                INSERT INTO platform.sync_tickets (token, vault_id, actor, issued_at, expires_at)
-                VALUES (:token, :vaultId, :actor, :issuedAt, :expiresAt)
+                INSERT INTO platform.sync_tickets (token, vault_id, actor, issued_at, expires_at, device_id)
+                VALUES (:token, :vaultId, :actor, :issuedAt, :expiresAt, :deviceId)
                 """)
             .param("token", ticket.token())
             .param("vaultId", ticket.vaultId().value())
@@ -38,6 +39,7 @@ public class JdbcTicketStore implements TicketStore {
             // ableiten (setObject() schlaegt fehl) - explizit auf java.sql.Timestamp abbilden.
             .param("issuedAt", Timestamp.from(ticket.issuedAt()))
             .param("expiresAt", Timestamp.from(ticket.expiresAt()))
+            .param("deviceId", ticket.deviceId())
             .update();
 
         // Guenstige, beilaeufige Bereinigung abgelaufener, nie eingeloester Tickets statt eines
@@ -52,7 +54,7 @@ public class JdbcTicketStore implements TicketStore {
     public Optional<SyncTicket> takeIfValid(String token, Instant now) {
         var ticket = jdbcClient.sql("""
                 DELETE FROM platform.sync_tickets WHERE token = :token AND expires_at >= :now
-                RETURNING token, vault_id, actor, issued_at, expires_at
+                RETURNING token, vault_id, actor, issued_at, expires_at, device_id
                 """)
             .param("token", token)
             .param("now", Timestamp.from(now))

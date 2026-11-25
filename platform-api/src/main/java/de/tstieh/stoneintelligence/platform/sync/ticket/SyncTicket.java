@@ -9,5 +9,9 @@ import de.tstieh.stoneintelligence.domain.id.VaultId;
  * Handshake (s. SyncWebSocketHandler), die Notiz-spezifische Berechtigungspruefung passiert erst
  * bei JOIN.
  */
-public record SyncTicket(String token, VaultId vaultId, String actor, Instant issuedAt, Instant expiresAt) {
+public record SyncTicket(String token, VaultId vaultId, String actor, Instant issuedAt, Instant expiresAt, String deviceId) {
+
+    public SyncTicket(String token, VaultId vaultId, String actor, Instant issuedAt, Instant expiresAt) {
+        this(token, vaultId, actor, issuedAt, expiresAt, null);
+    }
 }
