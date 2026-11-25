@@ -69,9 +69,22 @@ export function describeEvent(event: HistoryEvent): string {
       return `${who} hat eine Gruppe umbenannt`;
     case "GROUP_DELETED":
       return `${who} hat eine Gruppe gelöscht`;
+    case "audit.retention-changed":
+      return `${who} hat die Aufbewahrung des Protokolls auf ${retentionLabel(typeof payload.to === "number" ? payload.to : null)} gestellt`;
+    case "audit.purged": {
+      const count = typeof payload.count === "number" ? payload.count : 0;
+      return `Das Protokoll wurde bereinigt: ${count} ${count === 1 ? "Eintrag" : "Einträge"} älter als ${retentionLabel(typeof payload.retentionDays === "number" ? payload.retentionDays : null)} gelöscht`;
+    }
     default:
       return `${who}: ${event.action}`;
   }
+}
+
+/** Aufbewahrungsfrist des Protokolls in Worten; `null` = unbegrenzt. */
+export function retentionLabel(days: number | null): string {
+  if (days === null) return "unbegrenzt";
+  if (days % 365 === 0) return days === 365 ? "1 Jahr" : `${days / 365} Jahre`;
+  return `${days} Tage`;
 }
 
 export function activityLines(activity: NoteActivity, timeZone?: string): string[] {

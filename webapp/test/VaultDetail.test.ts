@@ -5,7 +5,7 @@ import { api } from "../src/lib/api";
 vi.mock("../src/lib/api", async (original) => ({ ...(await original<typeof import("../src/lib/api")>()), api: {
   listRoles: vi.fn(), listGroups: vi.fn(), listMembers: vi.fn(), createGroup: vi.fn(), createRole: vi.fn(),
   listInvitations: vi.fn(), searchPeople: vi.fn(), removeFromVault: vi.fn(), deleteRole: vi.fn(), updateRole: vi.fn(),
-  renameGroup: vi.fn(), deleteGroup: vi.fn(), vaultLog: vi.fn(), setSelectiveSync: vi.fn(), auditExport: vi.fn(),
+  renameGroup: vi.fn(), deleteGroup: vi.fn(), vaultLog: vi.fn(), setSelectiveSync: vi.fn(), auditExport: vi.fn(), auditRetention: vi.fn(), setAuditRetention: vi.fn(),
 } }));
 const group = { id: "group", name: "Team", memberSubjects: [], roleIds: [] };
 beforeEach(() => {
@@ -17,6 +17,7 @@ beforeEach(() => {
     { subject: "ben", groups: [], permissions: [] },
   ]);
   vi.mocked(api.listInvitations).mockResolvedValue([]);
+  vi.mocked(api.auditRetention).mockResolvedValue({ days: null, minimumDays: 365 });
 });
 afterEach(cleanup);
 describe("vault detail loading", () => {
@@ -72,6 +73,61 @@ describe("vault members and management", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Letzte Ereignisse anzeigen" }));
 
     expect(await screen.findByText("tom hat ben aus dem Vault genommen")).toBeTruthy();
+  });
+});
+
+describe("audit retention", () => {
+  const vault = { id: "vault", name: "Konzern", createdAt: "" };
+  const open = async () => {
+    render(VaultDetail, { vault, me: "tom" });
+    await screen.findByText("tom (du)");
+    await fireEvent.click(screen.getByRole("button", { name: "Allgemein" }));
+    return screen.findByRole("combobox", { name: "Protokoll aufbewahren" });
+  };
+
+  it("keeps the log forever by default and says that AI entries always stay", async () => {
+    vi.mocked(api.auditRetention).mockResolvedValue({ days: null, minimumDays: 365 });
+
+    const select = await open() as HTMLSelectElement;
+
+    expect(select.value).toBe("");
+    expect([...select.options].map(o => o.text)).toEqual(["Unbegrenzt", "1 Jahr", "2 Jahre", "3 Jahre", "5 Jahre", "10 Jahre"]);
+    expect(screen.getByText(/Einträge der KI und ihrer Änderungssätze bleiben immer erhalten/)).toBeTruthy();
+  });
+
+  it("asks before it sets a period and saves it", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(api.auditRetention).mockResolvedValue({ days: null, minimumDays: 365 });
+    vi.mocked(api.setAuditRetention).mockResolvedValue({ days: 1095, minimumDays: 365 });
+
+    const select = await open();
+    await fireEvent.change(select, { target: { value: "1095" } });
+
+    await waitFor(() => expect(api.setAuditRetention).toHaveBeenCalledWith("vault", 1095));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("älter als 3 Jahre"));
+    expect((select as HTMLSelectElement).value).toBe("1095");
+  });
+
+  it("keeps the old period when you decline", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    vi.mocked(api.auditRetention).mockResolvedValue({ days: null, minimumDays: 365 });
+
+    const select = await open() as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: "365" } });
+
+    expect(api.setAuditRetention).not.toHaveBeenCalled();
+    expect(select.value).toBe("");
+  });
+
+  it("switches back to unlimited without asking", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    vi.mocked(api.auditRetention).mockResolvedValue({ days: 730, minimumDays: 365 });
+    vi.mocked(api.setAuditRetention).mockResolvedValue({ days: null, minimumDays: 365 });
+
+    await fireEvent.change(await open(), { target: { value: "" } });
+
+    await waitFor(() => expect(api.setAuditRetention).toHaveBeenCalledWith("vault", null));
+    expect(confirm).not.toHaveBeenCalled();
   });
 });
 

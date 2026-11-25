@@ -11,6 +11,9 @@ export interface Vault {
   selectiveSync?: boolean;
 }
 
+/** Aufbewahrungsfrist des Protokolls in Tagen; `days === null`: unbegrenzt (ADR 0015). */
+export interface AuditRetention { days: number | null; minimumDays: number; }
+
 export interface Role {
   id: string;
   name: string;
@@ -302,6 +305,9 @@ export const api = {
     request<void>(`/api/v1/vaults/${vaultId}/groups/${groupId}/idp-group`, { method: "DELETE" }),
   renameVault: (vaultId: string, name: string) =>
     request<Vault>(`/api/v1/vaults/${vaultId}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  auditRetention: (vaultId: string) => request<AuditRetention>(`/api/v1/vaults/${vaultId}/audit/retention`),
+  setAuditRetention: (vaultId: string, days: number | null) =>
+    request<AuditRetention>(`/api/v1/vaults/${vaultId}/audit/retention`, { method: "PUT", body: JSON.stringify({ days }) }),
   setSelectiveSync: (vaultId: string, selectiveSync: boolean) =>
     request<Vault>(`/api/v1/vaults/${vaultId}`, { method: "PATCH", body: JSON.stringify({ selectiveSync }) }),
 };

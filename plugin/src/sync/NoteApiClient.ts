@@ -114,6 +114,11 @@ export interface ReconciliationPage {
  * frueheren, vom Client selbst behaupteten {@code X-Actor}-Headers - der Actor wird jetzt
  * serverseitig aus dem validierten Token abgeleitet ({@code preferred_username}-Claim).
  */
+export interface AuditRetention {
+  days: number | null;
+  minimumDays: number;
+}
+
 export class NoteApiClient {
   constructor(
     private readonly baseUrl: string,
@@ -519,6 +524,15 @@ export class NoteApiClient {
   /** Nur Verwaltende: alle Geraete synchronisieren nur ihre Arbeitsbereiche (ADR 0013). */
   async setSelectiveSync(vaultId: string, selectiveSync: boolean): Promise<VaultSummary> {
     return this.send<VaultSummary>("PATCH", `/api/v1/vaults/${vaultId}`, "failed to change vault", { selectiveSync });
+  }
+
+  /** Nur Verwaltende: Aufbewahrungsfrist des Protokolls in Tagen, `null` = unbegrenzt (ADR 0015). */
+  async auditRetention(vaultId: string): Promise<AuditRetention> {
+    return this.json<AuditRetention>(`/api/v1/vaults/${vaultId}/audit/retention`, "failed to read audit retention");
+  }
+
+  async setAuditRetention(vaultId: string, days: number | null): Promise<AuditRetention> {
+    return this.send<AuditRetention>("PUT", `/api/v1/vaults/${vaultId}/audit/retention`, "failed to change audit retention", { days });
   }
 
   async renameVault(vaultId: string, name: string): Promise<VaultSummary> {

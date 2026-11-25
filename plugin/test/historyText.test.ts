@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activityLines, describeActor, describeEvent } from "../src/sync/historyText";
+import { activityLines, describeActor, describeEvent, retentionLabel } from "../src/sync/historyText";
 import type { HistoryEvent } from "../src/sync/historyText";
 
 const event = (action: string, payload: Record<string, unknown> = {}, actor = "tom", path: string | null = "Team/plan.md"): HistoryEvent => ({
@@ -15,6 +15,17 @@ describe("historyText", () => {
     expect(describeEvent(event("note.renamed", { from: "Team/plan.md", to: "Archiv/plan.md" }))).toBe("tom hat „plan“ nach „Archiv“ verschoben");
     expect(describeEvent(event("note.deleted"))).toBe("tom hat „plan“ gelöscht");
     expect(describeEvent(event("file.content-updated", {}, "ben", "Anhänge/Skript.pdf"))).toBe("ben hat eine neue Fassung von „Skript.pdf“ hochgeladen");
+  });
+
+  it("should_tellRetentionChangesAndPurges", () => {
+    expect(describeEvent(event("audit.retention-changed", { from: 365, to: 1095 }, "tom", null))).toBe("tom hat die Aufbewahrung des Protokolls auf 3 Jahre gestellt");
+    expect(describeEvent(event("audit.retention-changed", { from: 365 }, "tom", null))).toBe("tom hat die Aufbewahrung des Protokolls auf unbegrenzt gestellt");
+    expect(describeEvent(event("audit.purged", { count: 12, retentionDays: 730 }, "system", null))).toBe("Das Protokoll wurde bereinigt: 12 Einträge älter als 2 Jahre gelöscht");
+    expect(describeEvent(event("audit.purged", { count: 1, retentionDays: 400 }, "system", null))).toBe("Das Protokoll wurde bereinigt: 1 Eintrag älter als 400 Tage gelöscht");
+  });
+
+  it("should_labelRetentionPeriods", () => {
+    expect([null, 365, 730, 3650, 400].map(retentionLabel)).toEqual(["unbegrenzt", "1 Jahr", "2 Jahre", "10 Jahre", "400 Tage"]);
   });
 
   it("should_nameTheAiAsSuch", () => {

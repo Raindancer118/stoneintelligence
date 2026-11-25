@@ -140,6 +140,7 @@ export async function mockWorkspace(page: Page) {
       { noteId: "n2", path: "Wissen/Zellatmung.md", kind: "UPDATED", at: "2026-09-23T09:01:10Z" },
       { noteId: "n3", path: "Quellen/Skript Kapitel 4.md", kind: "CREATED", at: "2026-09-23T09:01:20Z" }] });
     if (path.endsWith("/ai/change-sets")) return json(changeSets);
+    if (path.endsWith("/audit/retention")) return json({ days: null, minimumDays: 365 });
     if (path.endsWith("/audit")) return json([{ actor: "Tom", action: "note.created", payload: {}, occurredAt: "2026-09-19T09:00:00Z" }]);
     if (request.method() === "PATCH") { notes[0]!.path = request.postDataJSON().path; return json(notes[0]); }
     if (request.method() === "DELETE") { notes.splice(0, 1); return json({}); }
