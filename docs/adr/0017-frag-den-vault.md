@@ -50,15 +50,19 @@ Der Dienst bekommt in `STONEINTELLIGENCE_AI_SERVICES` optional ein viertes Feld 
 - Wurden gute Treffer wegen fehlender Einwilligung ausgelassen, speichert der Server die Zahl
   (`omitted_for_consent`), und die Oberfläche sagt es der fragenden Person. Es sind nur Notizen, die sie ohnehin
   lesen darf, deshalb verrät die Zahl nichts.
-- Die Einwilligung heißt jetzt „Auszüge an KI-Anbieter“ und deckt Verlinkung und „Frag den Vault“; Einwilligungstext und
-  Datenschutzerklärung wurden angepasst. Die Einwilligung bleibt je Mitglied und jederzeit widerrufbar.
+- Dieselbe Einwilligung deckt jetzt Verlinkung und „Frag den Vault“; Beschriftung in Webapp und Plugin sowie die
+  Datenschutzerklärung nennen beides, und der Schalter steht auch direkt im Frage-Dialog. Sie bleibt je Mitglied und
+  jederzeit widerrufbar. Ob ein Dienst extern oder lokal ist, legt der Betrieb fest: viertes Feld `local` in
+  `STONEINTELLIGENCE_AI_SERVICES`; ohne die Angabe gilt ein Dienst als extern (sicherer Standard).
 
 ### 4. Antwort
 
 - Der Prompt erlaubt nur die Stellen als Wissen, verbietet Wissen von außen und verlangt Nummern in eckigen Klammern
   hinter jeder Aussage. Antwort als JSON `{"beantwortbar": bool, "antwort": "…"}`.
-- Der Worker prüft: nur Nummern, die es gab; mindestens ein Zitat. Eine Antwort ohne gültiges Zitat gilt als
-  nicht belegt und wird nicht angezeigt. Ohne Stellen wird das Modell gar nicht gefragt.
+- Der Worker prüft: nur Nummern, die es gab; mindestens ein Zitat; der Server prüft es noch einmal. Eine Antwort ohne
+  gültiges Zitat ist unbrauchbar und wird nie gespeichert: Der Job versucht es erneut (3 Versuche), danach schlägt er mit
+  einer Meldung fehl. Ohne Stellen wird das Modell gar nicht gefragt. Läuft keine Einbettung (kein Modell oder Fehler),
+  sucht platform-api nur im Volltext.
 - Reichen die Stellen nicht, lautet das Ergebnis „Die Notizen, die du lesen darfst, beantworten das nicht“ (kein Text
   des Modells). `answered = false`.
 - Der Server speichert die Antwort und die **tatsächlich zitierten** Quellen (Notiz, Pfad, Überschrift, kurzer Auszug).
@@ -66,7 +70,15 @@ Der Dienst bekommt in `STONEINTELLIGENCE_AI_SERVICES` optional ein viertes Feld 
   die Antwort verborgen (`restricted`), damit Verlauf kein Weg an entzogene Inhalte ist.
 - Die Webapp rendert Antworten über den bestehenden gesäuberten Markdown-Renderer; Zitate `[n]` werden zu Links.
 
-### 5. Audit, Datenschutz, Grenzen
+### 5. Weitere Festlegungen
+
+- Frage und Job: Der Job heißt neutral „Frage an den Vault“ und steht nicht in der gemeinsamen Jobliste (`GET …/ai/jobs`),
+  die alle Mitglieder sehen; die Frage selbst steht nur in `vault_questions`. Andere können sie auch nicht abbrechen.
+- Semantische Untergrenze: Kosinus 0,80 (`stoneintelligence.ask.min-similarity`), weil Fremdes mit e5-small bei 0,75 bis
+  0,80 liegt (ADR 0012). Bei einem Modellwechsel mit den Verlinkungsschwellen neu messen.
+- Standarddienst, wenn die Person keinen wählt: ein lokaler, sonst der erste eingerichtete.
+
+### 6. Audit, Datenschutz, Grenzen
 
 - Beim Abruf der Stellen schreibt der Server ein Audit-Ereignis `ai.ask`: wer gefragt hat, welcher Dienst, ob lokal,
   welche Notizen (Ids) gesendet wurden und wie viele wegen fehlender Einwilligung nicht. Kein Text, auch nicht die Frage.
@@ -75,7 +87,7 @@ Der Dienst bekommt in `STONEINTELLIGENCE_AI_SERVICES` optional ein viertes Feld 
 - Grenzen: höchstens 3 offene Fragen je Person, Frage 5 bis 1 000 Zeichen. Dateien (PDF-Inhalte) sind nicht Teil der
   Suche (ADR 0014). Die Qualität hängt am Modell; belegt ist nur, was in den gesendeten Stellen steht.
 
-### 6. Oberflächen (ADR 0011)
+### 7. Oberflächen (ADR 0011)
 
 Webapp: eigener Eintrag „Frag den Vault“ in der Vault-Navigation mit Fragefeld, Antwort samt Quellenliste und Verlauf.
 Plugin: Befehl „Frag den Vault“ öffnet eine Seitenansicht mit denselben Funktionen; ein Quellenklick öffnet die Notiz

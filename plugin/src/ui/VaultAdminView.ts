@@ -404,7 +404,7 @@ export class VaultAdminView extends ItemView {
         .onChange((value) => save({ mode: value as LinkingSettings["mode"] })));
     if (linking.mode === "AI") {
       new Setting(root).setName("Meine Notizen dürfen zur KI-Prüfung")
-        .setDesc(`Auszüge deiner Notizen gehen dann nachts an den KI-Anbieter (auch in die USA, s. Datenschutzerklärung). `
+        .setDesc(`Auszüge deiner Notizen gehen dann nachts an den KI-Anbieter (auch in die USA, s. Datenschutzerklärung) und, wenn du „Frag den Vault“ mit einem externen Dienst nutzt, auch dorthin. `
           + `Jederzeit widerrufbar. Bisher zugestimmt: ${linking.aiConsentCount ?? 0} Mitglied(er).`)
         .addToggle((toggle) => toggle.setValue(Boolean(linking.aiConsent)).setDisabled(this.busy)
           .onChange((on) => void this.run((api, vaultId) => api.setLinkingConsent(vaultId, on),

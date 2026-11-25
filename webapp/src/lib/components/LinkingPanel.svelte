@@ -70,7 +70,7 @@
     </label>
     {#if settings.mode === "AI"}
       <p class="hint">Eine KI entscheidet, ob ähnliche Notizen wirklich zusammengehören, und wählt die Stelle. Dafür gehen nachts Auszüge an den KI-Anbieter – nur von Notizen, deren Verfasser zugestimmt haben (siehe <a href="/datenschutz">Datenschutz</a>).</p>
-      <label class="toggle"><input type="checkbox" checked={Boolean(settings.aiConsent)} disabled={busy} onchange={e => consent(e.currentTarget.checked)} /> Meine Notizen dürfen zur KI-Prüfung (jederzeit widerrufbar; bisher {settings.aiConsentCount ?? 0} Mitglied(er))</label>
+      <label class="toggle"><input type="checkbox" checked={Boolean(settings.aiConsent)} disabled={busy} onchange={e => consent(e.currentTarget.checked)} /> Meine Notizen dürfen zur KI-Prüfung und bei „Frag den Vault“ an externe KI-Anbieter (jederzeit widerrufbar; bisher {settings.aiConsentCount ?? 0} Mitglied(er))</label>
     {/if}
     <label class="toggle"><input type="checkbox" checked={settings.enabled} disabled={!manage || busy} onchange={e => save({ enabled: e.currentTarget.checked })} /> Jede Nacht um 2 Uhr verlinken{settings.enabled && settings.requestedBy ? ` (mit den Rechten von ${settings.requestedBy})` : ""}</label>
     <label class="toggle"><input type="checkbox" checked={settings.linkHumanNotes} disabled={!manage || busy} onchange={e => save({ linkHumanNotes: e.currentTarget.checked })} /> Auch in Notizen von Menschen</label>
