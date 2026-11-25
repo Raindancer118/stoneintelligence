@@ -144,6 +144,42 @@ class AiJobServiceTest {
         }
     }
 
+    // ADR 0017: eine Frage ist ein Job ohne Dokument und ohne Change-Set - sie schreibt nichts in den Vault.
+    @Nested
+    class Fragen {
+
+        @Test
+        void should_queueAQuestionJob_withNeutralName_thatNeedsNoChangeSet() {
+            var job = service.startAsk(vaultId, "tom", "gemini");
+
+            assertThat(job.kind()).isEqualTo(AiJob.Kind.ASK);
+            assertThat(job.fileName()).isEqualTo("Frage an den Vault");
+            var claimed = service.claim().orElseThrow();
+            assertThat(claimed.id()).isEqualTo(job.id());
+            assertThat(claimed.changeSetId()).isNull();
+            assertThat(startedChangeSets).isEmpty();
+        }
+
+        @Test
+        void should_shareTheOpenJobLimit_andRefuseUnknownServices() {
+            for (var i = 0; i < AiJobService.MAX_OPEN_JOBS_PER_VAULT; i++) {
+                service.startAsk(vaultId, "tom", "gemini");
+            }
+
+            assertThatThrownBy(() -> service.startAsk(vaultId, "tom", "gemini")).isInstanceOf(AiWriteRefusedException.class);
+            assertThatThrownBy(() -> service.startAsk(VaultId.newId(), "tom", "gibtsnicht")).isInstanceOf(AiWriteRefusedException.class);
+        }
+
+        @Test
+        void should_cancelAQuestion_withoutRevertingAnything() {
+            var job = service.startAsk(vaultId, "tom", "gemini");
+            service.claim();
+
+            assertThat(service.cancel(vaultId, job.id(), "tom")).isTrue();
+            assertThat(revertedChangeSets).isEmpty();
+        }
+    }
+
     @Nested
     class Verarbeiten {
 

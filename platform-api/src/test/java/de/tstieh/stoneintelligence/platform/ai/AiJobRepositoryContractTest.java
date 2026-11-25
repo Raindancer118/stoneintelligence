@@ -33,6 +33,15 @@ public abstract class AiJobRepositoryContractTest {
     }
 
     @Test
+    void should_storeAQuestionJob_withoutDocument() {
+        var job = jobs.create(new NewAiJob(vaultId, "gemini", "tom", "Frage an den Vault", "text/plain", 1, null, 3, AiJob.Kind.ASK), now);
+
+        assertThat(jobs.find(vaultId, job.id()).orElseThrow().kind()).isEqualTo(AiJob.Kind.ASK);
+        assertThat(jobs.content(job.id())).isEmpty();
+        assertThat(jobs.hasOpen(vaultId, AiJob.Kind.ASK)).isTrue();
+    }
+
+    @Test
     void should_keepTheUpload_andScopeItByVault() {
         var job = upload("Vorlesung.pdf", now);
 

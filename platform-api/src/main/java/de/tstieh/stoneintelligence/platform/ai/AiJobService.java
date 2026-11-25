@@ -101,6 +101,22 @@ public class AiJobService {
             AiJob.Kind.LINKING), clock.get());
     }
 
+    /**
+     * Reiht eine Frage an den Vault ein (ADR 0017). Wie bei der Verlinkung ist das Level nur die Schranke fuer den
+     * Dienst; welche Notizen er bekommt, entscheidet die Suche. Der Name ist neutral, denn die Jobliste sehen alle.
+     */
+    public AiJob startAsk(VaultId vaultId, String requestedBy, String serviceId) {
+        var service = services.get().find(String.valueOf(serviceId))
+            .orElseThrow(() -> new AiWriteRefusedException("KI-Dienst " + serviceId + " ist nicht eingerichtet"));
+        var level = service.allowedLevels().stream().min(Integer::compare)
+            .orElseThrow(() -> new AiWriteRefusedException(service.name() + " darf keine Notizen verarbeiten"));
+        if (jobs.countOpen(vaultId) >= MAX_OPEN_JOBS_PER_VAULT) {
+            throw new AiWriteRefusedException("In diesem Vault warten schon zu viele Aufgaben - bitte später erneut versuchen");
+        }
+        return jobs.create(new NewAiJob(vaultId, service.id(), requestedBy, "Frage an den Vault", "text/plain", level, null,
+            MAX_ATTEMPTS, AiJob.Kind.ASK), clock.get());
+    }
+
     public List<AiJob> list(VaultId vaultId, int limit) {
         return jobs.list(vaultId, limit);
     }
@@ -138,7 +154,7 @@ public class AiJobService {
                     clock.get());
                 continue;
             }
-            if (claimed.changeSetId() != null) {
+            if (claimed.changeSetId() != null || claimed.kind() == AiJob.Kind.ASK) {
                 return Optional.of(claimed);
             }
             var changeSetId = changeSets.start(claimed.vaultId(), service.get(), claimed.requestedBy(), claimed.fileName());
