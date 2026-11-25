@@ -12,6 +12,11 @@ public class LoggingMailer implements Mailer {
     private static final Logger LOG = LoggerFactory.getLogger(LoggingMailer.class);
 
     @Override
+    public boolean isConfigured() {
+        return false;
+    }
+
+    @Override
     public void send(OutgoingMail mail) {
         LOG.info("Mailversand nicht konfiguriert - nicht gesendet an {}: {}", mail.to(), mail.subject());
     }
