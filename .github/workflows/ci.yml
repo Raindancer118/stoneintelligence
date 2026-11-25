@@ -88,6 +88,14 @@ jobs:
       - uses: actions/checkout@v7
       - name: Test managed-obsidian script
         run: bash ops/managed-obsidian/test/managed-obsidian.test.sh
+      # Ubuntu-Runner: AppArmor sperrt unprivilegierte User-Namespaces, und ohne subuid-Bereich bildet
+      # unshare --map-auto keine zweite Person ab - beides braucht der Rechte-Test.
+      - name: Allow user namespaces with a subordinate id range
+        run: |
+          sudo apt-get install -y -qq uidmap >/dev/null
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          grep -q "^$(whoami):" /etc/subuid || echo "$(whoami):100000:65536" | sudo tee -a /etc/subuid
+          grep -q "^$(whoami):" /etc/subgid || echo "$(whoami):100000:65536" | sudo tee -a /etc/subgid
       - name: Test the permissions managed-obsidian sets (user namespace)
         run: bash ops/managed-obsidian/test/userns.test.sh
       - name: Parse the PowerShell script
