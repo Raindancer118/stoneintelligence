@@ -169,6 +169,8 @@ class OpenCanvas {
   readonly binding: CanvasLiveBinding;
   readonly client: SyncClient;
   writes = 0;
+  /** `false`: Obsidian laedt die offene Ansicht nach dem Schreiben nicht neu - sie zeigt weiter den alten Stand. */
+  reloads = true;
 
   constructor(server: RelayServer, initial: string) {
     this.file = initial;
@@ -180,7 +182,9 @@ class OpenCanvas {
       readLocal: async () => this.file,
       writeLocal: async (content) => {
         this.writes++;
-        this.file = content;
+        if (this.reloads) {
+          this.file = content;
+        }
       },
       saveState: async () => undefined,
     }, { remoteDebounceMs: 5 });
@@ -192,6 +196,8 @@ class OpenCanvas {
     await this.binding.attach(null);
     this.client.connect();
     await settle(60);
+    // Die Ansicht meldet sich regelmaessig - hier einmal nach dem ersten Einspielen.
+    await this.binding.localChanged();
   }
 }
 
@@ -248,6 +254,26 @@ describe("CanvasLiveBinding (geoeffnetes Canvas)", () => {
 
     expect(ids(two.file)).toEqual(["a", "o", "z"]);
     expect(ids(one.file)).toEqual(["a", "o", "z"]);
+  });
+
+  it("should_notTurnAStaleView_intoDeletionsOfRemoteChanges", async () => {
+    const server = new RelayServer();
+    const one = new OpenCanvas(server, json([card("a", 0, 0, "A")]));
+    const two = new OpenCanvas(server, "");
+    await one.open();
+    await two.open();
+    two.reloads = false;
+
+    one.file = json([card("a", 0, 0, "A"), card("o", 5, 5, "von eins")]);
+    await one.binding.localChanged();
+    await settle(80);
+    // Zwei zeigt noch den alten Stand und bekommt eine eigene Aenderung - die von Eins darf nicht verschwinden.
+    two.file = json([card("a", 0, 0, "A"), card("z", 9, 9, "von zwei")]);
+    await two.binding.localChanged();
+    await settle(80);
+
+    expect(canvasOfDoc(two.doc).nodes.map((n) => n.id).sort()).toEqual(["a", "o", "z"]);
+    expect(canvasOfDoc(one.doc).nodes.map((n) => n.id).sort()).toEqual(["a", "o", "z"]);
   });
 
   it("should_notRewriteTheFile_forItsOwnChanges", async () => {

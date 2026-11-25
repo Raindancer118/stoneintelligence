@@ -1,6 +1,6 @@
 import * as Y from "yjs";
 import {
-  applyCanvasChange, canvasEquals, canvasOfDoc, parseCanvas, serializeCanvas, type CanvasData,
+  applyCanvasChange, canvasEquals, canvasOfDoc, parseCanvas, serializeCanvas, type CanvasData, type CanvasEntry,
 } from "./canvasDoc";
 import type { ContentSyncPorts, ContentSyncResult } from "./noteContentSync";
 
@@ -116,6 +116,16 @@ export interface CanvasLiveOptions {
 
 const LOCAL = Symbol("canvas-local");
 
+/** Wie viele Karten und Kanten sich zwischen zwei Staenden unterscheiden. */
+function distance(a: CanvasData, b: CanvasData): number {
+  const count = (left: CanvasEntry[], right: CanvasEntry[]) => {
+    const other = new Map(right.map((entry) => [entry.id, JSON.stringify(entry)]));
+    const changed = left.filter((entry) => other.get(entry.id) !== JSON.stringify(entry)).length;
+    return changed + right.filter((entry) => !left.some((candidate) => candidate.id === entry.id)).length;
+  };
+  return count(a.nodes, b.nodes) + count(a.edges, b.edges);
+}
+
 /**
  * Haelt ein geoeffnetes Canvas mit seinem Yjs-Dokument im Gleichlauf (ADR 0018): Aenderungen der
  * Ansicht/Datei gehen als Differenz zum letzten bekannten Stand ins Dokument, Aenderungen anderer
@@ -123,7 +133,14 @@ const LOCAL = Symbol("canvas-local");
  * werden vor dem Schreiben eingelesen, damit sie nicht ueberschrieben werden.
  */
 export class CanvasLiveBinding {
+  /** Stand, auf dem die letzte Aenderung der Ansicht aufbaut. */
   private known: CanvasData = { nodes: [], edges: [] };
+  /**
+   * Zuletzt zurueckgeschriebener Stand. Zur Basis wird er erst, wenn die Ansicht ihn auch zeigt -
+   * laedt sie nicht neu, darf ihr veralteter Inhalt nicht als Loeschung fremder Aenderungen gelten.
+   */
+  private pendingWrite: CanvasData | null = null;
+  private pendingRaw: string | null = null;
   private lastRaw: string | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private remoteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -181,16 +198,38 @@ export class CanvasLiveBinding {
 
   private async foldLocal(): Promise<void> {
     const raw = await this.ports.readLocal();
-    if (raw === null || raw === this.lastRaw) {
+    if (raw === null) {
+      return;
+    }
+    if (raw === this.lastRaw) {
+      if (this.pendingWrite && raw === this.pendingRaw) {
+        this.known = this.pendingWrite;
+        this.pendingWrite = null;
+      }
       return;
     }
     this.lastRaw = raw;
     const local = parseCanvas(raw);
-    if (!local || canvasEquals(local, this.known)) {
+    if (!local) {
       return;
     }
-    applyCanvasChange(this.doc, this.known, local, LOCAL);
+    if (this.pendingWrite && canvasEquals(local, this.pendingWrite)) {
+      this.known = local;
+      this.pendingWrite = null;
+      return;
+    }
+    // Hat die Ansicht den zurueckgeschriebenen Stand schon geladen und die Person danach etwas geaendert,
+    // baut die Aenderung auf ihm auf - sonst auf dem alten Stand, den die Ansicht noch zeigt.
+    const reloaded = this.pendingWrite !== null && distance(local, this.pendingWrite) < distance(local, this.known);
+    const base = reloaded ? this.pendingWrite! : this.known;
+    if (canvasEquals(local, base)) {
+      return;
+    }
+    applyCanvasChange(this.doc, base, local, LOCAL);
     this.known = local;
+    if (reloaded) {
+      this.pendingWrite = null;
+    }
   }
 
   private scheduleRemote(): void {
@@ -209,11 +248,12 @@ export class CanvasLiveBinding {
     }
     await this.foldLocal();
     const merged = canvasOfDoc(this.doc);
-    if (canvasEquals(merged, this.known)) {
+    if (canvasEquals(merged, this.pendingWrite ?? this.known)) {
       return;
     }
     const content = serializeCanvas(merged);
-    this.known = merged;
+    this.pendingWrite = merged;
+    this.pendingRaw = content;
     this.lastRaw = content;
     await this.ports.writeLocal(content);
   }
