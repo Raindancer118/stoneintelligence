@@ -48,7 +48,7 @@ describe("API responses", () => {
     const search = new URL(fetchMock.mock.calls[0][0]);
     expect(search.pathname).toMatch(/\/api\/v1\/vaults\/vault\/notes\/search$/);
     expect(search.searchParams.get("q")).toBe("Grenz werte");
-    expect(search.searchParams.get("kinds")).toBe("note,file");
+    expect(search.searchParams.get("kinds")).toBe("note,file,canvas");
     expect(new URL(fetchMock.mock.calls[1][0]).searchParams.get("pageSize")).toBe("500");
   });
 
@@ -61,7 +61,7 @@ describe("API responses", () => {
     await api.listNotes("vault");
     const blob = await api.fileBlob("vault", "f1");
 
-    expect(fetchMock.mock.calls[0][0]).toContain("kinds=note%2Cfile");
+    expect(fetchMock.mock.calls[0][0]).toContain("kinds=note%2Cfile%2Ccanvas");
     expect(fetchMock.mock.calls[1][0]).toMatch(/\/api\/v1\/vaults\/vault\/files\/f1\/content$/);
     expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer test-token");
     expect(await blob.text()).toBe("%PDF");

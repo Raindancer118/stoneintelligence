@@ -32,7 +32,7 @@ export interface Group {
 export interface Note {
   id: string; vaultId: string; path: string; noteLevel: number; createdBy: string; createdAt: string;
   /** Dateien (PDFs, Bilder, Anhänge) stehen mit in der Liste; fehlt bei älteren Servern. */
-  kind?: "NOTE" | "FILE"; sha256?: string | null; size?: number | null; revision?: number;
+  kind?: "NOTE" | "FILE" | "CANVAS"; sha256?: string | null; size?: number | null; revision?: number;
 }
 /** `excerpts`: Fundstelle je Notiz-ID, nur bei Treffern im Inhalt. */
 export interface NoteSearch { notes: Note[]; truncated: boolean; excerpts?: Record<string, string> }
@@ -168,16 +168,16 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   permissions: (vaultId: string) => request<string[]>(`/api/v1/vaults/${vaultId}/permissions`),
   listNotes: (vaultId: string, cursor?: string) => request<NotePage>(
-    `/api/v1/vaults/${vaultId}/notes?${new URLSearchParams({ pageSize: "500", kinds: "note,file", ...(cursor ? { cursor } : {}) })}`),
+    `/api/v1/vaults/${vaultId}/notes?${new URLSearchParams({ pageSize: "500", kinds: "note,file,canvas", ...(cursor ? { cursor } : {}) })}`),
   /** Einträge direkt in einem Ordner ("" = oberste Ebene), seitenweise (ADR 0013: Bäume laden Ebene für Ebene). */
   listFolder: (vaultId: string, folder: string, cursor?: string) => request<NotePage>(
-    `/api/v1/vaults/${vaultId}/notes?${new URLSearchParams({ folder, pageSize: "500", kinds: "note,file", ...(cursor ? { cursor } : {}) })}`),
+    `/api/v1/vaults/${vaultId}/notes?${new URLSearchParams({ folder, pageSize: "500", kinds: "note,file,canvas", ...(cursor ? { cursor } : {}) })}`),
   /** Direkte, lesbare Unterordner. */
   folderChildren: (vaultId: string, path: string) => request<FolderChild[]>(
     `/api/v1/vaults/${vaultId}/folders/children?${new URLSearchParams({ path })}`),
   /** Titel-/Pfadsuche auf dem Server; {@code truncated}: es gibt mehr Treffer als angezeigt. */
   searchNotes: (vaultId: string, q: string, limit = 50) => request<NoteSearch>(
-    `/api/v1/vaults/${vaultId}/notes/search?${new URLSearchParams({ q, limit: String(limit), kinds: "note,file" })}`),
+    `/api/v1/vaults/${vaultId}/notes/search?${new URLSearchParams({ q, limit: String(limit), kinds: "note,file,canvas" })}`),
   /** Inhalt einer Datei - mit Anmeldung geladen, angezeigt über eine Blob-URL (die API liefert immer als Anhang). */
   fileBlob: async (vaultId: string, fileId: string) => {
     const response = await fetch(`${baseUrl}/api/v1/vaults/${vaultId}/files/${fileId}/content`, {
