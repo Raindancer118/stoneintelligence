@@ -3,7 +3,8 @@
   "name": "StoneIntelligence",
   "version": "0.33.0",
   "minAppVersion": "1.6.6",
-  "description": "Live-Sync, Note-Level-Policies und KI-gestuetzte Wissens-Ingestion fuer Obsidian.",
+  "description": "Sync vaults live between people, set access policies per note, and ingest knowledge into a shared index with optional AI processing.",
   "author": "Raindancer118",
+  "authorUrl": "https://github.com/Raindancer118",
   "isDesktopOnly": false
 }
