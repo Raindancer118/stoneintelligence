@@ -2,10 +2,12 @@ package de.tstieh.stoneintelligence.platform.search;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Nutzereingabe → Postgres-tsquery: jedes Wort als Praefix, alle muessen vorkommen. Nur Buchstaben
@@ -43,14 +45,20 @@ public final class SearchQuery {
      * hoeher): UND ueber alle Woerter eines Satzes fand nie etwas.
      */
     public static Optional<String> anyOf(String question) {
+        var words = contentWords(question);
+        return words.isEmpty() ? Optional.empty() : Optional.of(words.stream().map(word -> word + ":*").collect(Collectors.joining(" | ")));
+    }
+
+    /** Die inhaltstragenden Woerter einer Frage, kleingeschrieben und ohne Wiederholung. */
+    public static List<String> contentWords(String question) {
         var words = new LinkedHashSet<String>();
         var matcher = WORD.matcher(question.toLowerCase(Locale.ROOT));
         while (matcher.find() && words.size() < MAX_QUESTION_WORDS) {
             var word = matcher.group();
             if (word.length() >= MIN_QUESTION_WORD && !STOP_WORDS.contains(word)) {
-                words.add(word + ":*");
+                words.add(word);
             }
         }
-        return words.isEmpty() ? Optional.empty() : Optional.of(String.join(" | ", words));
+        return List.copyOf(words);
     }
 }

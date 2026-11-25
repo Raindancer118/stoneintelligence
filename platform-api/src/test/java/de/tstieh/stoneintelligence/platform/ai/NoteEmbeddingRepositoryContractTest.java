@@ -20,7 +20,7 @@ public abstract class NoteEmbeddingRepositoryContractTest {
     protected abstract void deleteNote(VaultId vaultId, NoteId noteId);
 
     /** Ein normierter Vektor der Modellgroesse, der in Richtung {@code axis} zeigt (mit etwas {@code tilt} zur Achse 0). */
-    static float[] vector(int axis, double tilt) {
+    public static float[] vector(int axis, double tilt) {
         var v = new float[384];
         v[axis] = (float) Math.cos(tilt);
         v[0] += (float) Math.sin(tilt);
