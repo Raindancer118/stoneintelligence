@@ -1,7 +1,7 @@
 import { ItemView, Notice, Setting, type WorkspaceLeaf } from "obsidian";
 import { explainAccessError, type Permission, permissionsLabel } from "../sync/accessPlan";
 import { canCancel, jobStatusText } from "../sync/aiJobText";
-import { describeEvent, formatDate } from "../sync/historyText";
+import { describeEvent, formatDate, retentionLabel } from "../sync/historyText";
 import {
   type AiJob, type HistoryEvent, HttpError, type LinkingSettings, type NoteApiClient, type PendingInvitation, type VaultGroup, type VaultMember, type VaultRole,
 } from "../sync/NoteApiClient";
@@ -48,6 +48,8 @@ export class VaultAdminView extends ItemView {
   private log: HistoryEvent[] = [];
   private jobs: AiJob[] = [];
   private linking: LinkingSettings | null = null;
+  /** `undefined`: ältere Server ohne Aufbewahrungsfrist - dann entfällt die Einstellung. */
+  private retention: number | null | undefined;
   private canWrite = false;
   private jobTimer: number | null = null;
   private manage = false;
@@ -110,6 +112,7 @@ export class VaultAdminView extends ItemView {
       this.jobs = await api.listAiJobs(vaultId).catch(() => []);
       // Aeltere Server kennen die Verlinkung noch nicht - dann entfaellt der Abschnitt.
       this.linking = await api.linkingSettings(vaultId).catch(() => null);
+      this.retention = this.manage ? await api.auditRetention(vaultId).then((loaded) => loaded.days, () => undefined) : undefined;
       this.error = "";
     } catch (error) {
       this.error = describe(error);
@@ -137,6 +140,28 @@ export class VaultAdminView extends ItemView {
     await this.reload();
   }
 
+  private renderRetention(root: HTMLElement, current: number | null): void {
+    const choices = [365, 730, 1095, 1825, 3650];
+    const options = current !== null && !choices.includes(current) ? [...choices, current].sort((a, b) => a - b) : choices;
+    new Setting(root).setName("Protokoll aufbewahren")
+      .setDesc("Ältere Ereignisse werden jede Nacht gelöscht. Einträge der KI und ihrer Änderungssätze bleiben immer erhalten. Jede Änderung der Frist steht selbst im Protokoll.")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("", "Unbegrenzt");
+        for (const days of options) {
+          dropdown.addOption(String(days), retentionLabel(days));
+        }
+        dropdown.setValue(current === null ? "" : String(current)).setDisabled(this.busy).onChange(async (value) => {
+          const days = value === "" ? null : Number(value);
+          if (days !== null && !(await confirmAction(this.app, "Frist setzen?",
+            `Protokolleinträge, die älter als ${retentionLabel(days)} sind, werden bei der nächsten nächtlichen Bereinigung gelöscht. Einträge der KI bleiben.`, "Frist setzen"))) {
+            dropdown.setValue(current === null ? "" : String(current));
+            return;
+          }
+          await this.run((api, vaultId) => api.setAuditRetention(vaultId, days), days === null ? "Das Protokoll wird unbegrenzt aufbewahrt." : `Das Protokoll wird ${retentionLabel(days)} aufbewahrt.`);
+        });
+      });
+  }
+
   private render(): void {
     const root = this.contentEl;
     root.empty();
@@ -161,6 +186,9 @@ export class VaultAdminView extends ItemView {
             this.host.selectiveSyncChanged(updated.selectiveSync ?? enabled);
           }, enabled ? "Geräte synchronisieren jetzt nur ihre Arbeitsbereiche." : "Geräte synchronisieren wieder den ganzen Vault.");
         }));
+    }
+    if (this.manage && this.retention !== undefined) {
+      this.renderRetention(root, this.retention);
     }
     const tabs = root.createDiv({ cls: "stoneintelligence-admin-tabs" });
     for (const tab of TABS) {

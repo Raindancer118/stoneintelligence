@@ -30,6 +30,21 @@ describe("NoteApiClient", () => {
     });
   });
 
+  describe("audit retention", () => {
+    it("should_readAndChangeThePeriod", async () => {
+      const fakeFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ days: null, minimumDays: 365 }) })
+        .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ days: 730, minimumDays: 365 }) });
+      const client = new NoteApiClient("https://platform.example", vi.fn().mockResolvedValue("t"), fakeFetch as unknown as typeof fetch);
+
+      expect(await client.auditRetention("vault-1")).toEqual({ days: null, minimumDays: 365 });
+      expect(await client.setAuditRetention("vault-1", 730)).toEqual({ days: 730, minimumDays: 365 });
+
+      expect(fakeFetch).toHaveBeenLastCalledWith("https://platform.example/api/v1/vaults/vault-1/audit/retention",
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ days: 730 }) }));
+    });
+  });
+
   describe("createNote", () => {
     it("should_returnCreatedNoteId_when_serverRespondsOk", async () => {
       const fakeFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: "note-1" }) });
