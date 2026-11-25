@@ -47,7 +47,8 @@ export interface InvitationInfo {
   state: "PENDING" | "ACCEPTED" | "EXPIRED" | "REVOKED"; vaultName: string; invitedBy: string; maskedEmail: string;
   access: InviteAccess; expiresAt: string; enrollmentUrl: string | null;
 }
-export interface AiService { id: string; name: string; levels: number[]; }
+/** `local`: läuft auf eigener Infrastruktur, Auszüge verlassen den Server nicht (ADR 0017); fehlt bei älteren Servern. */
+export interface AiService { id: string; name: string; levels: number[]; local?: boolean; }
 export type AiJobStatus = "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
 export interface AiJob {
   id: string; service: string; requestedBy: string; fileName: string; size: number; level: number; status: AiJobStatus;
@@ -83,6 +84,19 @@ export interface LinkingSettings {
   requestedBy: string | null; lastRunAt: string | null;
   /** Meine Einwilligung zur KI-Pruefung eigener Notizen, und wie viele Mitglieder insgesamt eingewilligt haben. */
   aiConsent?: boolean; aiConsentCount?: number;
+}
+/** "Frag den Vault" (ADR 0017): eine Quelle der Antwort - Notiz, Stelle und kurzer Auszug. */
+export interface AskCitation { n: number; noteId: string; path: string; heading: string; excerpt: string; }
+export type AskStatus = "PENDING" | "RUNNING" | "ANSWERED" | "NOT_ANSWERABLE" | "FAILED" | "CANCELLED";
+export interface AskQuestion {
+  id: string; question: string; service: string; status: AskStatus; progress: string | null; percent: number | null;
+  error: string | null; waitingForCapacity: boolean; availableAt: string | null; askedAt: string; answeredAt: string | null;
+  /** Markdown mit [n]-Zitaten; leer bei `restricted` oder `NOT_ANSWERABLE`. */
+  answer: string | null; citations: AskCitation[];
+  /** Eine zitierte Notiz ist nicht mehr lesbar - die Antwort ist verborgen. */
+  restricted: boolean;
+  /** Notizen mit passenden Stellen, die ein externer Dienst nicht bekam (Verfasser nicht einverstanden). */
+  omittedForConsent: number;
 }
 export interface AiChangeSetDetail { changeSet: AiChangeSet; changes: AiChange[]; }
 export interface AiRevertReport { reverted: number; conflicts: { path: string; reason: string }[]; }
@@ -287,6 +301,12 @@ export const api = {
   setLinkingConsent: (vaultId: string, consent: boolean) =>
     request<LinkingSettings>(`/api/v1/vaults/${vaultId}/linking/consent`, { method: "PUT", body: JSON.stringify({ consent }) }),
   runLinking: (vaultId: string) => request<AiJob>(`/api/v1/vaults/${vaultId}/linking/run`, { method: "POST" }),
+  askVault: (vaultId: string, question: string, service: string | null) =>
+    request<AskQuestion>(`/api/v1/vaults/${vaultId}/ask`, { method: "POST", body: JSON.stringify({ question, service }) }),
+  askHistory: (vaultId: string) => request<AskQuestion[]>(`/api/v1/vaults/${vaultId}/ask`),
+  cancelAsk: (vaultId: string, questionId: string) =>
+    request<AskQuestion>(`/api/v1/vaults/${vaultId}/ask/${questionId}/cancel`, { method: "POST" }),
+  deleteAsk: (vaultId: string, questionId: string) => request<void>(`/api/v1/vaults/${vaultId}/ask/${questionId}`, { method: "DELETE" }),
   listMembers: (vaultId: string) => request<VaultMember[]>(`/api/v1/vaults/${vaultId}/members`),
   removeFromVault: (vaultId: string, subject: string) =>
     request<void>(`/api/v1/vaults/${vaultId}/members/${encodeURIComponent(subject)}`, { method: "DELETE" }),
