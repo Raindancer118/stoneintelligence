@@ -520,4 +520,35 @@ describe("NoteApiClient access (ADR 0011)", () => {
         expect.objectContaining({ method: "DELETE" }));
     });
   });
+
+  describe("ask the vault", () => {
+    const client = (fakeFetch: unknown) => new NoteApiClient("https://platform.example", async () => "t", fakeFetch as typeof fetch);
+
+    it("should_postTheQuestion_withTheChosenService_andListTheHistory", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: "q1" }) });
+
+      await client(fakeFetch).askVault("vault-1", "Wo läuft das ab?", "lokal");
+      await client(fakeFetch).askHistory("vault-1");
+      await client(fakeFetch).cancelAsk("vault-1", "q1");
+
+      expect(fakeFetch).toHaveBeenNthCalledWith(1, "https://platform.example/api/v1/vaults/vault-1/ask",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ question: "Wo läuft das ab?", service: "lokal" }) }));
+      expect(fakeFetch).toHaveBeenNthCalledWith(2, "https://platform.example/api/v1/vaults/vault-1/ask", expect.not.objectContaining({ method: "POST" }));
+      expect(fakeFetch).toHaveBeenNthCalledWith(3, "https://platform.example/api/v1/vaults/vault-1/ask/q1/cancel", expect.objectContaining({ method: "POST" }));
+    });
+
+    it("should_deleteAQuestion_withAnEmptyAnswer", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, status: 204, text: async () => "" });
+
+      await client(fakeFetch).deleteAsk("vault-1", "q1");
+
+      expect(fakeFetch).toHaveBeenCalledWith("https://platform.example/api/v1/vaults/vault-1/ask/q1", expect.objectContaining({ method: "DELETE" }));
+    });
+
+    it("should_showTheReasonOfARefusedQuestion", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: false, status: 422, json: async () => ({ detail: "Du hast schon 3 offene Fragen" }), text: async () => "" });
+
+      await expect(client(fakeFetch).askVault("vault-1", "Noch eine Frage?", null)).rejects.toMatchObject({ status: 422 });
+    });
+  });
 });

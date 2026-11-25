@@ -46,6 +46,7 @@ import { AiChangesModal } from "./ui/AiChangesModal";
 import { InviteModal } from "./ui/InviteModal";
 import { ShareModal, type ShareTarget } from "./ui/ShareModal";
 import { HistoryModal } from "./ui/HistoryModal";
+import { AskVaultModal } from "./ui/AskVaultModal";
 import { SimilarNotesModal } from "./ui/SimilarNotesModal";
 import { type Tab as VaultAdminTab, VaultAdminView, VIEW_TYPE_VAULT_ADMIN } from "./ui/VaultAdminView";
 import { AiReadModal, type AiReadTarget } from "./ui/AiReadModal";
@@ -1062,6 +1063,17 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
+      id: "stoneintelligence-ask-vault",
+      name: "Frag den Vault",
+      checkCallback: (checking) => {
+        if (checking) {
+          return this.isReady();
+        }
+        this.openAskVault();
+        return true;
+      },
+    });
+    this.addCommand({
       id: "stoneintelligence-ai-changes",
       name: "KI-Änderungen anzeigen und rückgängig machen",
       checkCallback: (checking) => {
@@ -1183,6 +1195,10 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   private openAiRead(targets: AiReadTarget[]): void {
     new AiReadModal(this.app, this.noteApiClient, this.settings.vaultId, targets, () => void this.activateVaultAdminView("ai")).open();
+  }
+
+  private openAskVault(): void {
+    new AskVaultModal(this.app, this.noteApiClient, this.settings.vaultId, (path) => this.openFile(path)).open();
   }
 
   private openSimilar(noteId: string, path: string): void {

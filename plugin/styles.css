@@ -418,3 +418,17 @@
   font-style: italic;
   text-align: center;
 }
+
+/* Frag den Vault */
+.stoneintelligence-ask-field .setting-item-control {
+  flex: 1;
+}
+
+.stoneintelligence-ask-input {
+  width: 100%;
+  resize: vertical;
+}
+
+.stoneintelligence-ask-answer {
+  padding: 0 var(--size-4-2) var(--size-4-3);
+}
