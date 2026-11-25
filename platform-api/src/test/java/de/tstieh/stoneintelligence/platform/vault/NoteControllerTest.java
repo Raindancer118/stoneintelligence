@@ -92,6 +92,70 @@ class NoteControllerTest {
         assertThat(page.notes()).hasSize(1);
     }
 
+    private NoteController.NoteResponse create(String path, String kind) {
+        return controller.create(vaultId.value().toString(), new NoteController.CreateNoteRequest(path, 1, kind),
+            new TestingAuthenticationToken("tom", null));
+    }
+
+    private static org.assertj.core.api.AbstractThrowableAssert<?, ? extends Throwable> assertBadRequest(
+        org.assertj.core.api.ThrowableAssert.ThrowingCallable call
+    ) {
+        return org.assertj.core.api.Assertions.assertThatThrownBy(call)
+            .isInstanceOfSatisfying(org.springframework.web.server.ResponseStatusException.class,
+                e -> assertThat(e.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST));
+    }
+
+    // ADR 0018: Canvas sind Eintraege eigener Art - nur mit .canvas-Pfad, nur auf Anfrage in Listen.
+    @Test
+    void should_createACanvas_asItsOwnKind_andAnnounceItWithThatKind() {
+        var received = new java.util.ArrayList<String>();
+        announcements.subscribe(vaultId, new VaultSubscriber() {
+            @Override public String id() { return "neu"; }
+            @Override public boolean mayRead(String path) { return true; }
+            @Override public boolean wantsFileEvents() { return true; }
+            @Override public void sendVaultEvent(byte messageType, NoteId noteId, String path) { received.add(path); }
+            @Override public void accessChanged() { }
+        });
+
+        var canvas = create("Ideen/Board.canvas", "canvas");
+
+        assertThat(canvas.kind()).isEqualTo(NoteKind.CANVAS);
+        assertThat(received).containsExactly("Ideen/Board.canvas");
+    }
+
+    @Test
+    void should_keepCanvasAndMarkdownPathsApart() {
+        assertBadRequest(() -> create("Board.canvas", null));
+        assertBadRequest(() -> create("Notiz.md", "canvas"));
+        assertBadRequest(() -> create(".canvas", "canvas"));
+        assertBadRequest(() -> create("Board.canvas", "board"));
+        assertThat(create("Notiz.md", "note").kind()).isEqualTo(NoteKind.NOTE);
+    }
+
+    @Test
+    void should_keepACanvasACanvas_whenRenamed() {
+        var canvas = create("Board.canvas", "canvas");
+        var id = canvas.id();
+        var auth = new TestingAuthenticationToken("tom", null);
+
+        assertBadRequest(() -> controller.rename(vaultId.value().toString(), id, new NoteController.RenameNoteRequest("Board.md"), auth));
+        assertThat(controller.rename(vaultId.value().toString(), id, new NoteController.RenameNoteRequest("Neu/Board.canvas"), auth).path())
+            .isEqualTo("Neu/Board.canvas");
+    }
+
+    @Test
+    void should_listCanvasesOnlyWhenAskedFor() {
+        create("Board.canvas", "canvas");
+        create("Notiz.md", null);
+        var auth = new TestingAuthenticationToken("tom", null);
+
+        var plain = controller.reconcile(vaultId.value().toString(), null, 100, "note,file", null, null, auth);
+        var withCanvas = controller.reconcile(vaultId.value().toString(), null, 100, "note,file,canvas", null, null, auth);
+
+        assertThat(plain.notes()).extracting(NoteController.ListedNoteResponse::path).containsExactly("Notiz.md");
+        assertThat(withCanvas.notes()).extracting(NoteController.ListedNoteResponse::path).containsExactlyInAnyOrder("Notiz.md", "Board.canvas");
+    }
+
     private NoteController.SearchResponse search(String query, String actor) {
         return controller.search(vaultId.value().toString(), query, 50, "note,file", new TestingAuthenticationToken(actor, null));
     }

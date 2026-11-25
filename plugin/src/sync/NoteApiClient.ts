@@ -16,7 +16,7 @@ export interface NoteListItem {
   /** Hoechste gespeicherte Update-Sequenz - fehlt bei Servern vor dieser Erweiterung. Bei Dateien: die Fassung (0 = noch leer). */
   revision?: number;
   /** Fehlt bei Servern ohne Datei-Synchronisation (ADR 0009) - dann ist alles eine Notiz. */
-  kind?: "NOTE" | "FILE";
+  kind?: "NOTE" | "FILE" | "CANVAS";
   /** Nur bei Dateien mit Inhalt. */
   sha256?: string | null;
   size?: number | null;
@@ -86,7 +86,15 @@ export interface AiCapacity { service: string; reportedAt: string | null; stale:
 /** `permissions === null` heisst "wie im Vault", eine leere Liste "nichts". */
 export interface GrantChange { scopeType: ScopeType; subject: string | null; permissions: Permission[] | null; }
 
-export interface FileLimits { maxFileBytes: number; vaultQuotaBytes: number; }
+/** `canvas`: der Server synchronisiert Canvas live (ADR 0018); fehlt bei aelteren Servern. */
+export interface FileLimits { maxFileBytes: number; vaultQuotaBytes: number; canvas?: boolean; }
+
+/** Welche Arten ein Listenaufruf liefern soll: nur Notizen, mit Dateien, oder zusaetzlich mit Canvas. */
+export type EntryKinds = boolean | "canvas";
+
+export function kindsParam(kinds: EntryKinds): string {
+  return kinds === "canvas" ? "note,file,canvas" : kinds ? "note,file" : "note";
+}
 export interface UploadedFile { revision: number; sha256: string; size: number; }
 export interface DownloadedFile { bytes: ArrayBuffer; revision: number; sha256: string; }
 
@@ -173,7 +181,7 @@ export class NoteApiClient {
     const response = await this.fetchImpl(`${this.baseUrl}/api/v1/vaults/${vaultId}/notes`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${await this.getAccessToken()}` },
-      body: JSON.stringify({ path, noteLevel }),
+      body: JSON.stringify(path.toLowerCase().endsWith(".canvas") ? { path, noteLevel, kind: "canvas" } : { path, noteLevel }),
     });
     if (!response.ok) {
       throw new HttpError(response.status, "failed to create note");
@@ -187,9 +195,9 @@ export class NoteApiClient {
    * `complete === true` - ein `nextCursor` OHNE `complete` darf niemals als Grundlage fuer lokale
    * Loeschungen/Vollstaendigkeitsannahmen dienen. `listAllNotes` (unten) kapselt das Paging.
    */
-  async listNotes(vaultId: string, cursor?: string, pageSize = 100, includeFiles = false,
+  async listNotes(vaultId: string, cursor?: string, pageSize = 100, includeFiles: EntryKinds = false,
                   scope: string[] | null = null): Promise<ReconciliationPage> {
-    const params = new URLSearchParams({ pageSize: String(pageSize), ...(includeFiles ? { kinds: "note,file" } : {}) });
+    const params = new URLSearchParams({ pageSize: String(pageSize), ...(includeFiles ? { kinds: kindsParam(includeFiles) } : {}) });
     if (cursor) {
       params.set("cursor", cursor);
     }
@@ -209,12 +217,12 @@ export class NoteApiClient {
   }
 
   /** Notizen UND Dateien; ein Server ohne Dateien liefert einfach nur Notizen (ohne `kind`). */
-  async listAllEntries(vaultId: string, scope: string[] | null = null): Promise<NoteListItem[]> {
-    return this.listAll(vaultId, true, scope);
+  async listAllEntries(vaultId: string, scope: string[] | null = null, kinds: EntryKinds = true): Promise<NoteListItem[]> {
+    return this.listAll(vaultId, kinds, scope);
   }
 
   /** `scope`: nur diese Arbeitsbereiche (ADR 0013), `null` = der ganze Vault. */
-  private async listAll(vaultId: string, includeFiles: boolean, scope: string[] | null = null): Promise<NoteListItem[]> {
+  private async listAll(vaultId: string, includeFiles: EntryKinds, scope: string[] | null = null): Promise<NoteListItem[]> {
     const all: NoteListItem[] = [];
     let cursor: string | undefined;
     for (;;) {
@@ -299,8 +307,8 @@ export class NoteApiClient {
    * Aenderungs-Feed (ADR 0013). Ohne `since` nur ein Start-Cursor. `null`: der Server kennt den Feed
    * noch nicht - dann weiter mit der vollen Liste.
    */
-  async changes(vaultId: string, since: string | null, includeFiles: boolean, scope: string[] | null = null): Promise<FeedChanges | null> {
-    const params = new URLSearchParams({ limit: "1000", kinds: includeFiles ? "note,file" : "note" });
+  async changes(vaultId: string, since: string | null, includeFiles: EntryKinds, scope: string[] | null = null): Promise<FeedChanges | null> {
+    const params = new URLSearchParams({ limit: "1000", kinds: kindsParam(includeFiles) });
     if (since !== null) {
       params.set("since", since);
     }

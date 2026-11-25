@@ -78,6 +78,47 @@ class VaultAnnouncementServiceTest {
         }
     }
 
+    // ADR 0018: ein Canvas ist ein Yjs-Dokument, aber aeltere Plugins duerfen ihn nicht als Notiz anlegen.
+    @Nested
+    class Canvases {
+
+        @Test
+        void should_announceACanvas_onlyToConnectionsThatSubscribedToFileKinds() {
+            var legacy = new RecordingVaultSubscriber("legacy");
+            var current = new RecordingVaultSubscriber("current");
+            current.fileEvents = true;
+            announcements.subscribe(vaultId, legacy);
+            announcements.subscribe(vaultId, current);
+
+            announcements.announceNoteCreated(vaultId, noteId, "Board.canvas", de.tstieh.stoneintelligence.platform.vault.NoteKind.CANVAS);
+            announcements.announceNoteRenamed(vaultId, noteId, "Neu.canvas", de.tstieh.stoneintelligence.platform.vault.NoteKind.CANVAS);
+            announcements.announceNoteDeleted(vaultId, noteId, "Neu.canvas", de.tstieh.stoneintelligence.platform.vault.NoteKind.CANVAS);
+
+            assertThat(legacy.received).isEmpty();
+            assertThat(current.received).hasSize(3);
+        }
+
+        @Test
+        void should_announceCanvasContentUpdates_onlyToCurrentConnectionsThatHaveNotJoined() {
+            var legacy = new RecordingVaultSubscriber("legacy");
+            var current = new RecordingVaultSubscriber("current");
+            current.fileEvents = true;
+            var open = new RecordingVaultSubscriber("open");
+            open.fileEvents = true;
+            open.joined.add(noteId);
+            announcements.subscribe(vaultId, legacy);
+            announcements.subscribe(vaultId, current);
+            announcements.subscribe(vaultId, open);
+
+            announcements.announceNoteUpdated(vaultId, noteId, () -> java.util.Optional.of("Board.canvas"));
+
+            assertThat(legacy.received).isEmpty();
+            assertThat(open.received).isEmpty();
+            assertThat(current.received).containsExactly(
+                new RecordingVaultSubscriber.Received(SyncFrame.TYPE_VAULT_NOTE_UPDATED, noteId, "Board.canvas"));
+        }
+    }
+
     // ADR 0013: ein Konzern-Vault soll nicht jede Aenderung an jedes verbundene Geraet melden.
     @Nested
     class Areas {

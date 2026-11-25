@@ -24,14 +24,17 @@ import {
 import {
   MultiplexedTransport, VAULT_ACCESS_CHANGED, VAULT_FOLDERS_CHANGED, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED,
 } from "./sync/multiplexedTransport";
-import { type CommentNotification, type FileLimits, HttpError, NoteApiClient, type NoteListItem, type VaultSummary } from "./sync/NoteApiClient";
+import { type CommentNotification, type EntryKinds, type FileLimits, HttpError, kindsParam, NoteApiClient, type NoteListItem, type VaultSummary } from "./sync/NoteApiClient";
 import {
   type ContentSyncPorts, type ContentSyncResult, conflictCopyPath, hasUnsyncedLocalEdits, prepareNoteDoc, resolveFirstContact,
   revertReadOnlyEdit, syncNoteContent, textOfState,
 } from "./sync/noteContentSync";
 import { NoteStateStore } from "./sync/NoteStateStore";
 import { OperationJournal } from "./sync/OperationJournal";
-import { isSyncablePath, planReconciliation, type ReconcileAction } from "./sync/reconcilePlan";
+import { isCanvasPath, isSyncablePath, planReconciliation, type ReconcileAction } from "./sync/reconcilePlan";
+import { canvasOfState, revertReadOnlyCanvasEdit, syncCanvasContent } from "./sync/canvasSync";
+import { type CanvasLiveHost, CanvasLiveManager } from "./sync/canvasLiveManager";
+import { parseCanvas, serializeCanvas } from "./sync/canvasDoc";
 import { SyncActivity } from "./sync/SyncActivity";
 import { SyncClient } from "./sync/SyncClient";
 import { TicketClient } from "./sync/TicketClient";
@@ -201,6 +204,8 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   private readonly live = new Map<string, LiveSession>();
   private readonly liveStarting = new Set<string>();
+  /** Geoeffnete Canvas (ADR 0018) - getrennt von den Editor-Bindungen der Notizen. */
+  private readonly canvasLive = new CanvasLiveManager(this.canvasHost());
   private readonly liveBindingCompartment = new Compartment();
   /** Schreibschutz fuer Notizen, die man nur lesen darf (ADR 0011) - getrennt von der Live-Bindung. */
   private readonly readOnlyCompartment = new Compartment();
@@ -418,6 +423,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     this.ensureTransport().start();
+    this.canvasLive.startPolling();
     this.askPendingDeletionDecisions();
     this.requestPass();
     void this.syncOpenEditorBindings();
@@ -429,6 +435,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     for (const path of [...this.live.keys()]) {
       this.detachLive(path);
     }
+    void this.canvasLive.detachAll();
     this.transport?.destroy();
     this.transport = null;
     this.activity.update({ connection: "offline" });
@@ -1558,11 +1565,25 @@ export default class StoneIntelligencePlugin extends Plugin {
     let serverFiles: import("./sync/filePlan").ServerFile[] = [];
     const limits = await this.currentFileLimits();
     try {
-      const entries = await this.serverEntries(vaultId, limits !== null);
+      const entries = await this.serverEntries(vaultId, entryKinds(limits));
       this.rememberAccess(entries);
       serverNotes = entries.filter((entry) => entry.kind !== "FILE");
       serverFiles = entries.filter((entry) => entry.kind === "FILE")
         .map((entry) => ({ id: entry.id, path: entry.path, revision: entry.revision ?? 0, sha256: entry.sha256 ?? null }));
+      if (limits?.canvas) {
+        // Aeltere Plugins haben Canvas als Datei hochgeladen: in einen gemeinsamen Canvas umwandeln (ADR 0018).
+        const legacy = serverFiles.filter((file) => isCanvasPath(file.path));
+        if (legacy.length > 0) {
+          const converted = await this.convertLegacyCanvases(vaultId, legacy);
+          serverFiles = serverFiles.filter((file) => !converted.has(file.id));
+          serverNotes = serverNotes.filter((note) => !converted.has(note.id));
+        }
+        for (const [path, id] of Object.entries(state.fileIds)) {
+          if (isCanvasPath(path) && !serverFiles.some((file) => file.id === id)) {
+            this.fileSync.localDeleted(path);
+          }
+        }
+      }
     } catch (error) {
       debugLog("StoneIntelligence: Notizliste nicht abrufbar", error);
       return;
@@ -1574,13 +1595,14 @@ export default class StoneIntelligencePlugin extends Plugin {
     const excluded = this.settings.excludedFolders;
     const fullPlan = planReconciliation({
       serverNotes: serverNotes.filter((note) => !isExcluded(note.path, excluded)),
-      localFiles: this.app.vault.getMarkdownFiles()
+      localFiles: this.app.vault.getFiles()
+        .filter((file) => file.extension === "md" || (file.extension === "canvas" && limits?.canvas === true))
         .filter((file) => !isExcluded(file.path, excluded))
         .map((file) => ({ path: file.path, mtime: file.stat.mtime, size: file.stat.size })),
       noteIds: Object.fromEntries(Object.entries(state.noteIds).filter(([path]) => !isExcluded(path, excluded))),
       meta: state.noteMeta,
       pendingNoteIds: new Set(state.pendingOps.filter(isNoteOp).map((op) => op.noteId)),
-      livePaths: new Set([...this.live.keys(), ...this.liveStarting]),
+      livePaths: new Set([...this.live.keys(), ...this.liveStarting, ...this.canvasLive.paths()]),
       blockedPaths: state.blockedPaths,
     });
     const legacyServer = serverNotes.some((note) => note.revision === undefined);
@@ -1615,7 +1637,7 @@ export default class StoneIntelligencePlugin extends Plugin {
    * Server-Eintraege fuer den Abgleich. Mit Feed (ADR 0013) aus dem Spiegel: nur die Aenderungen seit dem
    * letzten Mal, voll geladen wird beim ersten Mal und wenn sich meine Sicht geaendert hat.
    */
-  private async serverEntries(vaultId: string, includeFiles: boolean): Promise<NoteListItem[]> {
+  private async serverEntries(vaultId: string, includeFiles: EntryKinds): Promise<NoteListItem[]> {
     if (!this.feedUnsupported) {
       await this.dedupeServerRefresh(() => this.refreshServer(vaultId, includeFiles));
       if (!this.feedUnsupported && this.mirror.isReadyFor(vaultId, this.mirrorKey(includeFiles))) {
@@ -1623,7 +1645,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       }
     }
     const scope = this.currentScope();
-    return includeFiles ? this.noteApiClient.listAllEntries(vaultId, scope) : this.noteApiClient.listAllNotes(vaultId, scope);
+    return includeFiles ? this.noteApiClient.listAllEntries(vaultId, scope, includeFiles) : this.noteApiClient.listAllNotes(vaultId, scope);
   }
 
   /** Fuer den Einstellungs-Tab: `null` ohne verbundenen Vault. */
@@ -1814,7 +1836,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     return effectiveScope(state, state.vaultSelectiveSync ?? false);
   }
 
-  private mirrorKey(includeFiles: boolean): string {
+  private mirrorKey(includeFiles: EntryKinds): string {
     return `${kindsFor(includeFiles)}|${scopeKey(this.currentScope())}`;
   }
 
@@ -1839,7 +1861,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     this.scopeChanged();
   }
 
-  private async refreshServer(vaultId: string, includeFiles: boolean): Promise<void> {
+  private async refreshServer(vaultId: string, includeFiles: EntryKinds): Promise<void> {
     const kinds = this.mirrorKey(includeFiles);
     const scope = this.currentScope();
     if (this.mirror.isReadyFor(vaultId, kinds) && this.mirror.cursor !== null) {
@@ -1874,7 +1896,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       this.mirror.reset();
       return;
     }
-    const entries = includeFiles ? await this.noteApiClient.listAllEntries(vaultId, scope) : await this.noteApiClient.listAllNotes(vaultId, scope);
+    const entries = includeFiles ? await this.noteApiClient.listAllEntries(vaultId, scope, includeFiles) : await this.noteApiClient.listAllNotes(vaultId, scope);
     const folders = this.folderSyncUnsupported ? null : await this.noteApiClient.listFolders(vaultId);
     if (vaultId === this.settings.vaultId) {
       this.mirror.load(vaultId, kinds, start.cursor, entries, folders);
@@ -1884,7 +1906,7 @@ export default class StoneIntelligencePlugin extends Plugin {
   /** Ordner des Servers - aus dem Spiegel, wenn er sie kennt; `null`: der Server kennt keine Ordner. */
   private async serverFolders(vaultId: string): Promise<string[] | null> {
     if (!this.feedUnsupported) {
-      const includeFiles = (await this.currentFileLimits()) !== null;
+      const includeFiles = entryKinds(await this.currentFileLimits());
       await this.dedupeServerRefresh(() => this.refreshServer(vaultId, includeFiles));
       const folders = this.mirror.isReadyFor(vaultId, this.mirrorKey(includeFiles)) ? this.mirror.folders() : null;
       if (folders !== null) {
@@ -1913,7 +1935,9 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   private isTrackableFile(path: string): boolean {
+    // Ein Canvas ist erst eine Datei, wenn feststeht, dass der Server ihn nicht selbst synchronisiert.
     return this.isReady() && this.fileLimits !== null && isSyncableFilePath(path)
+      && (!isCanvasPath(path) || (this.fileLimits !== undefined && !this.fileLimits.canvas))
       && !isExcluded(path, this.settings.excludedFolders);
   }
 
@@ -1947,7 +1971,8 @@ export default class StoneIntelligencePlugin extends Plugin {
     };
     return {
       list: () => this.app.vault.getFiles()
-        .filter((file) => file.extension !== "md" && isSyncableFilePath(file.path) && !isExcluded(file.path, this.settings.excludedFolders))
+        .filter((file) => file.extension !== "md" && isSyncableFilePath(file.path) && !this.isCanvasNote(file.path)
+          && !isExcluded(file.path, this.settings.excludedFolders))
         .map((file) => ({ path: file.path, mtime: file.stat.mtime, size: file.stat.size })),
       stat: (path) => {
         const file = fileAt(path);
@@ -1984,6 +2009,116 @@ export default class StoneIntelligencePlugin extends Plugin {
         }
       }),
     };
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Canvas (ADR 0018)
+
+  /** Dieser Pfad ist ein gemeinsamer Canvas (und keine Datei), sobald der Server sie kennt. */
+  private isCanvasNote(path: string): boolean {
+    return isCanvasPath(path) && this.fileLimits?.canvas === true;
+  }
+
+  private isNoteFile(file: TFile): boolean {
+    return file.extension === "md" || this.isCanvasNote(file.path);
+  }
+
+  /** Geoeffnete Canvas-Ansichten; `readView` liefert den Stand samt Ungespeichertem, solange die Ansicht geladen ist. */
+  private openCanvasViews(): Array<{ path: string; readView: () => string | null }> {
+    const views = new Map<string, { path: string; readView: () => string | null }>();
+    for (const leaf of this.app.workspace.getLeavesOfType("canvas")) {
+      const view = leaf.view as unknown as { file?: TFile | null; data?: unknown; getViewData?: () => string };
+      const file = view.file;
+      if (!(file instanceof TFile) || file.extension !== "canvas" || views.has(file.path)
+        || !(this.app.vault.getAbstractFileByPath(file.path) instanceof TFile)) {
+        continue;
+      }
+      views.set(file.path, {
+        path: file.path,
+        readView: () => {
+          // Noch nicht geladene Ansicht: kein Stand - ein leerer Inhalt waere sonst eine Loeschung aller Karten.
+          if (typeof view.data !== "string" || view.data === "" || typeof view.getViewData !== "function") {
+            return null;
+          }
+          try {
+            return view.getViewData();
+          } catch {
+            return null;
+          }
+        },
+      });
+    }
+    return [...views.values()];
+  }
+
+  private canvasHost(): CanvasLiveHost {
+    const vaultId = () => this.settings.vaultId;
+    return {
+      openCanvases: () => this.openCanvasViews(),
+      noteIdOf: (path) => this.vaultState().noteIds[path],
+      ensureNoteId: (path) => this.uploadNote(path),
+      isTrackable: (path) => {
+        const noteId = this.vaultState().noteIds[path];
+        return isCanvasPath(path) && this.isTrackable(path) && !isReadOnly(noteId ? this.entryAccess.get(noteId)?.permissions : undefined);
+      },
+      readFile: async (path) => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        return file instanceof TFile ? this.app.vault.read(file) : null;
+      },
+      writeFile: (path, content) => this.writeRemoteContent(path, content),
+      loadState: (noteId) => this.stateStore.load(vaultId(), noteId),
+      saveState: (noteId, state) => this.stateStore.save(vaultId(), noteId, state),
+      createClient: (noteId, doc) => {
+        const transport = this.transport;
+        if (!transport) {
+          throw new Error("Keine Sync-Verbindung");
+        }
+        return new SyncClient("", () => transport.createVirtualSocket(noteId, { priority: true }), doc);
+      },
+      onProblem: (path, error) => this.reportFailure(path, error),
+      onDetached: (_path, noteId) => {
+        // Gespeichert hat Obsidian ohne unser Wissen: einmal nachziehen.
+        const meta = this.vaultState().noteMeta[noteId];
+        if (meta) {
+          meta.revision = -1;
+        }
+      },
+    };
+  }
+
+  /**
+   * Von aelteren Plugins als Datei hochgeladene Canvas werden zu gemeinsamen Canvas: Inhalt lokal sichern,
+   * den Dateieintrag auf dem Server entfernen, der naechste Schritt legt den Canvas unter demselben Pfad an.
+   */
+  private async convertLegacyCanvases(vaultId: string, files: Array<{ id: string; path: string; revision: number }>): Promise<Set<string>> {
+    const converted = new Set<string>();
+    const pending = new Set(this.vaultState().pendingOps.flatMap((op) => ("noteId" in op ? [op.noteId] : [])));
+    for (const file of files) {
+      if (pending.has(file.id) || isExcluded(file.path, this.settings.excludedFolders)) {
+        continue;
+      }
+      try {
+        if (!this.app.vault.getAbstractFileByPath(file.path) && file.revision > 0) {
+          const downloaded = await this.noteApiClient.downloadFile(vaultId, file.id);
+          await this.ensureFolder(file.path);
+          this.serverDrivenPaths.add(file.path);
+          try {
+            await this.app.vault.createBinary(file.path, downloaded.bytes);
+          } finally {
+            this.serverDrivenPaths.delete(file.path);
+          }
+        }
+        await this.noteApiClient.deleteNote(vaultId, file.id, crypto.randomUUID());
+        this.fileSync.localDeleted(file.path);
+        converted.add(file.id);
+      } catch (error) {
+        this.reportFailure(file.path, error);
+      }
+    }
+    if (converted.size > 0) {
+      this.requestSettingsSave();
+    }
+    return converted;
   }
 
   private async executeAction(action: ReconcileAction): Promise<void> {
@@ -2241,7 +2376,8 @@ export default class StoneIntelligencePlugin extends Plugin {
     } catch (error) {
       if (error instanceof HttpError && error.status === 409) {
         const match = this.mirror.byPath(path) ?? await this.noteApiClient.findByPath(this.settings.vaultId, path);
-        if (!match) {
+        if (!match || match.kind === "FILE") {
+          // Unter dem Pfad liegt eine Datei (aelteres Plugin) - der naechste Durchlauf wandelt sie um.
           throw error;
         }
         noteId = match.id;
@@ -2280,17 +2416,22 @@ export default class StoneIntelligencePlugin extends Plugin {
         // Abgleich der aktuellen Zuordnung nicht verhindern. Die Neubindung folgt unten.
         this.detachLive(path);
       }
-      if (this.live.has(path) || this.liveStarting.has(path) || this.pathForNoteId(noteId) !== path) {
+      if (this.live.has(path) || this.liveStarting.has(path) || this.canvasLive.busy(path) || this.pathForNoteId(noteId) !== path) {
         return null;
       }
+      const canvas = isCanvasPath(path);
       if (isReadOnly(this.entryAccess.get(noteId)?.permissions) && (reason === "local" || reason === "sync")) {
-        const copy = await revertReadOnlyEdit(this.contentPorts(), noteId, path);
+        const copy = await (canvas ? revertReadOnlyCanvasEdit : revertReadOnlyEdit)(this.contentPorts(), noteId, path);
         if (copy) {
           this.activity.log("conflict", path, `Nur lesbar – deine Änderung liegt in „${copy}“`);
           new Notice(`StoneIntelligence: „${basename(path)}“ darfst du nur lesen. Deine Änderung liegt in „${basename(copy)}“.`);
         }
       }
-      const result = await syncNoteContent(this.contentPorts(), noteId, path);
+      const result = await (canvas ? syncCanvasContent : syncNoteContent)(this.contentPorts(), noteId, path);
+      if (result.outcome === "invalid") {
+        this.activity.reportProblem(path, "Kein gültiges Canvas – nicht abgeglichen.");
+        return result;
+      }
       if (result.outcome === "offline") {
         if (result.pendingLocalChanges) {
           this.markDirty(noteId, path);
@@ -2399,6 +2540,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     this.detachLive(from);
+    await this.canvasLive.detach(from);
     await this.ensureFolder(to);
     this.serverDrivenPaths.add(from);
     this.serverDrivenPaths.add(to);
@@ -2515,7 +2657,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     if (!(file instanceof TFile)) {
       return;
     }
-    if (keep && file.extension !== "md") {
+    if (keep && !this.isNoteFile(file)) {
       this.activity.log("kept", path, "Behalten – wird als neue Datei hochgeladen");
       await this.fileSync.keepAfterDeletion(path);
       return;
@@ -2525,6 +2667,7 @@ export default class StoneIntelligencePlugin extends Plugin {
       // Eine noch an die geloeschte Notiz gebundene Editor-Sitzung zuerst loesen, sonst wird der
       // Inhalt nicht hochgeladen; danach den offenen Editor an die neue Notiz binden.
       this.detachLive(path);
+      await this.canvasLive.detach(path);
       await this.runLocalChange(path);
       void this.syncOpenEditorBindings();
       return;
@@ -2548,11 +2691,14 @@ export default class StoneIntelligencePlugin extends Plugin {
       return false;
     }
     const meta = this.vaultState().noteMeta[noteId];
+    const state = await this.stateStore.load(this.settings.vaultId, noteId);
+    const current = await this.app.vault.read(file);
+    const canvas = isCanvasPath(path);
     return hasUnsyncedLocalEdits({
       dirty: meta?.dirty === true,
       statUnchanged: meta !== undefined && meta.mtime === file.stat.mtime && meta.size === file.stat.size,
-      lastSyncedText: textOfState(await this.stateStore.load(this.settings.vaultId, noteId)),
-      currentText: await this.app.vault.read(file),
+      lastSyncedText: canvas ? canvasText(canvasOfState(state)) : textOfState(state),
+      currentText: canvas ? (canvasText(parseCanvas(current)) ?? current) : current,
     });
   }
 
@@ -2639,8 +2785,12 @@ export default class StoneIntelligencePlugin extends Plugin {
       return;
     }
     // Dateien (ADR 0009) - an Id oder Endung erkennbar; nie als Notiz behandeln.
-    if (this.fileSync.isFileId(noteId) || !path.toLowerCase().endsWith(".md")) {
-      if (messageType === VAULT_NOTE_DELETED) {
+    if (this.fileSync.isFileId(noteId) || !(path.toLowerCase().endsWith(".md") || this.isCanvasNote(path))) {
+      if (messageType === VAULT_NOTE_DELETED && this.isCanvasNote(path)) {
+        // Ein anderes Geraet hat die alte Datei in einen gemeinsamen Canvas umgewandelt - die lokale Datei bleibt.
+        this.fileSync.localDeleted(path);
+        this.requestPass();
+      } else if (messageType === VAULT_NOTE_DELETED) {
         await this.fileSync.remoteDeleted(noteId);
         this.scheduleFolderPass();
       } else {
@@ -2652,7 +2802,7 @@ export default class StoneIntelligencePlugin extends Plugin {
     try {
       const localPath = this.pathForNoteId(noteId);
       if (messageType === VAULT_NOTE_UPDATED) {
-        if (localPath && !this.live.has(localPath)) {
+        if (localPath && !this.live.has(localPath) && !this.canvasLive.has(localPath)) {
           this.scheduleRemoteChange(noteId);
         }
         return;
@@ -2698,7 +2848,8 @@ export default class StoneIntelligencePlugin extends Plugin {
    * eine neue Notiz an.
    */
   private isTrackable(path: string): boolean {
-    return this.isReady() && isSyncablePath(path) && !isExcluded(path, this.settings.excludedFolders)
+    return this.isReady() && isSyncablePath(path) && (!isCanvasPath(path) || this.isCanvasNote(path))
+      && !isExcluded(path, this.settings.excludedFolders)
       && this.vaultState().blockedPaths[path] !== DELETION_DECISION_PENDING;
   }
 
@@ -2712,13 +2863,13 @@ export default class StoneIntelligencePlugin extends Plugin {
       }
       return;
     }
-    if (file instanceof TFile && file.extension !== "md") {
+    if (file instanceof TFile && !this.isNoteFile(file)) {
       if (this.app.workspace.layoutReady && !this.serverDrivenPaths.has(file.path) && this.isTrackableFile(file.path)) {
         this.scheduleLocalFileChange(file.path);
       }
       return;
     }
-    if (!(file instanceof TFile) || file.extension !== "md" || this.serverDrivenPaths.has(file.path)) {
+    if (!(file instanceof TFile) || this.serverDrivenPaths.has(file.path)) {
       return;
     }
     if (!this.isTrackable(file.path) || this.vaultState().noteIds[file.path]) {
@@ -2728,17 +2879,21 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   private async handleLocalModify(file: TAbstractFile): Promise<void> {
-    if (file instanceof TFile && file.extension !== "md") {
+    if (file instanceof TFile && !this.isNoteFile(file)) {
       if (!this.serverDrivenPaths.has(file.path) && this.isTrackableFile(file.path)) {
         this.scheduleLocalFileChange(file.path);
       }
       return;
     }
-    if (!(file instanceof TFile) || file.extension !== "md" || !this.isTrackable(file.path)) {
+    if (!(file instanceof TFile) || !this.isTrackable(file.path)) {
       return;
     }
     if (this.live.has(file.path)) {
       // yCollab hat die Tastatureingaben laengst im Y.Text - das ist nur Obsidians Autosave.
+      return;
+    }
+    if (this.canvasLive.has(file.path)) {
+      void this.canvasLive.localChanged(file.path);
       return;
     }
     const content = await this.app.vault.cachedRead(file);
@@ -2821,6 +2976,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         continue;
       }
       this.detachLive(path);
+      void this.canvasLive.detach(path);
       delete state.noteIds[path];
       delete state.noteMeta[noteId];
       void this.stateStore.remove(this.settings.vaultId, noteId);
@@ -2896,13 +3052,14 @@ export default class StoneIntelligencePlugin extends Plugin {
         session.path = to;
         this.live.set(to, session);
       }
+      this.canvasLive.rename(from, to);
       changed = true;
     }
     const fileMoves: Array<[string, string]> = file instanceof TFolder
       ? Object.keys(state.fileIds)
         .filter((path) => path.startsWith(`${oldPath}/`))
         .map((path) => [path, `${file.path}/${path.slice(oldPath.length + 1)}`])
-      : file instanceof TFile && file.extension !== "md" ? [[oldPath, file.path]] : [];
+      : file instanceof TFile && !this.isNoteFile(file) ? [[oldPath, file.path]] : [];
     for (const [from, to] of fileMoves) {
       const fileId = this.fileSync.localRenamed(from, to);
       if (fileId) {
@@ -2978,6 +3135,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         await this.startLive(entry.file, entry.view);
       }
     }
+    await (this.isReady() ? this.canvasLive.refresh() : this.canvasLive.detachAll());
     this.updatePresenceBar();
     this.activity.touch();
   }
@@ -3130,8 +3288,18 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 }
 
-function kindsFor(includeFiles: boolean): string {
-  return includeFiles ? "note,file" : "note";
+/** Vergleichbarer Text eines Canvas, unabhaengig von Schluesselreihenfolge und Einrueckung. */
+function canvasText(canvas: ReturnType<typeof parseCanvas>): string | null {
+  return canvas ? serializeCanvas(canvas) : null;
+}
+
+function kindsFor(includeFiles: EntryKinds): string {
+  return kindsParam(includeFiles);
+}
+
+/** Welche Arten der Server liefern soll: Dateien und Canvas nur, wenn er sie kennt. */
+function entryKinds(limits: FileLimits | null | undefined): EntryKinds {
+  return limits ? (limits.canvas ? "canvas" : true) : false;
 }
 
 /** Ordner in einem Bereich oder darueber (sonst fehlte lokal der Weg dorthin). */

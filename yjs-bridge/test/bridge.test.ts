@@ -23,6 +23,18 @@ describe("yjs bridge", () => {
     expect(textOf([first, second])).toBe("Zeile eins, ergänzt 😀\nZeile zwei\n");
   });
 
+  it("reads a canvas document (ADR 0018) as empty text instead of failing", () => {
+    const canvas = new Y.Doc();
+    const node = new Y.Map<unknown>();
+    node.set("id", "a");
+    node.set("text", new Y.Text("Karte"));
+    canvas.getMap("nodes").set("a", node);
+    const update = bytesToBase64(Y.encodeStateAsUpdate(canvas));
+
+    expect(textOf([update])).toBe("");
+    expect(merge([update, update])).toBeTruthy();
+  });
+
   it("returns null when nothing changes", () => {
     const first = change([], "gleich") as string;
 

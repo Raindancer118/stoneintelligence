@@ -4,6 +4,7 @@
   import { api, type Note, type Vault } from "../api";
   import { normalizeNotePath } from "../noteContent";
   import NoteEditor from "./NoteEditor.svelte";
+  import CanvasNotice from "./CanvasNotice.svelte";
   import FileViewer from "./FileViewer.svelte";
   import { fileKindLabel } from "../fileKinds";
   import SharePanel from "./SharePanel.svelte";
@@ -165,7 +166,7 @@
 
 
 {#snippet row(note: Note, depth: number)}
-  <button class="note-row" style={`--depth:${depth}`} class:active={selected?.id === note.id} aria-current={selected?.id === note.id ? "true" : undefined} onclick={() => select(note)}><Icon name="notes" size={17} /><span class="note-row-text"><span class="note-name">{note.kind === "FILE" ? note.path.split("/").pop() : note.path.split("/").pop()?.replace(/\.md$/i, "")}</span>{#if note.kind === "FILE"}<span class="file-kind">{fileKindLabel(note.path)}</span>{/if}<span class="note-path">{note.path.includes("/") ? note.path.slice(0, note.path.lastIndexOf("/")) : "Ohne Ordner"}</span>{#if note.noteLevel === 101}<span class="locked">Verschlüsselt</span>{/if}{#if search.trim() && excerpts[note.id]}<span class="note-excerpt"><Excerpt text={excerpts[note.id]} /></span>{/if}</span></button>
+  <button class="note-row" style={`--depth:${depth}`} class:active={selected?.id === note.id} aria-current={selected?.id === note.id ? "true" : undefined} onclick={() => select(note)}><Icon name="notes" size={17} /><span class="note-row-text"><span class="note-name">{note.kind === "FILE" || note.kind === "CANVAS" ? note.path.split("/").pop() : note.path.split("/").pop()?.replace(/\.md$/i, "")}</span>{#if note.kind === "FILE" || note.kind === "CANVAS"}<span class="file-kind">{fileKindLabel(note.path)}</span>{/if}<span class="note-path">{note.path.includes("/") ? note.path.slice(0, note.path.lastIndexOf("/")) : "Ohne Ordner"}</span>{#if note.noteLevel === 101}<span class="locked">Verschlüsselt</span>{/if}{#if search.trim() && excerpts[note.id]}<span class="note-excerpt"><Excerpt text={excerpts[note.id]} /></span>{/if}</span></button>
 {/snippet}
 
 {#snippet tree(path: string, depth: number)}
@@ -203,8 +204,8 @@
   </section>
   <section class="note-content" aria-label="Ausgewählte Notiz">
     {#if sharing}{#key JSON.stringify(sharing)}<SharePanel {vault} target={sharing} onClose={() => sharing = null} />{/key}{/if}
-    {#if selected}<div class="note-actions"><button class="quiet back-to-list" onclick={() => select(null)}>Zur Notizliste</button>{#if selected.kind === "FILE"}<button class="secondary" onclick={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null}>Freigeben</button>{/if}</div>
-    {#if similar}<section class="similar" aria-label="Ähnliche Notizen">{#if similar.length}<ul>{#each similar as other (other.noteId)}<li><button class="link" onclick={() => openSimilar(other.path)}>{other.path.split("/").pop()?.replace(/\.md$/i, "")}</button><span class="hint">{Math.round(other.similarity * 100)} % ähnlich{other.heading ? ` · „${other.heading}“` : ""}</span></li>{/each}</ul>{:else}<p class="hint">Noch nichts gefunden. Ähnlichkeiten entstehen beim Verlinken (KI → Verlinkung).</p>{/if}</section>{/if}{#key selected.id}{#if selected.kind === "FILE"}<FileViewer note={selected} {permissions} onChanged={changed} onDeleted={deleted} />{:else}<NoteEditor note={selected} {permissions} onChanged={changed} onDeleted={deleted} onDirtyChange={setDirty} onShare={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null} onSimilar={showSimilar} />{/if}{/key}
+    {#if selected}<div class="note-actions"><button class="quiet back-to-list" onclick={() => select(null)}>Zur Notizliste</button>{#if selected.kind === "FILE" || selected.kind === "CANVAS"}<button class="secondary" onclick={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null}>Freigeben</button>{/if}</div>
+    {#if similar}<section class="similar" aria-label="Ähnliche Notizen">{#if similar.length}<ul>{#each similar as other (other.noteId)}<li><button class="link" onclick={() => openSimilar(other.path)}>{other.path.split("/").pop()?.replace(/\.md$/i, "")}</button><span class="hint">{Math.round(other.similarity * 100)} % ähnlich{other.heading ? ` · „${other.heading}“` : ""}</span></li>{/each}</ul>{:else}<p class="hint">Noch nichts gefunden. Ähnlichkeiten entstehen beim Verlinken (KI → Verlinkung).</p>{/if}</section>{/if}{#key selected.id}{#if selected.kind === "FILE"}<FileViewer note={selected} {permissions} onChanged={changed} onDeleted={deleted} />{:else if selected.kind === "CANVAS"}<CanvasNotice note={selected} />{:else}<NoteEditor note={selected} {permissions} onChanged={changed} onDeleted={deleted} onDirtyChange={setDirty} onShare={() => sharing = selected ? { kind: "entry", noteId: selected.id, path: selected.path } : null} onSimilar={showSimilar} />{/if}{/key}
     {:else if showChecklist}<div class="welcome-document"><SetupChecklist vaultId={vault.id} {steps} onStep={setupStep} onDismiss={() => checklistHidden = true} /></div>{:else}<div class="welcome-document"><div class="placeholder-lines" aria-hidden="true"><i></i><i></i><i></i></div><h3>Keine Notiz geöffnet</h3><p>Wähle links eine Notiz, um sie zu lesen{permissions.includes("WRITE") ? " und zu bearbeiten" : ""}. Was du hier speicherst, erscheint sofort in Obsidian bei allen, die den Vault verbunden haben.</p></div>{/if}
   </section>
 </div>

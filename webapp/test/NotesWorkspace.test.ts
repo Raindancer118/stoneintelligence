@@ -90,6 +90,19 @@ describe("notes workspace", () => {
 
     await screen.findByRole("link", { name: "Herunterladen" });
   });
+  // Canvas (ADR 0018) werden in Obsidian bearbeitet - das Dashboard zeigt sie und sagt, wo man sie oeffnet.
+  it("lists a canvas and points to Obsidian instead of opening an editor", async () => {
+    const board = { id: "c1", vaultId: "vault", path: "Ideen/Board.canvas", noteLevel: 1, createdBy: "Tom", createdAt: "2026-11-25T00:00:00Z",
+      kind: "CANVAS" as const, revision: 4 };
+    serve({ "": { notes: [note, board] } });
+    render(NotesWorkspace, { vault, onDirtyChange: vi.fn() });
+
+    await fireEvent.click(await screen.findByRole("button", { name: /Board\.canvas.*Canvas/ }));
+
+    await screen.findByText("Dieses Canvas öffnest du in Obsidian");
+    expect(api.noteContent).not.toHaveBeenCalled();
+    expect(api.fileBlob).not.toHaveBeenCalled();
+  });
   it("shows similar notes and opens one with a click", async () => {
     const other = { id: "other", vaultId: "vault", path: "Biologie/Photosynthese.md", noteLevel: 1, createdBy: "Tom", createdAt: "2026-09-20T00:00:00Z" };
     serve({ "": { notes: [note, other] } });

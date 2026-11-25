@@ -68,13 +68,14 @@ public class NoteController {
     ) {
         var actor = authentication.getName();
         var vId = VaultId.of(vaultId);
-        validatePath(request.path());
+        var kind = request.canvas() ? NoteKind.CANVAS : NoteKind.NOTE;
+        validatePath(request.path(), kind);
         access.require(vId, actor, Permission.CREATE, request.path());
-        var note = notes.create(vId, request.path(), NoteLevel.of(request.noteLevel()), actor);
+        var note = notes.create(vId, request.path(), NoteLevel.of(request.noteLevel()), actor, kind);
         audit.record(vId, note.id(), actor, "note.created", java.util.Map.of("path", note.path()));
         // Sofort an alle verbundenen Geraete des Vaults - ohne das erfuehren sie von einer auf
         // einem anderen Geraet angelegten Notiz erst beim naechsten vollstaendigen Abgleich.
-        announcements.announceNoteCreated(vId, note.id(), note.path());
+        announcements.announceNoteCreated(vId, note.id(), note.path(), note.kind());
         folders.ensureParentsOf(vId, note.path(), actor);
         return NoteResponse.from(note);
     }
@@ -207,6 +208,7 @@ public class NoteController {
             switch (kind.strip().toLowerCase(java.util.Locale.ROOT)) {
                 case "note" -> parsed.add(NoteKind.NOTE);
                 case "file" -> parsed.add(NoteKind.FILE);
+                case "canvas" -> parsed.add(NoteKind.CANVAS);
                 default -> throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.BAD_REQUEST, "Unknown kind: " + kind);
             }
@@ -233,7 +235,7 @@ public class NoteController {
                     "Invalid file path");
             }
         } else {
-            validatePath(request.path());
+            validatePath(request.path(), existing.map(Note::kind).orElse(NoteKind.NOTE));
         }
         var before = existing.map(Note::path).orElse(null);
         access.require(vId, actor, Permission.WRITE, before != null ? before : request.path());
@@ -288,10 +290,10 @@ public class NoteController {
         return TombstoneResponse.from(tombstone);
     }
 
-    private static void validatePath(String path) {
-        if (!NotePaths.isValid(path)) {
+    private static void validatePath(String path, NoteKind kind) {
+        if (!(kind == NoteKind.CANVAS ? NotePaths.isValidCanvas(path) : NotePaths.isValid(path))) {
             throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
-                "Invalid Markdown path");
+                kind == NoteKind.CANVAS ? "Invalid canvas path" : "Invalid Markdown path");
         }
     }
 
@@ -300,7 +302,19 @@ public class NoteController {
         return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT).build();
     }
 
-    public record CreateNoteRequest(String path, int noteLevel) {
+    /** {@code kind} fehlt bei aelteren Plugins (= Notiz); {@code "canvas"} legt einen Canvas an (ADR 0018). */
+    public record CreateNoteRequest(String path, int noteLevel, String kind) {
+
+        boolean canvas() {
+            if (kind == null || kind.equalsIgnoreCase("note")) {
+                return false;
+            }
+            if (kind.equalsIgnoreCase("canvas")) {
+                return true;
+            }
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                "Unknown kind: " + kind);
+        }
     }
 
     public record RenameNoteRequest(String path) {

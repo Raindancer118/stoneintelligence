@@ -354,6 +354,25 @@ describe("NoteApiClient", () => {
       expect(fakeFetch.mock.calls[0][0]).toContain("kinds=note%2Cfile");
     });
 
+    it("should_askForCanvasKinds_onlyWhenTheServerSupportsThem", async () => {
+      const page = { ok: true, status: 200, json: async () => ({ epochId: "e", complete: true, nextCursor: null, notes: [] }) };
+      const fakeFetch = vi.fn().mockResolvedValue(page);
+
+      await clientWith(fakeFetch).listAllEntries("v1", null, "canvas");
+      await clientWith(fakeFetch).changes("v1", null, "canvas");
+
+      expect(fakeFetch.mock.calls[0][0]).toContain("kinds=note%2Cfile%2Ccanvas");
+      expect(fakeFetch.mock.calls[1][0]).toContain("kinds=note%2Cfile%2Ccanvas");
+    });
+
+    it("should_createACanvasAsItsOwnKind", async () => {
+      const fakeFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "c1" }) });
+
+      expect(await clientWith(fakeFetch).createNote("v1", "Ideen/Board.canvas", 1)).toBe("c1");
+
+      expect(JSON.parse(fakeFetch.mock.calls[0][1].body)).toEqual({ path: "Ideen/Board.canvas", noteLevel: 1, kind: "canvas" });
+    });
+
     it("should_createAFile_andUploadBytesOnTheBaseRevision", async () => {
       const fakeFetch = vi.fn()
         .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: "f1" }) })

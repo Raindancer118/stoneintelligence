@@ -14,4 +14,8 @@ public record Note(NoteId id, VaultId vaultId, String path, NoteLevel level, Str
     public boolean isFile() {
         return kind == NoteKind.FILE;
     }
+
+    public boolean isCanvas() {
+        return kind == NoteKind.CANVAS;
+    }
 }

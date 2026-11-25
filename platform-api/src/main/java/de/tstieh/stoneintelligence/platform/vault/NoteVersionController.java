@@ -116,6 +116,9 @@ public class NoteVersionController {
         if (note.isFile()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Files keep no older versions");
         }
+        if (note.isCanvas()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Canvases keep no readable versions");
+        }
         if (note.level().value() == 101) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Encrypted notes require the Obsidian client");
         }

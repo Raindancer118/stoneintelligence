@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSyncablePath, planReconciliation, type ReconcileInput } from "../src/sync/reconcilePlan";
+import { isCanvasPath, isSyncablePath, planReconciliation, type ReconcileInput } from "../src/sync/reconcilePlan";
 
 function input(overrides: Partial<ReconcileInput>): ReconcileInput {
   return {
@@ -186,6 +186,13 @@ describe("planReconciliation", () => {
 describe("isSyncablePath", () => {
   it("should_acceptOrdinaryMarkdownPaths", () => {
     expect(isSyncablePath("Ordner/Unterordner/Notiz mit Leerzeichen.md")).toBe(true);
+  });
+
+  it("should_acceptCanvasPaths_butNotJustTheExtension", () => {
+    expect(isSyncablePath("Ideen/Board.canvas")).toBe(true);
+    expect(isCanvasPath("Ideen/Board.CANVAS")).toBe(true);
+    expect(isSyncablePath(".obsidian/x.canvas")).toBe(false);
+    expect(isSyncablePath("a:b.canvas")).toBe(false);
   });
 
   it("should_rejectPathsTheServerWouldRefuse", () => {
