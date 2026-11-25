@@ -23,7 +23,9 @@ stehen im `VaultAccessGuard` (ADR 0011).
   sucht nicht selbst, er speichert nur.
 - **Nur Text.** Kommentare sind Klartext, höchstens 4000 Zeichen; die Oberflächen setzen sie nie als HTML.
 - Tabellen `comment_threads`, `comments`, `comment_notifications` (**V26**; V25 gehört einer anderen
-  Änderung). Alles hängt per `ON DELETE CASCADE` an Notiz und Vault. Kommentare auf Dateien gibt es nicht.
+  Änderung). Alles hängt per `ON DELETE CASCADE` an Notiz und Vault. Kommentare auf Dateien gibt es nicht,
+  ebenso nicht auf verschlüsselten Notizen (Level 101): das gespeicherte Zitat wäre Klartext auf dem Server.
+  Wird eine Notiz erst nach Kommentaren verschlüsselt, bleiben die alten Zitate stehen (Grenze, bewusst offen).
 
 ### Rechte
 
