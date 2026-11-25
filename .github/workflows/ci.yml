@@ -79,6 +79,20 @@ jobs:
       - name: Test container healthcheck script
         run: ops/docker/test-healthcheck.sh
 
+  # Das Bereitstellungswerkzeug fuer verwaltetes Obsidian (ops/managed-obsidian): Rechte-Test in einem User-Namespace,
+  # PowerShell-Skript wird nur geparst.
+  managed-obsidian-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test managed-obsidian script
+        run: bash ops/managed-obsidian/test/managed-obsidian.test.sh
+      - name: Test the permissions managed-obsidian sets (user namespace)
+        run: bash ops/managed-obsidian/test/userns.test.sh
+      - name: Parse the PowerShell script
+        run: bash ops/managed-obsidian/test/parse-powershell.sh
+
   # Die Dockerfiles bauen (ohne private Registry: platform-api, mcp-adapter) und der mcp-adapter
   # muss im Container "healthy" werden - prueft Healthcheck, Non-root-Nutzer und JVM-Flags.
   docker-build-smoke:

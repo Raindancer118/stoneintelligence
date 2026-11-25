@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "vaultPath": {
+    "linux": "/opt/firmen-vault",
+    "macos": "/Users/Shared/Firmen-Vault",
+    "windows": "C:\\Firmen-Vault"
+  },
+  "owner": "",
+  "server": {
+    "url": "https://stoneintelligence.example.com",
+    "oidcIssuer": "https://login.example.com/application/o/stoneintelligence/",
+    "oidcClientId": "stoneintelligence-plugin"
+  },
+  "plugins": [
+    {
+      "id": "stoneintelligence",
+      "repo": "Raindancer118/StoneSync",
+      "version": "0.34.0",
+      "sha256": {
+        "main.js": "0000000000000000000000000000000000000000000000000000000000000000",
+        "manifest.json": "0000000000000000000000000000000000000000000000000000000000000000",
+        "styles.css": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "calendar",
+      "repo": "liamcain/obsidian-calendar-plugin",
+      "version": "1.5.10",
+      "sha256": {
+        "main.js": "0000000000000000000000000000000000000000000000000000000000000000",
+        "manifest.json": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ],
+  "serverPolicy": {
+    "vaultId": "00000000-0000-4000-8000-000000000000",
+    "tokenFile": "/etc/managed-obsidian/token"
+  },
+  "nativePolicy": { "enabled": true, "themes": false, "snippets": false, "devTools": false },
+  "precreateData": true,
+  "immutable": false
+}
