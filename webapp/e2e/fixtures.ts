@@ -29,9 +29,34 @@ export async function mockWorkspace(page: Page) {
   let grants: Record<string, unknown>[] = [];
   let linking = { enabled: false, linkHumanNotes: false, mode: "LITERAL", service: "gemini", maxLinksPerNote: 5, requestedBy: "Tom", lastRunAt: null, aiConsent: false, aiConsentCount: 0 };
   const notes = [{ id: noteId, vaultId, path: "Projekte/Kundenportal.md", noteLevel: 1, createdBy: "Tom", createdAt: "2026-09-19T09:00:00Z" }];
+  // Kommentare (ADR 0016): ein Thread von Anna, der Tom erwähnt, dazu der passende Hinweis.
+  const commentAuthor = (name: string) => name;
+  const threads: Record<string, any>[] = [{
+    id: "seed-thread", noteId, anchor: { quote: "Den nächsten Entwurf gemeinsam prüfen", prefix: "", suffix: "" }, resolved: false,
+    resolvedByName: null, resolvedAt: null, createdAt: "2026-11-25T08:00:00Z",
+    comments: [{ id: "seed-c", author: "Anna", authorName: "Anna", mine: false, body: "Kannst du das prüfen, @[Tom](Tom)?", createdAt: "2026-11-25T08:00:00Z", editedAt: null }],
+  }];
+  const notifications = [{ id: "seed-n", vaultId, vaultName: "Team-Wissen", noteId, notePath: "Projekte/Kundenportal.md", threadId: "seed-thread",
+    commentId: "seed-c", actorName: "Anna", excerpt: "Kannst du das prüfen, @Tom?", createdAt: "2026-11-25T08:00:00Z", read: false }];
+  const newComment = (body: string) => ({ id: `c-${Date.now()}-${Math.random()}`, author: "Tom", authorName: commentAuthor("Tom"), mine: true, body, createdAt: "2026-11-25T09:00:00Z", editedAt: null });
   await page.route("**/api/v1/**", async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const json = (body: unknown, status = 200) => route.fulfill({ status, json: body });
+    if (path === "/api/v1/notifications") return json({ items: notifications, unread: notifications.filter(n => !n.read).length });
+    if (path === "/api/v1/notifications/read") { const ids: string[] = request.postDataJSON().ids; notifications.forEach(n => { if (!ids.length || ids.includes(n.id)) n.read = true; }); return route.fulfill({ status: 204 }); }
+    if (/\/notes\/[^/]+\/comments$/.test(path)) {
+      if (request.method() === "GET") return json(threads);
+      const { body, anchor } = request.postDataJSON();
+      const thread = { id: `t-${threads.length}`, noteId, anchor: anchor ?? null, resolved: false, resolvedByName: null, resolvedAt: null, createdAt: "2026-11-25T09:00:00Z", comments: [newComment(body)] };
+      threads.push(thread); return json(thread, 201);
+    }
+    if (/\/comment-threads\/[^/]+\/replies$/.test(path)) {
+      const thread = threads.find(t => t.id === path.split("/").at(-2))!; thread.comments.push(newComment(request.postDataJSON().body)); return json(thread, 201);
+    }
+    if (/\/comment-threads\/[^/]+\/(resolve|reopen)$/.test(path)) {
+      const thread = threads.find(t => t.id === path.split("/").at(-2))!; const resolve = path.endsWith("/resolve");
+      thread.resolved = resolve; thread.resolvedByName = resolve ? "Tom" : null; thread.resolvedAt = resolve ? "2026-11-25T10:00:00Z" : null; return json(thread);
+    }
     if (path.endsWith("/vaults")) {
       if (request.method() === "POST") { const vault = { id: "second-vault", name: request.postDataJSON().name, createdAt: "2026-09-27T10:00:00Z" }; vaults.push(vault); return json(vault); }
       return json(vaults);

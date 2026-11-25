@@ -24,7 +24,7 @@ import {
 import {
   MultiplexedTransport, VAULT_ACCESS_CHANGED, VAULT_FOLDERS_CHANGED, VAULT_NOTE_CREATED, VAULT_NOTE_DELETED, VAULT_NOTE_RENAMED, VAULT_NOTE_UPDATED,
 } from "./sync/multiplexedTransport";
-import { type FileLimits, HttpError, NoteApiClient, type NoteListItem, type VaultSummary } from "./sync/NoteApiClient";
+import { type CommentNotification, type FileLimits, HttpError, NoteApiClient, type NoteListItem, type VaultSummary } from "./sync/NoteApiClient";
 import {
   type ContentSyncPorts, type ContentSyncResult, conflictCopyPath, hasUnsyncedLocalEdits, prepareNoteDoc, resolveFirstContact,
   revertReadOnlyEdit, syncNoteContent, textOfState,
@@ -48,6 +48,12 @@ import { ShareModal, type ShareTarget } from "./ui/ShareModal";
 import { HistoryModal } from "./ui/HistoryModal";
 import { SimilarNotesModal } from "./ui/SimilarNotesModal";
 import { type Tab as VaultAdminTab, VaultAdminView, VIEW_TYPE_VAULT_ADMIN } from "./ui/VaultAdminView";
+import { type CommentTarget, CommentsView, VIEW_TYPE_COMMENTS } from "./ui/CommentsView";
+import { CommentModal } from "./ui/CommentModal";
+import { NotificationsModal } from "./ui/NotificationsModal";
+import { noticeText, summaryText, unseenMentions } from "./ui/mentionNotice";
+import { makeAnchor } from "./sync/commentAnchor";
+import type { Member } from "./sync/commentText";
 import { AiReadModal, type AiReadTarget } from "./ui/AiReadModal";
 import { canReadWithAi } from "./sync/aiJobText";
 import { StoneIntelligenceSettingTab } from "./ui/SettingsTab";
@@ -68,6 +74,10 @@ import { debugLog } from "./debugLog";
  * Notiz einzeln gejoint.
  */
 const RECONCILE_INTERVAL_MS = 30_000;
+/** Erwähnungen (ADR 0016): so oft fragt das Plugin nach neuen Hinweisen. */
+const MENTION_POLL_MS = 60_000;
+/** So viele neue Erwähnungen zeigt das Plugin einzeln, mehr fasst es zusammen. */
+const MENTION_NOTICES_MAX = 3;
 /**
  * Wartezeit nach einer Inhalts-Ankuendigung. Der Server kuendigt hoechstens einmal pro Sekunde
  * und Notiz an; laenger zu warten stellt sicher, dass auch das letzte Update eines Tipp-Schwalls
@@ -174,6 +184,9 @@ export default class StoneIntelligencePlugin extends Plugin {
   private readonly journal = new OperationJournal();
   private stateStore!: NoteStateStore;
   private noteApiClient!: NoteApiClient;
+  private readonly seenMentions = new Set<string>();
+  private unreadMentions: CommentNotification[] = [];
+  private commentMembersCache: { vaultId: string; at: number; members: Member[] } | null = null;
   private authClient!: AuthentikAuthClient;
   private tokenEndpoint: string | null = null;
   /**
@@ -315,6 +328,19 @@ export default class StoneIntelligencePlugin extends Plugin {
         this.refreshActivityFlags();
       },
     }));
+    this.registerView(VIEW_TYPE_COMMENTS, (leaf) => new CommentsView(leaf, {
+      api: () => this.noteApiClient,
+      vaultId: () => this.settings.vaultId || null,
+      activeTarget: () => this.commentTarget(),
+      canModerate: (path) => {
+        const id = this.vaultState().noteIds[path];
+        return Boolean(id && this.entryAccess.get(id)?.permissions?.includes("MANAGE"));
+      },
+      members: () => this.commentMembers(),
+      commentsViewed: (noteId) => void this.markMentionsRead(noteId),
+    }));
+    this.registerInterval(window.setInterval(() => void this.checkMentions(), MENTION_POLL_MS));
+    window.setTimeout(() => void this.checkMentions(), 8_000);
     this.addRibbonIcon("refresh-cw", "StoneIntelligence-Sync", () => void this.activateStatusView());
     this.setupStatusBar();
     this.registerCommands();
@@ -1063,6 +1089,40 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
+      id: "comments",
+      name: "Kommentare der aktuellen Notiz anzeigen",
+      checkCallback: (checking) => {
+        const available = this.canComment();
+        if (!checking && available) {
+          void this.activateCommentsView();
+        }
+        return available;
+      },
+    });
+    this.addCommand({
+      id: "comment-selection",
+      name: "Kommentar zur Auswahl",
+      editorCheckCallback: (checking, editor) => {
+        const target = this.commentTarget();
+        const available = target !== null && editor.getSelection().trim() !== "";
+        if (!checking && available) {
+          this.commentOnSelection(target, editor.getSelection(), editor.getValue(), editor.posToOffset(editor.getCursor("from")));
+        }
+        return available;
+      },
+    });
+    this.addCommand({
+      id: "notifications",
+      name: "Hinweise anzeigen",
+      checkCallback: (checking) => {
+        const available = this.canComment();
+        if (!checking && available) {
+          new NotificationsModal(this.app, this.noteApiClient, (item) => this.openMention(item)).open();
+        }
+        return available;
+      },
+    });
+    this.addCommand({
       id: "ai-changes",
       name: "KI-Änderungen anzeigen und rückgängig machen",
       checkCallback: (checking) => {
@@ -1152,7 +1212,12 @@ export default class StoneIntelligencePlugin extends Plugin {
           .onClick(() => this.openAiRead(aiTargets)));
       }
     }));
-    this.registerEvent(this.app.workspace.on("editor-menu", (menu, _editor, info) => {
+    this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor, info) => {
+      const commentable = this.commentTarget();
+      if (commentable && editor.getSelection().trim() !== "") {
+        menu.addItem((item) => item.setTitle("StoneIntelligence: Kommentar zur Auswahl").setIcon("message-square")
+          .onClick(() => this.commentOnSelection(commentable, editor.getSelection(), editor.getValue(), editor.posToOffset(editor.getCursor("from")))));
+      }
       const target = this.isReady() && info.file ? this.shareTargetFor(info.file) : null;
       if (target) {
         menu.addItem((item) => item.setTitle("StoneIntelligence: Freigabe…").setIcon("users")
@@ -1184,6 +1249,102 @@ export default class StoneIntelligencePlugin extends Plugin {
 
   private openAiRead(targets: AiReadTarget[]): void {
     new AiReadModal(this.app, this.noteApiClient, this.settings.vaultId, targets, () => void this.activateVaultAdminView("ai")).open();
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Kommentare und Erwähnungen (ADR 0016)
+
+  /** Kommentare brauchen nur Anmeldung und Vault - auch bei pausiertem Sync. */
+  private canComment(): boolean {
+    return Boolean(this.settings.vaultId) && this.isLoggedIn();
+  }
+
+  private commentTarget(): CommentTarget | null {
+    const file = this.app.workspace.getActiveFile();
+    if (!this.canComment() || !(file instanceof TFile) || file.extension !== "md") {
+      return null;
+    }
+    const noteId = this.vaultState().noteIds[file.path];
+    return noteId ? { noteId, path: file.path, file } : null;
+  }
+
+  private async commentMembers(): Promise<Member[]> {
+    const vaultId = this.settings.vaultId;
+    if (this.commentMembersCache?.vaultId === vaultId && Date.now() - this.commentMembersCache.at < 5 * 60_000) {
+      return this.commentMembersCache.members;
+    }
+    const members = (await this.noteApiClient.listMembers(vaultId)).map((m) => ({ subject: m.subject, displayName: m.displayName ?? null }));
+    this.commentMembersCache = { vaultId, at: Date.now(), members };
+    return members;
+  }
+
+  async activateCommentsView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(VIEW_TYPE_COMMENTS)[0];
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false) ?? workspace.getLeaf(true);
+      await leaf.setViewState({ type: VIEW_TYPE_COMMENTS, active: true });
+    }
+    void workspace.revealLeaf(leaf);
+    if (leaf.view instanceof CommentsView) {
+      await leaf.view.reload();
+    }
+  }
+
+  private commentOnSelection(target: CommentTarget, selected: string, text: string, offset: number): void {
+    const anchor = makeAnchor(text, selected, offset);
+    if (!anchor) {
+      return;
+    }
+    const title = basename(target.path).replace(/\.md$/i, "");
+    new CommentModal(this.app, title, anchor, () => this.commentMembers(), async (body, passage) => {
+      await this.noteApiClient.startThread(this.settings.vaultId, target.noteId, body, passage);
+      await this.activateCommentsView();
+    }).open();
+  }
+
+  /** Ein Klick auf einen Hinweis: Notiz öffnen und ihre Kommentare zeigen. */
+  private openMention(item: { noteId: string; notePath: string; id: string }): void {
+    this.openFile(item.notePath);
+    void this.noteApiClient.markNotificationsRead([item.id]).catch(() => undefined);
+    window.setTimeout(() => void this.activateCommentsView(), 300);
+  }
+
+  /** Neue Erwähnungen als Hinweis zeigen; offline oder ohne Server still bleiben. */
+  private async checkMentions(): Promise<void> {
+    if (!this.canComment()) {
+      return;
+    }
+    try {
+      const { items } = await this.noteApiClient.notifications();
+      this.unreadMentions = items.filter((item) => !item.read);
+      const fresh = unseenMentions(items, this.seenMentions);
+      fresh.forEach((item) => this.seenMentions.add(item.id));
+      if (fresh.length > MENTION_NOTICES_MAX) {
+        new Notice(`StoneIntelligence: ${summaryText(fresh)}`, 10_000);
+        return;
+      }
+      for (const item of fresh) {
+        const notice = new Notice(`StoneIntelligence: ${noticeText(item)}`, 10_000);
+        notice.messageEl.addEventListener("click", () => this.openMention(item));
+      }
+    } catch (error) {
+      console.debug("StoneIntelligence: Hinweise nicht abrufbar", error);
+    }
+  }
+
+  /** Wer die Kommentare einer Notiz ansieht, hat ihre Hinweise gelesen; gefragt wird nur, wenn der letzte Abruf welche hatte. */
+  private async markMentionsRead(noteId: string): Promise<void> {
+    const ids = this.unreadMentions.filter((item) => item.noteId === noteId && item.vaultId === this.settings.vaultId).map((item) => item.id);
+    if (ids.length === 0) {
+      return;
+    }
+    this.unreadMentions = this.unreadMentions.filter((item) => !ids.includes(item.id));
+    try {
+      await this.noteApiClient.markNotificationsRead(ids);
+    } catch (error) {
+      console.debug("StoneIntelligence: Hinweise nicht als gelesen markiert", error);
+    }
   }
 
   private openSimilar(noteId: string, path: string): void {

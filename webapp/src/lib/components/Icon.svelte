@@ -11,7 +11,8 @@
     folder: 'M3 6h7l2 2h9v12H3z',
     settings: 'M21 4h-7 M10 4H3 M21 12h-9 M8 12H3 M21 20h-5 M12 20H3 M14 2v4 M8 10v4 M16 18v4',
     sun: 'M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M6.3 17.7l-1.4 1.4 M19.1 4.9l-1.4 1.4',
-    moon: 'M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z',
+    bell: 'M6 9a6 6 0 1 1 12 0c0 6 2 7 2 7H4s2-1 2-7 M10 20a2 2 0 0 0 4 0',
+    moon:'M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z',
   };
 </script>
 <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="round" aria-hidden="true"><path d={paths[name] ?? paths.notes} /></svg>

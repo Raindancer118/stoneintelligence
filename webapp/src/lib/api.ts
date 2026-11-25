@@ -96,6 +96,20 @@ import type { HistoryEvent, NoteHistory } from "./historyText";
 import type { Restored, VersionList, VersionText } from "./versionText";
 import type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
 export interface VaultMember { subject: string; displayName?: string | null; groups: { id: string; name: string }[]; permissions: Permission[]; }
+import type { CommentAnchor } from "./commentAnchor";
+export interface CommentView {
+  id: string; author: string; authorName: string; mine: boolean; body: string; createdAt: string; editedAt: string | null;
+}
+/** `anchor === null`: Kommentar zur ganzen Notiz. */
+export interface CommentThreadView {
+  id: string; noteId: string; anchor: CommentAnchor | null; resolved: boolean; resolvedByName: string | null;
+  resolvedAt: string | null; createdAt: string; comments: CommentView[];
+}
+export interface CommentNotification {
+  id: string; vaultId: string; vaultName: string; noteId: string; notePath: string; threadId: string; commentId: string;
+  actorName: string; excerpt: string; createdAt: string; read: boolean;
+}
+export interface CommentNotifications { items: CommentNotification[]; unread: number; }
 /** `permissions === null` heisst "wie im Vault", eine leere Liste "nichts". */
 export interface GrantChange { scopeType: ScopeType; subject: string | null; permissions: Permission[] | null; }
 
@@ -290,6 +304,25 @@ export const api = {
   setLinkingConsent: (vaultId: string, consent: boolean) =>
     request<LinkingSettings>(`/api/v1/vaults/${vaultId}/linking/consent`, { method: "PUT", body: JSON.stringify({ consent }) }),
   runLinking: (vaultId: string) => request<AiJob>(`/api/v1/vaults/${vaultId}/linking/run`, { method: "POST" }),
+  // Kommentare und Erwähnungen (ADR 0016)
+  listComments: (vaultId: string, noteId: string) => request<CommentThreadView[]>(`/api/v1/vaults/${vaultId}/notes/${noteId}/comments`),
+  startThread: (vaultId: string, noteId: string, body: string, anchor: CommentAnchor | null) =>
+    request<CommentThreadView>(`/api/v1/vaults/${vaultId}/notes/${noteId}/comments`,
+      { method: "POST", body: JSON.stringify(anchor ? { body, anchor } : { body }) }),
+  replyToThread: (vaultId: string, threadId: string, body: string) =>
+    request<CommentThreadView>(`/api/v1/vaults/${vaultId}/comment-threads/${threadId}/replies`, { method: "POST", body: JSON.stringify({ body }) }),
+  editComment: (vaultId: string, commentId: string, body: string) =>
+    request<CommentThreadView>(`/api/v1/vaults/${vaultId}/comments/${commentId}`, { method: "PATCH", body: JSON.stringify({ body }) }),
+  deleteComment: (vaultId: string, commentId: string) =>
+    request<void>(`/api/v1/vaults/${vaultId}/comments/${commentId}`, { method: "DELETE" }),
+  resolveThread: (vaultId: string, threadId: string) =>
+    request<CommentThreadView>(`/api/v1/vaults/${vaultId}/comment-threads/${threadId}/resolve`, { method: "POST" }),
+  reopenThread: (vaultId: string, threadId: string) =>
+    request<CommentThreadView>(`/api/v1/vaults/${vaultId}/comment-threads/${threadId}/reopen`, { method: "POST" }),
+  notifications: () => request<CommentNotifications>("/api/v1/notifications"),
+  /** Ohne `ids` alle als gelesen markieren. */
+  markNotificationsRead: (ids: string[] = []) =>
+    request<void>("/api/v1/notifications/read", { method: "POST", body: JSON.stringify({ ids }) }),
   listMembers: (vaultId: string) => request<VaultMember[]>(`/api/v1/vaults/${vaultId}/members`),
   removeFromVault: (vaultId: string, subject: string) =>
     request<void>(`/api/v1/vaults/${vaultId}/members/${encodeURIComponent(subject)}`, { method: "DELETE" }),
