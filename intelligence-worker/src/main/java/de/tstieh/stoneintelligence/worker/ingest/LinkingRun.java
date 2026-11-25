@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 import de.tstieh.stoneintelligence.stoneai.vault.IndexedNote;
 import de.tstieh.stoneintelligence.worker.embed.Embedder;
-import de.tstieh.stoneintelligence.worker.embed.NoteChunker;
+import de.tstieh.stoneintelligence.domain.text.NoteChunker;
 import de.tstieh.stoneintelligence.worker.link.MentionFinder;
 import de.tstieh.stoneintelligence.worker.platform.ClaimedJob;
 import de.tstieh.stoneintelligence.worker.platform.EmbeddedChunk;

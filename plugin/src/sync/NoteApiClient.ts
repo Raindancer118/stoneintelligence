@@ -3,6 +3,7 @@ import type { AccessReport, Grant, Permission, ScopeType } from "./accessPlan";
 import { obsidianFetch } from "./obsidianFetch";
 import type { CommentAnchor } from "./commentAnchor";
 import type { FeedChanges } from "./serverMirror";
+import type { AskLike } from "./askStatus";
 import { withRateLimitRetry } from "./retryFetch";
 
 export type AccessTokenProvider = () => Promise<string>;
@@ -50,7 +51,20 @@ export interface VaultRole { id: string; name: string; permissions: Permission[]
 export type { HistoryEvent, NoteActivity, NoteHistory } from "./historyText";
 import type { HistoryEvent, NoteHistory } from "./historyText";
 import type { Restored, VersionList, VersionText } from "./versionText";
-export interface AiService { id: string; name: string; levels: number[]; }
+/** `local`: laeuft auf eigener Infrastruktur, Auszuege verlassen den Server nicht (ADR 0017); fehlt bei aelteren Servern. */
+export interface AiService { id: string; name: string; levels: number[]; local?: boolean; }
+/** "Frag den Vault" (ADR 0017): eine Quelle der Antwort - Notiz, Stelle und kurzer Auszug. */
+export interface AskCitation { n: number; noteId: string; path: string; heading: string; excerpt: string; }
+export interface AskQuestion {
+  id: string; question: string; service: string; status: AskLike["status"]; progress: string | null; percent: number | null;
+  error: string | null; waitingForCapacity: boolean; availableAt: string | null; askedAt: string; answeredAt: string | null;
+  /** Markdown mit [n]-Zitaten; leer bei `restricted` oder `NOT_ANSWERABLE`. */
+  answer: string | null; citations: AskCitation[];
+  /** Eine zitierte Notiz ist nicht mehr lesbar - die Antwort ist verborgen. */
+  restricted: boolean;
+  /** Notizen mit passenden Stellen, die ein externer Dienst nicht bekam (Verfasser nicht einverstanden). */
+  omittedForConsent: number;
+}
 export type AiJobStatus = "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
 export interface AiJob {
   id: string; service: string; requestedBy: string; fileName: string; size: number; level: number; status: AiJobStatus;
@@ -597,6 +611,24 @@ export class NoteApiClient {
   /** Dateien, die schon im Vault liegen, einlesen lassen - jede mit ihrem eigenen Level. */
   async readFilesWithAi(vaultId: string, service: string, fileIds: string[]): Promise<AiJob[]> {
     return this.json<AiJob[]>(`/api/v1/vaults/${vaultId}/ai/jobs/from-files`, "failed to start AI", { service, fileIds });
+  }
+
+  /** Eine Frage an den Vault stellen; die Antwort entsteht als KI-Job, die Frage ist sofort in der Liste. */
+  async askVault(vaultId: string, question: string, service: string | null): Promise<AskQuestion> {
+    return this.json<AskQuestion>(`/api/v1/vaults/${vaultId}/ask`, "failed to ask the vault", { question, service });
+  }
+
+  /** Die eigenen Fragen, neueste zuerst. */
+  async askHistory(vaultId: string): Promise<AskQuestion[]> {
+    return this.json<AskQuestion[]>(`/api/v1/vaults/${vaultId}/ask`, "failed to list questions");
+  }
+
+  async cancelAsk(vaultId: string, questionId: string): Promise<AskQuestion> {
+    return this.json<AskQuestion>(`/api/v1/vaults/${vaultId}/ask/${questionId}/cancel`, "failed to cancel question", {});
+  }
+
+  async deleteAsk(vaultId: string, questionId: string): Promise<void> {
+    await this.send<void>("DELETE", `/api/v1/vaults/${vaultId}/ask/${questionId}`, "failed to delete question");
   }
 
   async linkingSettings(vaultId: string): Promise<LinkingSettings> {

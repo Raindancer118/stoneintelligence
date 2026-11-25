@@ -8,7 +8,7 @@ import de.tstieh.stoneintelligence.worker.embed.Embedder;
  * Fuer Tests: ein Vektor je Text aus seinen Woertern (jedes Wort eine Richtung) - Texte mit gleichen
  * Woertern liegen nah beieinander, ganz ohne Modell. Das echte Modell testet LocalEmbedderTest.
  */
-final class WordEmbedder implements Embedder {
+class WordEmbedder implements Embedder {
 
     static final int SIZE = 384;
     int calls;

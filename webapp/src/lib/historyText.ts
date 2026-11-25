@@ -57,6 +57,12 @@ export function describeEvent(event: HistoryEvent): string {
       return `${who} hat eine Kommentar-Diskussion zu „${name}“ gelöst`;
     case "comment.reopened":
       return `${who} hat eine Kommentar-Diskussion zu „${name}“ wieder geöffnet`;
+    case "ai.ask": {
+      const notes = Array.isArray(payload.notes) ? payload.notes.length : 0;
+      const omitted = typeof payload.omittedForConsent === "number" ? payload.omittedForConsent : 0;
+      const sent = notes === 0 ? "keine Notizen gesendet" : `${notes === 1 ? "1 Notiz" : `${notes} Notizen`} an „${text("service")}“ gesendet`;
+      return `${who} hat eine Frage an den Vault gestellt (${sent}${omitted > 0 ? `, ${omitted} ohne Einwilligung ausgelassen` : ""})`;
+    }
     case "ACCESS_GRANTED":
       return `${who} hat für ${scopeText(payload)} ${placeText(payload)} ${permissionsLabel((payload.permissions ?? null) as Permission[] | null)} festgelegt`;
     case "ACCESS_REVOKED":

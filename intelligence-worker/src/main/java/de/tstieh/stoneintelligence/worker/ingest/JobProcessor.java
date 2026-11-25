@@ -113,12 +113,17 @@ final class JobProcessor {
         try {
             if (job.isLinking()) {
                 heartbeat.scheduleAtFixedRate(() -> beat(job, cancelled), HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
-                new LinkingRun(platform, embedder.get(), thresholds, () -> linkingModel(job)).run(job);
+                new LinkingRun(platform, embedder.get(), thresholds, () -> serviceModel(job)).run(job);
                 return;
             }
             var model = models.forService(job.service());
             if (waitedForCapacity(job, model)) {
                 keepAnswers = true;
+                return;
+            }
+            if (job.isAsk()) {
+                heartbeat.scheduleAtFixedRate(() -> beat(job, cancelled), HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+                new AskRun(platform, embedder.get(), () -> serviceModel(job)).run(job);
                 return;
             }
             platform.progress(job.jobId(), "Dokument wird gelesen", 5);
@@ -187,8 +192,8 @@ final class JobProcessor {
         }
     }
 
-    /** Das Sprachmodell des KI-Diensts fuer Stufe 3 - oder {@code null}, wenn fuer den Dienst keins eingerichtet ist. */
-    private de.tstieh.stoneintelligence.stoneai.extract.LlmClient linkingModel(ClaimedJob job) {
+    /** Das Sprachmodell des KI-Diensts (Stufe 3, Fragen) - oder {@code null}, wenn fuer den Dienst keins eingerichtet ist. */
+    private de.tstieh.stoneintelligence.stoneai.extract.LlmClient serviceModel(ClaimedJob job) {
         try {
             return llms.forService(models.forService(job.service()));
         } catch (RuntimeException notConfigured) {

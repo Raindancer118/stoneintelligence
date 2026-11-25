@@ -80,6 +80,24 @@ class JdbcNoteTextIndexIT {
     }
 
     @Test
+    void should_matchOneWordOfAQuestion_andHandOutTheBodies_ofThisVaultOnly() {
+        var vault = vault();
+        var other = vault();
+        var plan = note(vault);
+        var unrelated = note(vault);
+        var foreign = note(other);
+        index.upsert(plan, vault, 1, "Die Lichtreaktion läuft im Thylakoid ab.");
+        index.upsert(unrelated, vault, 1, "Kochen mit Gemüse");
+        index.upsert(foreign, other, 1, "Lichtreaktion im anderen Vault");
+
+        var question = SearchQuery.anyOf("Wo läuft die Lichtreaktion ab?").orElseThrow();
+
+        assertThat(index.matching(vault, question, 10)).containsExactly(plan);
+        assertThat(index.bodies(vault, List.of(plan, foreign))).containsOnlyKeys(plan);
+        assertThat(index.bodies(vault, List.of(plan)).get(plan)).startsWith("Die Lichtreaktion");
+    }
+
+    @Test
     void should_keepTheNewerText_whenAnOlderIndexRunFinishesLate() {
         var vault = vault();
         var note = note(vault);

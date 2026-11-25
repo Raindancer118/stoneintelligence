@@ -40,6 +40,26 @@ public final class FakeNoteEmbeddingRepository implements NoteEmbeddingRepositor
     }
 
     @Override
+    public synchronized List<Similar> nearest(VaultId vaultId, float[] vector, int limit) {
+        var best = new HashMap<NoteId, Similar>();
+        for (var entry : stored.entrySet()) {
+            if (!entry.getValue().vaultId().equals(vaultId) || !exists(vaultId, entry.getKey())) {
+                continue;
+            }
+            for (var chunk : entry.getValue().chunks()) {
+                var similarity = dot(vector, chunk.vector());
+                var current = best.get(entry.getKey());
+                if (current == null || similarity > current.similarity()) {
+                    best.put(entry.getKey(), new Similar(entry.getKey(), chunk.index(), chunk.heading(), similarity));
+                }
+            }
+        }
+        var result = new ArrayList<>(best.values());
+        result.sort(Comparator.comparingDouble(Similar::similarity).reversed());
+        return result.subList(0, Math.min(limit, result.size()));
+    }
+
+    @Override
     public synchronized List<Similar> similarTo(VaultId vaultId, NoteId noteId, int limit) {
         var own = stored.get(noteId);
         if (own == null || !own.vaultId().equals(vaultId)) {

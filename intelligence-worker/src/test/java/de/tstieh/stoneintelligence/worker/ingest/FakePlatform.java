@@ -169,6 +169,32 @@ class FakePlatform implements PlatformApi {
         return applied;
     }
 
+    /** "Frag den Vault": die Frage, die der Server herausgibt, die Stellen, die er findet, und was der Worker gemeldet hat. */
+    String question = "Wo läuft die Lichtreaktion ab?";
+    de.tstieh.stoneintelligence.worker.platform.AskPassages askPassages =
+        new de.tstieh.stoneintelligence.worker.platform.AskPassages(List.of(), false, 0);
+    final List<float[]> questionVectors = new ArrayList<>();
+    /** Meldungen der Form {@code "true|Text"} bzw. {@code "false|null"}. */
+    final List<String> answers = new ArrayList<>();
+
+    @Override
+    public String question(UUID jobId) {
+        return question;
+    }
+
+    @Override
+    public de.tstieh.stoneintelligence.worker.platform.AskPassages passages(UUID jobId, float[] vector) {
+        questionVectors.add(vector);
+        events.add("passages");
+        return askPassages;
+    }
+
+    @Override
+    public void answer(UUID jobId, boolean answerable, String text) {
+        answers.add(answerable + "|" + text);
+        events.add("answer");
+    }
+
     /** Wer der KI-Pruefung eigener Notizen zugestimmt hat. */
     final java.util.Set<String> aiConsents = new java.util.HashSet<>(java.util.Set.of("tom"));
 

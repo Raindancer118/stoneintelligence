@@ -24,11 +24,11 @@
   let copied = $state(false);
   let canManage = $state(false);
   const areas = $derived([
-    { id: "notes", label: "Notizen" }, { id: "ai", label: "Dokumente & KI" },
+    { id: "notes", label: "Notizen" }, { id: "ask", label: "Frag den Vault" }, { id: "ai", label: "Dokumente & KI" },
     ...(canManage ? [{ id: "manage", label: "Mitglieder & Rechte" }, { id: "settings", label: "Einstellungen" }] : []),
     { id: "obsidian", label: "Obsidian verbinden" },
   ]);
-  type Section = "notes" | "manage" | "settings" | "obsidian" | "ai";
+  type Section = "notes" | "manage" | "settings" | "obsidian" | "ai" | "ask";
   function toggleNavigation() {
     collapsed = !collapsed;
     try { localStorage.setItem("stone.navigation.collapsed", String(collapsed)); } catch { /* Private browsing can disable storage. */ }
@@ -50,6 +50,10 @@
     }
     requestCommentFocus(item.noteId, item.threadId);
     jumpToNote({ id: item.noteId, vaultId: item.vaultId, path: item.notePath, noteLevel: 1, createdBy: "", createdAt: "" });
+  }
+  /** Ein Zitat in einer Antwort öffnet die Notiz im Notizbereich. */
+  function openCited(noteId: string, path: string) {
+    if (selected) jumpToNote({ id: noteId, vaultId: selected.id, path, noteLevel: 1, createdBy: "", createdAt: "", kind: "NOTE" });
   }
   async function copyConfig() {
     if (!selected) return;
@@ -217,6 +221,7 @@
           {#if section !== "notes"}<div class="workspace-heading"><h1>{areas.find(a => a.id === section)?.label}</h1></div>{:else}<h1 class="sr-only">{selected.name}</h1>{/if}
           {#key selected.id}
             {#if section === "obsidian"}<ObsidianSetup vaults={[selected]} signedIn={true} scopedVault={true} onLogin={() => authenticate()} onCopyConfig={copyConfig} {copied} />
+            {:else if section === "ask"}{#await import("./lib/components/AskVault.svelte")}<Skeleton kind="panel" label="Frag den Vault wird geladen…" />{:then module}<module.default vault={selected} onOpenNote={openCited} />{:catch}<p class="feedback error" role="alert">Frag den Vault konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
             {:else if section === "ai"}{#await import("./lib/components/AiWorkspace.svelte")}<Skeleton kind="panel" label="KI-Bereich wird geladen…" />{:then module}<module.default vault={selected} />{:catch}<p class="feedback error" role="alert">Der KI-Bereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
             {:else if section === "notes"}{#await import("./lib/components/NotesWorkspace.svelte")}<Skeleton kind="notes" label="Notizbereich wird geladen…" />{:then module}<module.default vault={selected} requestedNote={jumpNote} onDirtyChange={value => dirty = value} onPermissions={permissions => canManage = permissions.includes("MANAGE")} onNavigate={area => navigate(area)} />{:catch}<p class="feedback error" role="alert">Der Notizbereich konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}
             {:else}{#key section}{#await import("./lib/components/VaultDetail.svelte")}<Skeleton kind="list" label="Verwaltung wird geladen…" />{:then module}<div class="management"><module.default vault={selected} pages={section === "settings" ? ["settings", "log"] : ["members", "roles", "groups"]} me={preferredUsername(user)} onRenamed={v => { vaults = vaults.map(old => old.id === v.id ? v : old); selected = v; }} onLeft={() => refreshVaults()} /></div>{:catch}<p class="feedback error" role="alert">Die Verwaltung konnte nicht geladen werden. <button onclick={() => window.location.reload()}>Erneut versuchen</button></p>{/await}{/key}{/if}

@@ -28,6 +28,15 @@ describe("historyText", () => {
     expect([null, 365, 730, 3650, 400].map(retentionLabel)).toEqual(["unbegrenzt", "1 Jahr", "2 Jahre", "10 Jahre", "400 Tage"]);
   });
 
+  it("should_describeAQuestionToTheVault_withoutItsText", () => {
+    expect(describeEvent(event("ai.ask", { service: "gemini", local: false, notes: ["a", "b"], omittedForConsent: 1 }, "ben", null)))
+      .toBe("ben hat eine Frage an den Vault gestellt (2 Notizen an „gemini“ gesendet, 1 ohne Einwilligung ausgelassen)");
+    expect(describeEvent(event("ai.ask", { service: "lokal", local: true, notes: ["a"], omittedForConsent: 0 }, "ben", null)))
+      .toBe("ben hat eine Frage an den Vault gestellt (1 Notiz an „lokal“ gesendet)");
+    expect(describeEvent(event("ai.ask", { service: "lokal", notes: [] }, "ben", null)))
+      .toBe("ben hat eine Frage an den Vault gestellt (keine Notizen gesendet)");
+  });
+
   it("should_nameTheAiAsSuch", () => {
     expect(describeActor("ki:AI Gateway")).toBe("KI „AI Gateway“");
     expect(describeEvent(event("note.created", {}, "ki:AI Gateway"))).toBe("KI „AI Gateway“ hat „plan“ angelegt");

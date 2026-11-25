@@ -28,6 +28,7 @@ export async function mockWorkspace(page: Page) {
   let members = [{ subject: "Tom", permissions: ["READ", "WRITE", "CREATE", "DELETE", "MANAGE"], groups: [{ id: "team", name: "Lerngruppe" }] }, { subject: "Anna", permissions: ["READ"], groups: [{ id: "team", name: "Lerngruppe" }] }];
   let grants: Record<string, unknown>[] = [];
   let linking = { enabled: false, linkHumanNotes: false, mode: "LITERAL", service: "gemini", maxLinksPerNote: 5, requestedBy: "Tom", lastRunAt: null, aiConsent: false, aiConsentCount: 0 };
+  const asks: Record<string, unknown>[] = [];
   const notes = [{ id: noteId, vaultId, path: "Projekte/Kundenportal.md", noteLevel: 1, createdBy: "Tom", createdAt: "2026-09-19T09:00:00Z" }];
   // Kommentare (ADR 0016): ein Thread von Anna, der Tom erwähnt, dazu der passende Hinweis.
   const commentAuthor = (name: string) => name;
@@ -56,6 +57,18 @@ export async function mockWorkspace(page: Page) {
     if (/\/comment-threads\/[^/]+\/(resolve|reopen)$/.test(path)) {
       const thread = threads.find(t => t.id === path.split("/").at(-2))!; const resolve = path.endsWith("/resolve");
       thread.resolved = resolve; thread.resolvedByName = resolve ? "Tom" : null; thread.resolvedAt = resolve ? "2026-11-25T10:00:00Z" : null; return json(thread);
+    }
+    if (/\/vaults\/[^/]+\/ask(\/|$)/.test(path)) {
+      if (request.method() === "POST" && path.endsWith("/ask")) {
+        const asked = { id: `ask-${asks.length + 1}`, question: request.postDataJSON().question, service: "gemini", status: "ANSWERED", progress: null, percent: null,
+          error: null, waitingForCapacity: false, availableAt: null, askedAt: "2026-11-25T08:00:00Z", answeredAt: "2026-11-25T08:00:20Z",
+          answer: "Die Navigation ist freigegeben [1].", restricted: false, omittedForConsent: 1,
+          citations: [{ n: 1, noteId, path: notes[0]!.path, heading: "Entscheidungen", excerpt: "Navigation: Freigegeben. Inhalte: In Bearbeitung." }] };
+        asks.unshift(asked);
+        return json(asked);
+      }
+      if (request.method() === "DELETE") { asks.splice(0, asks.length); return route.fulfill({ status: 204 }); }
+      return json(asks);
     }
     if (path.endsWith("/vaults")) {
       if (request.method() === "POST") { const vault = { id: "second-vault", name: request.postDataJSON().name, createdAt: "2026-09-27T10:00:00Z" }; vaults.push(vault); return json(vault); }

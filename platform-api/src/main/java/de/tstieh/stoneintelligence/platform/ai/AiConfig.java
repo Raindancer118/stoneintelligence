@@ -110,24 +110,28 @@ public class AiConfig {
     }
 
     @Bean
-    public AiHousekeeping aiHousekeeping(AiChangeSetRepository changeSets, AiJobRepository jobs) {
-        return new AiHousekeeping(changeSets, jobs);
+    public AiHousekeeping aiHousekeeping(AiChangeSetRepository changeSets, AiJobRepository jobs,
+                                         de.tstieh.stoneintelligence.platform.ask.QuestionRepository questions) {
+        return new AiHousekeeping(changeSets, jobs, questions);
     }
 
-    /** Taeglich: Change-Sets samt Textkopien und Job-Metadaten nach Ablauf des Rueckgaengig-Zeitraums loeschen. */
+    /** Taeglich: Change-Sets samt Textkopien, Job-Metadaten und Fragen nach Ablauf des Rueckgaengig-Zeitraums loeschen. */
     public static class AiHousekeeping {
         private final AiChangeSetRepository changeSets;
         private final AiJobRepository jobs;
+        private final de.tstieh.stoneintelligence.platform.ask.QuestionRepository questions;
 
-        AiHousekeeping(AiChangeSetRepository changeSets, AiJobRepository jobs) {
+        AiHousekeeping(AiChangeSetRepository changeSets, AiJobRepository jobs,
+                       de.tstieh.stoneintelligence.platform.ask.QuestionRepository questions) {
             this.changeSets = changeSets;
             this.jobs = jobs;
+            this.questions = questions;
         }
 
         @Scheduled(initialDelay = 120_000, fixedDelay = 24 * 60 * 60 * 1000)
         public void purge() {
             var cutoff = Instant.now().minus(REVERT_WINDOW);
-            var purged = changeSets.purgeCreatedBefore(cutoff) + jobs.purgeCreatedBefore(cutoff);
+            var purged = changeSets.purgeCreatedBefore(cutoff) + jobs.purgeCreatedBefore(cutoff) + questions.purgeAskedBefore(cutoff);
             if (purged > 0) {
                 LOG.info("{} KI-Aenderungen/-Jobs nach {} Tagen entfernt", purged, REVERT_WINDOW.toDays());
             }

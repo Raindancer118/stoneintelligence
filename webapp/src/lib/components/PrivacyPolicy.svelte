@@ -64,6 +64,15 @@
       <li><strong>Wörtliche Nennungen und ähnliche Inhalte</strong> werden ausschließlich auf unserem Server berechnet. Für die Ähnlichkeit werden aus den Notizen mit einem lokal betriebenen Sprachmodell Zahlenvektoren gebildet und gespeichert; sie werden mit der Notiz gelöscht. Dabei werden keine Daten an Dritte übermittelt (Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO, die von dir gewünschte Funktion des Vaults).</li>
       <li><strong>„Von einer KI geprüft"</strong> (nur, wenn die Verwaltenden diesen Modus wählen): Dann gehen nachts Auszüge ähnlicher Notizen an den oben genannten KI-Anbieter, der beurteilt, ob ein Link sinnvoll ist. Das betrifft nur Notizen von Personen, die dem für ihre eigenen Notizen ausdrücklich zugestimmt haben (Art. 49 Abs. 1 lit. a DSGVO), und von der KI erzeugte Notizen. Die Einwilligung gibst und widerrufst du jederzeit in den Einstellungen der Verlinkung; ein Widerruf wirkt ab dem nächsten Lauf. Für die Übermittlung in die USA gilt das oben Gesagte.</li>
     </ul>
+
+    <h3>Frag den Vault</h3>
+    <p>Mit „Frag den Vault“ stellst du eine Frage in eigenen Worten und bekommst eine Antwort mit Quellenangaben. Der Server sucht dafür auf unserem Server passende Textstellen, nur aus Notizen, die du lesen darfst. Die Vektoren der Frage entstehen mit dem lokal betriebenen Sprachmodell.</p>
+    <ul>
+      <li><strong>Eigener KI-Dienst des Betriebs:</strong> Läuft der gewählte Dienst auf unserer Infrastruktur, verlässt nichts den Server.</li>
+      <li><strong>Externer KI-Anbieter:</strong> Dann gehen deine Frage und die gefundenen Textstellen an den oben genannten Anbieter, aber nur Stellen aus Notizen, deren Verfasser dem für ihre eigenen Notizen ausdrücklich zugestimmt haben (Art. 49 Abs. 1 lit. a DSGVO; dieselbe Einwilligung wie bei der KI-geprüften Verlinkung), und von der KI erzeugte Notizen. Fehlen passende Stellen wegen fehlender Einwilligung, siehst du das an der Antwort. Für die Übermittlung in die USA gilt das oben Gesagte.</li>
+      <li><strong>Protokoll:</strong> Zu jeder Frage vermerkt das Änderungsprotokoll, wer gefragt hat, an welchen Dienst welche Notizen gesendet wurden und wie viele wegen fehlender Einwilligung nicht – ohne Text der Frage oder der Notizen.</li>
+      <li><strong>Deine Fragen und Antworten</strong> sieht nur du. Du kannst sie jederzeit einzeln löschen; sonst werden sie nach 90 Tagen entfernt. Verlierst du das Leserecht an einer zitierten Notiz, wird die Antwort für dich verborgen.</li>
+    </ul>
   </section>
 
   <section>
@@ -71,7 +80,7 @@
     <ul>
       <li>Notizen mit allen früheren Versionen, Dateien und Ordner: bis sie gelöscht werden oder der Vault aufgelöst wird. Ersetzte Fassungen von Dateien und die Inhalte gelöschter Dateien werden nach 24 Stunden entfernt.</li>
       <li>Zum Einlesen hochgeladene Dokumente: bis die Verarbeitung abgeschlossen ist; Angaben zur Verarbeitung und die Aufzeichnung der KI-Änderungen (für „Rückgängig"): 90 Tage.</li>
-      <li>Ähnlichkeitsvektoren, gesetzte und abgelehnte Verknüpfungen: solange die beteiligten Notizen bestehen; Einwilligungen zur KI-Prüfung: bis zum Widerruf; sie wirken nur, solange du Mitglied des Vaults bist.</li>
+      <li>Ähnlichkeitsvektoren, gesetzte und abgelehnte Verknüpfungen: solange die beteiligten Notizen bestehen; Fragen und Antworten aus „Frag den Vault“: 90 Tage oder bis du sie löschst; Einwilligungen zur KI-Auswertung eigener Notizen: bis zum Widerruf; sie wirken nur, solange du Mitglied des Vaults bist.</li>
       <li>Einladungen: 30 Tage nach Annahme, Widerruf oder Ablauf.</li>
       <li>Gruppen aus der Anmeldung: 7 Tage nach der letzten Anmeldung. Anzeigename aus der Anmeldung: 13 Monate nach der letzten Anmeldung.</li>
       <li>Firmenverzeichnis: solange die Organisation das Konto übermittelt. Löscht sie es, werden Name und Kennung sofort entfernt; Benutzername und Sperrvermerk bleiben 30 Tage, damit der Zugriff sicher beendet bleibt.</li>

@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 import de.tstieh.stoneintelligence.worker.embed.Embedder;
 import de.tstieh.stoneintelligence.worker.embed.LocalEmbedder;
-import de.tstieh.stoneintelligence.worker.embed.NoteChunker;
+import de.tstieh.stoneintelligence.domain.text.NoteChunker;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

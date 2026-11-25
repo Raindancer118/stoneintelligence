@@ -20,7 +20,7 @@ public abstract class NoteEmbeddingRepositoryContractTest {
     protected abstract void deleteNote(VaultId vaultId, NoteId noteId);
 
     /** Ein normierter Vektor der Modellgroesse, der in Richtung {@code axis} zeigt (mit etwas {@code tilt} zur Achse 0). */
-    static float[] vector(int axis, double tilt) {
+    public static float[] vector(int axis, double tilt) {
         var v = new float[384];
         v[axis] = (float) Math.cos(tilt);
         v[0] += (float) Math.sin(tilt);
@@ -69,6 +69,29 @@ public abstract class NoteEmbeddingRepositoryContractTest {
         assertThat(similar.getFirst().heading()).isEqualTo("Passend");
         assertThat(similar.getFirst().similarity()).isCloseTo(Math.cos(0.3), within(1e-3));
         assertThat(repository.similarTo(vault, source, 1)).hasSize(1);
+    }
+
+    @Test
+    void should_findTheNearestChunksToAVector_onePerNote_bestFirst_onlyInThisVault() {
+        var repository = repository();
+        var vault = newVault();
+        var near = newNote(vault, "Nah.md");
+        var middle = newNote(vault, "Mitte.md");
+        var far = newNote(vault, "Fern.md");
+        var otherVault = newVault();
+        var foreign = newNote(otherVault, "Fremd.md");
+        repository.replace(vault, near, "m", "h", List.of(new NoteEmbeddingRepository.Chunk(0, "Weit", vector(9, 0)),
+            new NoteEmbeddingRepository.Chunk(1, "Passend", vector(5, 0.1))));
+        repository.replace(vault, middle, "m", "h", List.of(new NoteEmbeddingRepository.Chunk(0, "Etwas", vector(5, 0.6))));
+        repository.replace(vault, far, "m", "h", List.of(new NoteEmbeddingRepository.Chunk(0, "Anders", vector(7, 0))));
+        repository.replace(otherVault, foreign, "m", "h", List.of(new NoteEmbeddingRepository.Chunk(0, "Gleich", vector(5, 0))));
+
+        var nearest = repository.nearest(vault, vector(5, 0), 2);
+
+        assertThat(nearest).extracting(NoteEmbeddingRepository.Similar::noteId).containsExactly(near, middle);
+        assertThat(nearest.getFirst().chunk()).isEqualTo(1);
+        assertThat(nearest.getFirst().heading()).isEqualTo("Passend");
+        assertThat(nearest.getFirst().similarity()).isCloseTo(Math.cos(0.1), within(1e-3));
     }
 
     @Test

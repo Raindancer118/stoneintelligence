@@ -3684,3 +3684,140 @@ input[type="checkbox"]:checked {
   border-radius: 0 0 4px 4px;
   margin-top: 4px;
 }
+
+/* Frag den Vault (ADR 0017) */
+.ask {
+  max-width: 1080px;
+}
+.ask .intro {
+  margin-bottom: 24px;
+  max-width: 75ch;
+}
+.ask .intro h2 {
+  font: 600 2rem/1.15 var(--font-sans);
+  letter-spacing: -0.015em;
+}
+.ask .intro p {
+  font-size: 0.88rem;
+  color: var(--ink-dim);
+}
+.ask-form label {
+  display: block;
+  margin-bottom: 12px;
+}
+.ask-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  resize: vertical;
+}
+.ask-form select {
+  margin-top: 6px;
+}
+.ask-actions {
+  margin-top: 8px;
+}
+.questions {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.question {
+  border-top: var(--hairline) solid var(--hair-color);
+  padding: 4px 0;
+}
+.question-line {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.question-head {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 10px 4px;
+  color: var(--text-1);
+  font: inherit;
+  cursor: pointer;
+}
+.question-head .name {
+  font-weight: 600;
+}
+.answer {
+  padding: 4px 4px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+.answer .markdown a[href^="#cite-"] {
+  font-size: 0.75em;
+  font-weight: 600;
+  vertical-align: super;
+  text-decoration: none;
+  color: var(--text-1);
+  padding: 0 1px;
+}
+.answer .markdown a[href^="#cite-"]:hover {
+  text-decoration: underline;
+}
+.sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sources li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line-strong);
+}
+.source {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  background: transparent;
+  border: 0;
+  padding: 2px 0;
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.source .number {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-2);
+}
+.source .path {
+  font-weight: 600;
+}
+.source .heading,
+.sources .excerpt {
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+.status-pending,
+.status-cancelled {
+  --dot: var(--text-3);
+}
+@media (max-width: 700px) {
+  .ask-form {
+    padding: 16px;
+  }
+  .question-head {
+    min-width: 100%;
+  }
+}

@@ -59,4 +59,13 @@ public interface PlatformApi {
 
     /** Legt das gelesene Original als Datei ab; liefert den Pfad, den der Server gewaehlt hat. */
     String storeFile(String vaultId, UUID changeSetId, String path, byte[] content, String contentType, int level);
+
+    /** Die Frage eines ASK-Jobs (ADR 0017). */
+    String question(UUID jobId);
+
+    /** Die Textstellen zur Frage - der Server prueft Rechte und Einwilligung; {@code vector} ist der Vektor der Frage oder {@code null}. */
+    AskPassages passages(UUID jobId, float[] vector);
+
+    /** Die Antwort; {@code answerable == false}: die Stellen beantworten die Frage nicht. */
+    void answer(UUID jobId, boolean answerable, String text);
 }

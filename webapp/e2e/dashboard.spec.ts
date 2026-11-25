@@ -128,6 +128,28 @@ test("reads a document with AI and undoes the result", async ({ page }, testInfo
   expect(errors).toEqual([]);
 });
 
+// ADR 0017: Frage stellen, Antwort mit Quelle lesen, die Quelle öffnet die Notiz.
+test("asks the vault and opens the cited note", async ({ page }, testInfo) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Frag den Vault" }).click();
+  await expect(page.getByRole("heading", { name: "Frag den Vault", level: 2 })).toBeVisible();
+
+  await page.getByLabel("Deine Frage").fill("Welche Bereiche sind freigegeben?");
+  await page.getByRole("button", { name: "Fragen", exact: true }).click();
+  await expect(page.getByText("Die Navigation ist freigegeben")).toBeVisible();
+  await expect(page.getByText("Eine Notiz mit passenden Stellen wurde nicht berücksichtigt")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("ask-desktop.png"), fullPage: true });
+
+  await page.getByRole("button", { name: "Quelle 1: Projekte/Kundenportal.md" }).click();
+  await expect(page.getByText("Hier sammeln wir Entscheidungen", { exact: false })).toBeVisible();
+
+  await page.getByRole("button", { name: "Frag den Vault" }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
 // ADR 0013: eine Gruppe mit dem Firmen-Login verknüpfen statt jede Person einzuladen.
 test("links a group to the identity provider and unlinks it again", async ({ page }, testInfo) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));

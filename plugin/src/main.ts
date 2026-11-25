@@ -46,6 +46,7 @@ import { AiChangesModal } from "./ui/AiChangesModal";
 import { InviteModal } from "./ui/InviteModal";
 import { ShareModal, type ShareTarget } from "./ui/ShareModal";
 import { HistoryModal } from "./ui/HistoryModal";
+import { AskVaultModal } from "./ui/AskVaultModal";
 import { SimilarNotesModal } from "./ui/SimilarNotesModal";
 import { type Tab as VaultAdminTab, VaultAdminView, VIEW_TYPE_VAULT_ADMIN } from "./ui/VaultAdminView";
 import { type CommentTarget, CommentsView, VIEW_TYPE_COMMENTS } from "./ui/CommentsView";
@@ -1089,6 +1090,17 @@ export default class StoneIntelligencePlugin extends Plugin {
       },
     });
     this.addCommand({
+      id: "ask-vault",
+      name: "Frag den Vault",
+      checkCallback: (checking) => {
+        if (checking) {
+          return this.isReady();
+        }
+        this.openAskVault();
+        return true;
+      },
+    });
+    this.addCommand({
       id: "comments",
       name: "Kommentare der aktuellen Notiz anzeigen",
       checkCallback: (checking) => {
@@ -1329,7 +1341,7 @@ export default class StoneIntelligencePlugin extends Plugin {
         notice.messageEl.addEventListener("click", () => this.openMention(item));
       }
     } catch (error) {
-      console.debug("StoneIntelligence: Hinweise nicht abrufbar", error);
+      debugLog("StoneIntelligence: Hinweise nicht abrufbar", error);
     }
   }
 
@@ -1343,8 +1355,12 @@ export default class StoneIntelligencePlugin extends Plugin {
     try {
       await this.noteApiClient.markNotificationsRead(ids);
     } catch (error) {
-      console.debug("StoneIntelligence: Hinweise nicht als gelesen markiert", error);
+      debugLog("StoneIntelligence: Hinweise nicht als gelesen markiert", error);
     }
+  }
+
+  private openAskVault(): void {
+    new AskVaultModal(this.app, this.noteApiClient, this.settings.vaultId, (path) => this.openFile(path)).open();
   }
 
   private openSimilar(noteId: string, path: string): void {

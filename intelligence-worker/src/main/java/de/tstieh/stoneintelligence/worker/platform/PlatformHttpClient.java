@@ -169,6 +169,30 @@ public final class PlatformHttpClient implements PlatformApi {
             new TypeReference<NoteRef>() { }).path();
     }
 
+    @Override
+    public String question(UUID jobId) {
+        return parse(send(request(askPath(jobId) + "/question").GET()), new TypeReference<QuestionText>() { }).question();
+    }
+
+    @Override
+    public AskPassages passages(UUID jobId, float[] vector) {
+        var body = new LinkedHashMap<String, Object>();
+        body.put("vector", vector);
+        return parse(post(askPath(jobId) + "/passages", body), new TypeReference<AskPassages>() { });
+    }
+
+    @Override
+    public void answer(UUID jobId, boolean answerable, String text) {
+        var body = new LinkedHashMap<String, Object>();
+        body.put("answerable", answerable);
+        body.put("text", text);
+        post(askPath(jobId) + "/answer", body);
+    }
+
+    private static String askPath(UUID jobId) {
+        return "/internal/ai/ask/jobs/" + jobId;
+    }
+
     private static String notesPath(String vaultId, UUID changeSetId) {
         return "/internal/ai/vaults/" + vaultId + "/change-sets/" + changeSetId + "/notes";
     }
@@ -231,6 +255,7 @@ public final class PlatformHttpClient implements PlatformApi {
         }
     }
 
+    record QuestionText(String question) { }
     record NoteText(String noteId, String path, String text) { }
     record NoteRef(String noteId, String path) { }
     record ServiceRef(String id) { }

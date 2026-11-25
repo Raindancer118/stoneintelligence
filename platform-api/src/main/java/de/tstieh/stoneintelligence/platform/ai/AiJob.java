@@ -15,8 +15,8 @@ public record AiJob(UUID id, VaultId vaultId, String service, String requestedBy
                     Instant leaseUntil, String progress, Integer percent, String error, UUID changeSetId,
                     Instant createdAt, Instant finishedAt, boolean waitingForCapacity, Kind kind) {
 
-    /** {@code INGEST}: ein Dokument einlesen; {@code LINKING}: den Vault verlinken (ADR 0012), ohne Dokument. */
-    public enum Kind { INGEST, LINKING }
+    /** {@code INGEST}: ein Dokument einlesen; {@code LINKING}: den Vault verlinken (ADR 0012), {@code ASK}: eine Frage an den Vault beantworten (ADR 0017); beide ohne Dokument. */
+    public enum Kind { INGEST, LINKING, ASK }
 
     public AiJob(UUID id, VaultId vaultId, String service, String requestedBy, String fileName, String contentType,
                  long size, int level, Status status, int attempts, int maxAttempts, Instant availableAt,

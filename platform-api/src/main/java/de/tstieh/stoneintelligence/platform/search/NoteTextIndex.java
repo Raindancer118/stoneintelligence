@@ -27,6 +27,9 @@ public interface NoteTextIndex {
     /** Textstelle je Notiz; Treffer stehen zwischen {@link #MARK_START} und {@link #MARK_END}. */
     Map<NoteId, String> excerpts(VaultId vaultId, Collection<NoteId> noteIds, String tsquery);
 
+    /** Der indizierte Klartext je Notiz (nur Notizen dieses Vaults mit Text). */
+    Map<NoteId, String> bodies(VaultId vaultId, Collection<NoteId> noteIds);
+
     String MARK_START = "\u0002";
     String MARK_END = "\u0003";
 }
