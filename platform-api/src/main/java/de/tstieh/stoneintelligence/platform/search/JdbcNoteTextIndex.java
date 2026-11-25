@@ -73,6 +73,21 @@ public class JdbcNoteTextIndex implements NoteTextIndex {
     }
 
     @Override
+    public Map<NoteId, String> bodies(VaultId vaultId, Collection<NoteId> noteIds) {
+        var result = new HashMap<NoteId, String>();
+        if (noteIds.isEmpty()) {
+            return result;
+        }
+        jdbc.sql("SELECT note_id, body FROM platform.note_texts WHERE vault_id = :vault AND note_id IN (:ids)")
+            .param("vault", vaultId.value())
+            .param("ids", noteIds.stream().map(NoteId::value).toList())
+            .query((rs, row) -> Map.entry(NoteId.of(rs.getString("note_id")), rs.getString("body")))
+            .list()
+            .forEach(entry -> result.put(entry.getKey(), entry.getValue()));
+        return result;
+    }
+
+    @Override
     public Map<NoteId, String> excerpts(VaultId vaultId, Collection<NoteId> noteIds, String tsquery) {
         var result = new HashMap<NoteId, String>();
         if (noteIds.isEmpty()) {

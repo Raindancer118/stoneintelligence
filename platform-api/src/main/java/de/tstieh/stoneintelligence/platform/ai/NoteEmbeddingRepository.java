@@ -25,5 +25,8 @@ public interface NoteEmbeddingRepository {
     void replace(VaultId vaultId, NoteId noteId, String model, String contentHash, List<Chunk> chunks);
 
     /** Notizen, deren Abschnitte einem Abschnitt von {@code noteId} am naechsten liegen - die Notiz selbst nicht, beste zuerst. */
+    /** Die naechsten Abschnitte zu einem Vektor (Frage), je Notiz der beste, beste zuerst. */
+    List<Similar> nearest(VaultId vaultId, float[] vector, int limit);
+
     List<Similar> similarTo(VaultId vaultId, NoteId noteId, int limit);
 }

@@ -55,6 +55,29 @@ public class JdbcNoteEmbeddingRepository implements NoteEmbeddingRepository {
     }
 
     @Override
+    public List<Similar> nearest(VaultId vaultId, float[] vector, int limit) {
+        return jdbcClient.sql("""
+                SELECT DISTINCT ON (note_id) note_id, chunk, heading, similarity FROM (
+                    SELECT note_id, chunk, heading, 1 - (embedding <=> CAST(:vector AS vector)) AS similarity
+                    FROM platform.note_embeddings
+                    WHERE vault_id = :vaultId
+                    ORDER BY embedding <=> CAST(:vector AS vector)
+                    LIMIT :neighbours
+                ) nearest
+                ORDER BY note_id, similarity DESC
+                """)
+            .param("vector", literal(vector))
+            .param("vaultId", vaultId.value())
+            .param("neighbours", Math.max(limit, 1) * 4)
+            .query((rs, row) -> new Similar(NoteId.of((UUID) rs.getObject("note_id")), rs.getInt("chunk"), rs.getString("heading"),
+                rs.getDouble("similarity")))
+            .list().stream()
+            .sorted(java.util.Comparator.comparingDouble(Similar::similarity).reversed())
+            .limit(limit)
+            .toList();
+    }
+
+    @Override
     public List<Similar> similarTo(VaultId vaultId, NoteId noteId, int limit) {
         return jdbcClient.sql("""
                 SELECT DISTINCT ON (o.note_id) o.note_id, o.chunk, o.heading, o.similarity

@@ -84,12 +84,26 @@ public final class FakeNoteTextIndex implements NoteTextIndex {
         return result;
     }
 
-    private static List<String> prefixes(String tsquery) {
-        return Arrays.stream(tsquery.split(" & ")).map(term -> term.replace(":*", "")).toList();
+    @Override
+    public synchronized Map<NoteId, String> bodies(VaultId vaultId, Collection<NoteId> noteIds) {
+        var result = new HashMap<NoteId, String>();
+        for (var id : noteIds) {
+            var entry = texts.get(id);
+            if (entry != null && entry.vaultId().equals(vaultId)) {
+                result.put(id, entry.text());
+            }
+        }
+        return result;
     }
 
+    private static List<String> prefixes(String tsquery) {
+        return Arrays.stream(tsquery.split(" [&|] ")).map(term -> term.replace(":*", "")).toList();
+    }
+
+    /** {@code a | b}: ein Wort genuegt; {@code a & b}: alle muessen vorkommen. */
     private static boolean matches(String text, String tsquery) {
         var words = Arrays.stream(text.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")).toList();
-        return prefixes(tsquery).stream().allMatch(prefix -> words.stream().anyMatch(word -> word.startsWith(prefix)));
+        var hit = (java.util.function.Predicate<String>) prefix -> words.stream().anyMatch(word -> word.startsWith(prefix));
+        return tsquery.contains(" | ") ? prefixes(tsquery).stream().anyMatch(hit) : prefixes(tsquery).stream().allMatch(hit);
     }
 }
