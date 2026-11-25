@@ -99,6 +99,7 @@ export class PluginGovernor {
     const host = this.getPlugins();
     if (!host || (typeof host.installPlugin !== "function" && typeof host.enablePluginAndSave !== "function")) {
       this.state = "unavailable";
+      this.log("StoneIntelligence: Plugins lassen sich in dieser Obsidian-Version nicht blockieren, nur der Server prüft");
       return;
     }
     if (typeof host.installPlugin === "function") {
