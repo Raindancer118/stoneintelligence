@@ -335,6 +335,33 @@ class JobProcessorTest {
         assertThat(platform.events).last().isEqualTo("complete");
     }
 
+    // ADR 0017: eine Frage braucht kein Dokument; Kontingent-Probleme lassen den Job warten wie bei jedem KI-Job.
+    @Test
+    void should_answerAQuestionJob_withoutDocument() {
+        platform.askPassages = new de.tstieh.stoneintelligence.worker.platform.AskPassages(java.util.List.of(
+            new de.tstieh.stoneintelligence.worker.platform.AskPassage(1, "n1", "Bio/Zelle.md", "Zelle", "Zelle", "Die Zelle hat einen Kern.")),
+            true, 0);
+        var job = new ClaimedJob(UUID.randomUUID(), "vault-1", "gemini", "tom", "Frage an den Vault", "text/plain", 0, 1, null, 1, "ASK");
+
+        processor(answering("{\"beantwortbar\": true, \"antwort\": \"Einen Kern [1].\"}")).process(job);
+
+        assertThat(platform.answers).containsExactly("true|Einen Kern [1].");
+        assertThat(platform.events).last().isEqualTo("complete");
+    }
+
+    @Test
+    void should_letAQuestionJobWaitForCapacity() {
+        platform.askPassages = new de.tstieh.stoneintelligence.worker.platform.AskPassages(java.util.List.of(
+            new de.tstieh.stoneintelligence.worker.platform.AskPassage(1, "n1", "Bio/Zelle.md", "Zelle", "Zelle", "Die Zelle hat einen Kern.")),
+            true, 0);
+        var job = new ClaimedJob(UUID.randomUUID(), "vault-1", "gemini", "tom", "Frage an den Vault", "text/plain", 0, 1, null, 1, "ASK");
+
+        processor(outOfCapacity()).process(job);
+
+        assertThat(platform.events).anySatisfy(event -> assertThat(event).startsWith("wait " + BACK));
+        assertThat(platform.answers).isEmpty();
+    }
+
     @Test
     void should_neverLetAFileNameEscapeTheWorkDirectory_orBreakTheFilesystem() {
         assertThat(JobProcessor.safeFileName("../../etc/passwd")).isEqualTo("passwd");

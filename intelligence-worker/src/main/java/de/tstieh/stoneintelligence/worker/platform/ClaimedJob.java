@@ -15,4 +15,9 @@ public record ClaimedJob(UUID jobId, String vaultId, String service, String requ
     public boolean isLinking() {
         return "LINKING".equals(kind);
     }
+
+    /** Eine Frage an den Vault (ADR 0017). */
+    public boolean isAsk() {
+        return "ASK".equals(kind);
+    }
 }
