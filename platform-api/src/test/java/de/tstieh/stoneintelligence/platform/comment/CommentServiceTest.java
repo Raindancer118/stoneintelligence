@@ -155,6 +155,14 @@ class CommentServiceTest {
     }
 
     @Test
+    void should_notCommentOnEncryptedNotes_becauseTheQuoteWouldLeakThePlaintext() {
+        var secret = notes.create(vaultId, "Geheim.md", NoteLevel.of(NoteLevel.E2EE), "anna");
+
+        assertThatThrownBy(() -> service.startThread(vaultId, secret.id(), "anna", "x", new Anchor("Klartext", "", "")))
+            .isInstanceOf(CommentRejectedException.class).hasMessageContaining("Verschlüsselte");
+    }
+
+    @Test
     void should_notifyAndMailAMentionedReader() {
         service.startThread(vaultId, note.id(), "anna", "Hallo " + mention("Ben Berg", "ben") + ", schau mal", null);
 

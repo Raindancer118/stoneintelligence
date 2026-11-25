@@ -92,6 +92,9 @@ public class CommentService {
         if (note.isFile()) {
             throw new CommentRejectedException("Dateien lassen sich nicht kommentieren.");
         }
+        if (note.level().isE2ee()) {
+            throw new CommentRejectedException("Verschlüsselte Notizen lassen sich nicht kommentieren.");
+        }
         var text = validBody(body);
         if (anchor != null && !anchor.valid()) {
             throw new CommentRejectedException("Die markierte Textstelle ist leer oder zu lang.");
