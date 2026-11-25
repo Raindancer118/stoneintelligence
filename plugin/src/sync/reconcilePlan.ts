@@ -56,9 +56,16 @@ export type ReconcileAction =
 
 const FORBIDDEN_CHARACTERS = /[\\:*?"<>|\u0000-\u001f\u007f]/;
 
-/** Spiegelt `NoteController.validatePath` - was der Server ablehnen wuerde, wird gar nicht erst versucht. */
+export function isCanvasPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".canvas");
+}
+
+/**
+ * Spiegelt `NoteController.validatePath` - was der Server ablehnen wuerde, wird gar nicht erst versucht.
+ * Ein Canvas (ADR 0018) gilt hier als Notiz; ob der Server ihn kennt, entscheidet der Aufrufer.
+ */
 export function isSyncablePath(path: string): boolean {
-  if (!path.toLowerCase().endsWith(".md") || path.length > 1024 || path !== path.trim()) {
+  if (!(path.toLowerCase().endsWith(".md") || isCanvasPath(path)) || path.length > 1024 || path !== path.trim()) {
     return false;
   }
   if (FORBIDDEN_CHARACTERS.test(path)) {
