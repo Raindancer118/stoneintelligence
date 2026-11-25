@@ -32,6 +32,12 @@ class JdbcCommentRepositoryIT extends CommentRepositoryContractTest {
             new org.postgresql.Driver(), POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
     }
 
+    // Alle Tests teilen sich einen Container; Abfragen ueber Empfaenger/Alter saehen sonst fremde Zeilen.
+    @org.junit.jupiter.api.BeforeEach
+    void cleanTables() {
+        jdbcClient.sql("TRUNCATE platform.comment_notifications, platform.comments, platform.comment_threads CASCADE").update();
+    }
+
     @Override
     protected CommentRepository repository() {
         return new JdbcCommentRepository(jdbcClient);

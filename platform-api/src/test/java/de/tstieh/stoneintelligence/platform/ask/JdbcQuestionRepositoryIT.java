@@ -29,6 +29,12 @@ class JdbcQuestionRepositoryIT extends QuestionRepositoryContractTest {
             new org.postgresql.Driver(), POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
     }
 
+    // Alle Tests teilen sich einen Container; Abfragen ueber Empfaenger/Alter saehen sonst fremde Zeilen.
+    @org.junit.jupiter.api.BeforeEach
+    void cleanTables() {
+        jdbcClient.sql("TRUNCATE platform.vault_questions CASCADE").update();
+    }
+
     @Override
     protected QuestionRepository repository() {
         return new JdbcQuestionRepository(jdbcClient);

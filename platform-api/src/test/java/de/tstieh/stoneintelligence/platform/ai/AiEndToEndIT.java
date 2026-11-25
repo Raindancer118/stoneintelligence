@@ -108,8 +108,8 @@ class AiEndToEndIT {
 
         // Welche Dienste es gibt und was sie duerfen, sieht jede angemeldete Person.
         assertThat(okList(send("GET", "/api/v1/ai/services", tom, null)))
-            .containsExactly(Map.of("id", "gemini", "name", "Gemini", "levels", List.of(1)),
-                Map.of("id", "lokal", "name", "Ollama lokal", "levels", List.of(1, 2)));
+            .containsExactly(Map.of("id", "gemini", "name", "Gemini", "levels", List.of(1), "local", false),
+                Map.of("id", "lokal", "name", "Ollama lokal", "levels", List.of(1, 2), "local", false));
 
         // Nur der Worker kommt an /internal - weder ohne, mit falschem Token noch mit einem Personen-Token.
         assertThat(send("GET", "/internal/ai/services", Map.of(), null).statusCode()).isEqualTo(401);

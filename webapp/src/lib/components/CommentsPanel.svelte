@@ -26,7 +26,7 @@
   onMount(() => { api.listMembers(note.vaultId).then(list => members = list).catch(() => { /* ohne Vorschläge geht Tippen weiter */ }); });
   $effect(() => {
     const id = focusThread;
-    if (id && threads?.some(t => t.id === id)) document.getElementById(`thread-${id}`)?.scrollIntoView({ block: "nearest" });
+    if (id && threads?.some(t => t.id === id)) document.getElementById(`thread-${id}`)?.scrollIntoView?.({ block: "nearest" });
   });
 
   function replace(updated: CommentThreadView) {
