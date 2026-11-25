@@ -52,12 +52,14 @@ interface Flags {
   signedIn: boolean;
   paused: boolean;
   connection: TransportState;
+  /** Warum die Plugin-Richtlinie dieses Gerät sperrt (ADR 0019); `null`: nicht gesperrt. */
+  blocked: string | null;
 }
 
 const MAX_LOG_ENTRIES = 50;
 
 export class SyncActivity {
-  private flags: Flags = { configured: false, signedIn: false, paused: false, connection: "offline" };
+  private flags: Flags = { configured: false, signedIn: false, paused: false, connection: "offline", blocked: null };
   private pass: { done: number; total: number } | null = null;
   private lastSynced: number | null = null;
   private readonly problemsByPath = new Map<string, Problem>();
@@ -89,6 +91,10 @@ export class SyncActivity {
       this.flags = next;
       this.changed();
     }
+  }
+
+  blockedReason(): string | null {
+    return this.flags.blocked;
   }
 
   get connection(): TransportState {

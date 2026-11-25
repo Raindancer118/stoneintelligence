@@ -62,4 +62,12 @@ describe("presentStatus", () => {
     expect(status.label).toBe("Synchron");
     expect(status.tooltip).toContain("vor 2 Min.");
   });
+
+  it("should_showWhyTheDeviceIsBlocked_whenThePluginPolicyRefusesIt", () => {
+    const status = presentStatus(activity((a) => a.update({ blocked: "Nicht erlaubte Plugins sind aktiv: kanban." })), { pending: 0 });
+
+    expect(status.label).toBe("Gesperrt");
+    expect(status.tone).toBe("error");
+    expect(status.tooltip).toContain("kanban");
+  });
 });

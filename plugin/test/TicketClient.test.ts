@@ -26,4 +26,17 @@ describe("TicketClient", () => {
 
     await expect(client.issueTicket("vault-1")).rejects.toThrow("401");
   });
+
+  it("should_sendTheDeviceId_andSurfaceTheServersRefusalWithItsCode", async () => {
+    const fakeFetch = vi.fn().mockResolvedValue({
+      ok: false, status: 403, json: async () => ({ code: "DEVICE_NOT_COMPLIANT", detail: "Nicht erlaubte Plugins sind aktiv: kanban." }),
+    });
+    const client = new TicketClient("https://platform.example", vi.fn().mockResolvedValue("t"), fakeFetch as unknown as typeof fetch);
+
+    await expect(client.issueTicket("vault-1", "dev-12345678")).rejects.toMatchObject({
+      name: "DeviceGateError", code: "DEVICE_NOT_COMPLIANT", message: "Nicht erlaubte Plugins sind aktiv: kanban.",
+    });
+    expect(fakeFetch).toHaveBeenCalledWith(expect.any(String),
+      expect.objectContaining({ headers: { Authorization: "Bearer t", "X-Device-Id": "dev-12345678" } }));
+  });
 });

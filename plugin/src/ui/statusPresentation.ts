@@ -24,6 +24,11 @@ export function presentStatus(
   const lastText = last ? `Zuletzt synchronisiert ${formatRelativeTime(last, now)}.` : "Noch nicht synchronisiert.";
   const pendingText = counts.pending > 0 ? ` · ${counts.pending} ausstehend` : "";
 
+  const blocked = activity.blockedReason();
+  if (blocked) {
+    return { icon: "shield-off", label: "Gesperrt", tone: "error", spinning: false, action: "panel", tooltip: blocked };
+  }
+
   switch (activity.phase()) {
     case "notConfigured":
       return {

@@ -2,8 +2,10 @@ import { ItemView, Notice, Setting, type WorkspaceLeaf } from "obsidian";
 import { explainAccessError, type Permission, permissionsLabel } from "../sync/accessPlan";
 import { canCancel, jobStatusText } from "../sync/aiJobText";
 import { describeEvent, formatDate, retentionLabel } from "../sync/historyText";
+import { deviceLine, deviceStatusText, formatAllowedLines, parseAllowedLines } from "../sync/devicesText";
+import type { PluginPolicy, PolicyMode } from "../sync/pluginPolicy";
 import {
-  type AiJob, type HistoryEvent, HttpError, type LinkingSettings, type NoteApiClient, type PendingInvitation, type VaultGroup, type VaultMember, type VaultRole,
+  type AiJob, type DeviceView, type HistoryEvent, HttpError, type LinkingSettings, type NoteApiClient, type PendingInvitation, type VaultGroup, type VaultMember, type VaultRole,
 } from "../sync/NoteApiClient";
 import { confirmAction } from "./ConfirmModal";
 import { idpLinkText, personLabel } from "./peopleText";
@@ -22,12 +24,13 @@ export interface VaultAdminHost {
   selectiveSyncChanged(enabled: boolean): void;
 }
 
-export type Tab = "members" | "groups" | "roles" | "invitations" | "ai" | "log";
+export type Tab = "members" | "groups" | "roles" | "invitations" | "devices" | "ai" | "log";
 const TABS: { id: Tab; label: string }[] = [
   { id: "members", label: "Mitglieder" },
   { id: "groups", label: "Gruppen" },
   { id: "roles", label: "Rollen" },
   { id: "invitations", label: "Einladungen" },
+  { id: "devices", label: "Geräte und Plugins" },
   { id: "ai", label: "KI" },
   { id: "log", label: "Protokoll" },
 ];
@@ -47,6 +50,9 @@ export class VaultAdminView extends ItemView {
   private invitations: PendingInvitation[] = [];
   private log: HistoryEvent[] = [];
   private jobs: AiJob[] = [];
+  /** `null`: ältere Server ohne Plugin-Steuerung (ADR 0019) - dann entfällt der Reiter. */
+  private policy: PluginPolicy | null = null;
+  private devices: DeviceView[] = [];
   private linking: LinkingSettings | null = null;
   /** `undefined`: ältere Server ohne Aufbewahrungsfrist - dann entfällt die Einstellung. */
   private retention: number | null | undefined;
@@ -112,6 +118,8 @@ export class VaultAdminView extends ItemView {
       this.jobs = await api.listAiJobs(vaultId).catch(() => []);
       // Aeltere Server kennen die Verlinkung noch nicht - dann entfaellt der Abschnitt.
       this.linking = await api.linkingSettings(vaultId).catch(() => null);
+      this.policy = this.manage ? await api.pluginPolicy(vaultId).catch(() => null) : null;
+      this.devices = this.policy ? await api.listDevices(vaultId).catch(() => []) : [];
       this.retention = this.manage ? await api.auditRetention(vaultId).then((loaded) => loaded.days, () => undefined) : undefined;
       this.error = "";
     } catch (error) {
@@ -192,7 +200,7 @@ export class VaultAdminView extends ItemView {
     }
     const tabs = root.createDiv({ cls: "stoneintelligence-admin-tabs" });
     for (const tab of TABS) {
-      if (tab.id === "invitations" && !this.manage) {
+      if ((tab.id === "invitations" && !this.manage) || (tab.id === "devices" && !this.policy)) {
         continue;
       }
       const button = tabs.createEl("button", { text: tab.label, cls: tab.id === this.tab ? "mod-cta" : "" });
@@ -220,6 +228,9 @@ export class VaultAdminView extends ItemView {
         break;
       case "invitations":
         this.renderInvitations(body);
+        break;
+      case "devices":
+        this.renderDevices(body);
         break;
       case "ai":
         this.renderJobs(body);
@@ -463,6 +474,63 @@ export class VaultAdminView extends ItemView {
       .setDesc(linking.lastRunAt ? `Zuletzt: ${formatDate(linking.lastRunAt)}` : "Noch nie gelaufen.")
       .addButton((button) => button.setButtonText("Jetzt verlinken").setDisabled(!this.canWrite || this.busy)
         .onClick(() => void this.run((api, vaultId) => api.runLinking(vaultId), "Die Verlinkung läuft – den Fortschritt siehst du unten.")));
+  }
+
+  private renderDevices(root: HTMLElement): void {
+    const policy = this.policy;
+    if (!policy) {
+      return;
+    }
+    root.createEl("p", {
+      cls: "setting-item-description",
+      text: "Mit „Durchsetzen“ dürfen sich nur noch Geräte verbinden, auf denen ausschließlich die freigegebenen Community-Plugins aktiv sind. "
+        + "Das StoneIntelligence-Plugin ist immer erlaubt. Das ist eine Leitplanke im Plugin; ein hartes Schloss braucht die Geräteverwaltung deiner IT.",
+    });
+    let mode: PolicyMode = policy.mode;
+    let list = formatAllowedLines(policy.allowed);
+    new Setting(root).setName("Plugin-Richtlinie")
+      .addDropdown((dropdown) => dropdown.addOption("OFF", "Aus").addOption("ENFORCE", "Durchsetzen").setValue(mode)
+        .setDisabled(this.busy).onChange((value) => (mode = value as PolicyMode)));
+    new Setting(root).setName("Freigegebene Plugins")
+      .setDesc("Eine Zeile je Plugin: die Kennung aus dessen manifest.json, optional mit @Version, wenn nur diese Version erlaubt sein soll.")
+      .addTextArea((text) => {
+        text.setValue(list).setDisabled(this.busy).onChange((value) => (list = value));
+        text.inputEl.rows = 6;
+      });
+    new Setting(root).addButton((button) => button.setButtonText("Richtlinie speichern").setCta().setDisabled(this.busy).onClick(() => {
+      const parsed = parseAllowedLines(list);
+      if (parsed.error) {
+        this.error = parsed.error;
+        this.render();
+        return;
+      }
+      void this.run((api, vaultId) => api.setPluginPolicy(vaultId, { mode, allowed: parsed.rules }),
+        mode === "ENFORCE" ? "Die Richtlinie wird durchgesetzt." : "Die Richtlinie ist aus.");
+    }));
+
+    root.createEl("h4", { text: "Geräte" });
+    if (this.devices.length === 0) {
+      root.createEl("p", { cls: "setting-item-description", text: "Noch kein Gerät hat sich gemeldet." });
+    }
+    for (const device of this.devices) {
+      const row = new Setting(root).setName(`${device.name} – ${deviceStatusText(device)}`).setDesc(deviceLine(device));
+      if (device.revoked || device.wipePending) {
+        row.addButton((button) => button.setButtonText("Wieder zulassen").setDisabled(this.busy)
+          .onClick(() => void this.run((api, vaultId) => api.reinstateDevice(vaultId, device.deviceId), `„${device.name}“ ist wieder zugelassen.`)));
+        continue;
+      }
+      row.addButton((button) => button.setButtonText("Gerät sperren").setDisabled(this.busy).onClick(async () => {
+        if (await confirmAction(this.app, "Gerät sperren?", `„${device.name}“ von ${device.person} kann danach nicht mehr synchronisieren.`, "Sperren")) {
+          await this.run((api, vaultId) => api.revokeDevice(vaultId, device.deviceId), `„${device.name}“ ist gesperrt.`);
+        }
+      }));
+      row.addButton((button) => button.setButtonText("Daten auf dem Gerät löschen").setWarning().setDisabled(this.busy).onClick(async () => {
+        if (await confirmAction(this.app, "Daten auf dem Gerät löschen?",
+          `Beim nächsten Verbinden löscht „${device.name}“ von ${device.person} seine lokale Kopie dieses Vaults endgültig und meldet sich ab. Das Gerät ist danach gesperrt.`, "Löschen")) {
+          await this.run((api, vaultId) => api.wipeDevice(vaultId, device.deviceId), `„${device.name}“ löscht die Daten beim nächsten Verbinden.`);
+        }
+      }));
+    }
   }
 
   private renderJobs(root: HTMLElement): void {

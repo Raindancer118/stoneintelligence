@@ -1,6 +1,6 @@
 import { Compartment } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import { FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, setIcon, TAbstractFile, TFile, TFolder } from "obsidian";
+import { apiVersion, FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, setIcon, TAbstractFile, TFile, TFolder } from "obsidian";
 import * as Y from "yjs";
 import {
   type FolderOp, isExcluded, isExcludedFolder, isNoteOp, migrateSettings, queueDelete, queueFolderOp, queueRename,
@@ -38,6 +38,10 @@ import { parseCanvas, serializeCanvas } from "./sync/canvasDoc";
 import { SyncActivity } from "./sync/SyncActivity";
 import { SyncClient } from "./sync/SyncClient";
 import { TicketClient } from "./sync/TicketClient";
+import { DeviceGateError } from "./sync/deviceGate";
+import { type DeviceReportResult, prepareConnection } from "./sync/deviceSession";
+import { PluginGovernor, type ObsidianPlugins } from "./sync/PluginGovernor";
+import { parsePolicy, type PluginPolicy } from "./sync/pluginPolicy";
 import { CONNECT_ACTION, type ConnectLink, parseConnectLink } from "./sync/connectLink";
 import { desktopVaults } from "./sync/desktopVaults";
 import { findLinkedVault, newVaultFiles, suggestVaultPath, vaultPathForPickedFolder } from "./sync/localVaultPlan";
@@ -78,6 +82,10 @@ import { debugLog } from "./debugLog";
  * Notiz einzeln gejoint.
  */
 const RECONCILE_INTERVAL_MS = 30_000;
+/** Plugin-Richtlinie durchsetzen (ADR 0019): jede Minute; gemeldet wird alle zehn Minuten. */
+const GOVERNANCE_INTERVAL_MS = 60_000;
+const GOVERNANCE_REPORT_EVERY = 10;
+const GATE_NOTICE_INTERVAL_MS = 5 * 60_000;
 /** Erwähnungen (ADR 0016): so oft fragt das Plugin nach neuen Hinweisen. */
 const MENTION_POLL_MS = 60_000;
 /** So viele neue Erwähnungen zeigt das Plugin einzeln, mehr fasst es zusammen. */
@@ -280,6 +288,13 @@ export default class StoneIntelligencePlugin extends Plugin {
   /** Darf diese Person im aktuellen Vault Mitglieder verwalten (MANAGE)? Steuert, wo "Einladen" erscheint. */
   private manageAllowed = false;
   private readonly decisionsAsked = new Set<string>();
+  /** Setzt die Plugin-Richtlinie des Vaults im Plugin durch (ADR 0019). */
+  private readonly governor = new PluginGovernor(
+    () => (this.app as unknown as { plugins?: ObsidianPlugins }).plugins,
+    (message) => new Notice(message, 12_000),
+    (message, error) => debugLog(message, error),
+  );
+  private gateNoticeAt = 0;
 
   private statusBarEl!: HTMLElement;
   private presenceBarEl!: HTMLElement;
@@ -290,6 +305,9 @@ export default class StoneIntelligencePlugin extends Plugin {
   async onload(): Promise<void> {
     this.settings = migrateSettings(await this.loadData());
     this.applyPropertiesDefault();
+    if (!this.settings.deviceId) {
+      this.settings.deviceId = crypto.randomUUID();
+    }
     await this.saveData(this.settings);
     this.stateStore = new NoteStateStore(this.app.vault.adapter, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/sync-state`);
     this.rebuildClients();
@@ -376,10 +394,14 @@ export default class StoneIntelligencePlugin extends Plugin {
 
     this.registerInterval(window.setInterval(() => this.journal.evictOlderThan(5 * 60_000), 60_000));
     this.registerInterval(window.setInterval(() => this.requestPass(), RECONCILE_INTERVAL_MS));
+    this.registerInterval(window.setInterval(() => void this.governanceTick(), GOVERNANCE_INTERVAL_MS));
     // Das Betriebssystem meldet, dass das Netz wieder da ist - nicht erst den Backoff abwarten.
     this.registerDomEvent(window, "online", () => this.transport?.reconnectNow());
 
     this.app.workspace.onLayoutReady(() => {
+      // Zuerst aus dem Gedächtnis durchsetzen: auch ohne Netz darf kein verbotenes Plugin laufen (ADR 0019).
+      this.governor.setPolicy(this.settings.pluginPolicies[this.settings.vaultId] ?? null);
+      void this.governor.enforce();
       if (this.isLoggedIn() && !this.settings.displayName) {
         void this.refreshDisplayName();
       }
@@ -389,6 +411,7 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   onunload(): void {
+    this.governor.dispose();
     window.clearTimeout(this.bindingRetryTimer ?? undefined);
     for (const timer of [...this.localChangeTimers.values(), ...this.remoteChangeTimers.values(), ...this.fileChangeTimers.values()]) {
       window.clearTimeout(timer);
@@ -1524,9 +1547,133 @@ export default class StoneIntelligencePlugin extends Plugin {
   }
 
   private async issueFreshWsUrl(): Promise<string> {
-    const ticketClient = new TicketClient(this.settings.platformApiUrl.replace(/\/+$/, ""), this.getAccessToken);
-    const ticket = await ticketClient.issueTicket(this.settings.vaultId);
-    return `${wsUrlFor(this.settings)}/ws/sync?ticket=${encodeURIComponent(ticket.token)}`;
+    try {
+      await this.prepareDevice();
+      const ticketClient = new TicketClient(this.settings.platformApiUrl.replace(/\/+$/, ""), this.getAccessToken);
+      const ticket = await ticketClient.issueTicket(this.settings.vaultId, this.settings.deviceId);
+      this.setDeviceBlock(null);
+      return `${wsUrlFor(this.settings)}/ws/sync?ticket=${encodeURIComponent(ticket.token)}`;
+    } catch (error) {
+      if (error instanceof DeviceGateError) {
+        this.setDeviceBlock(error);
+      }
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Plugin-Richtlinie und Geräteregister (ADR 0019)
+
+  /** Vor jedem Verbindungsaufbau: melden, Richtlinie durchsetzen, ggf. löschen - sonst gibt es kein Ticket. */
+  private async prepareDevice(): Promise<void> {
+    const vaultId = this.settings.vaultId;
+    await prepareConnection({
+      report: (wiped) => this.reportDevice(vaultId, wiped),
+      rememberPolicy: (policy) => this.rememberPolicy(vaultId, policy),
+      enforce: () => this.governor.enforce(),
+      wipe: () => this.wipeLocalCopy(),
+    });
+  }
+
+  private reportDevice(vaultId: string, wiped: boolean): Promise<DeviceReportResult> {
+    return this.noteApiClient.reportDevice(vaultId, this.settings.deviceId, {
+      name: this.deviceName(),
+      platform: Platform.isMacOS ? "macos" : Platform.isWin ? "windows" : Platform.isLinux ? "linux" : Platform.isIosApp ? "ios" : Platform.isAndroidApp ? "android" : "unbekannt",
+      obsidianVersion: apiVersion,
+      pluginVersion: this.manifest.version,
+      restrictedMode: this.governor.restrictedMode(),
+      plugins: this.governor.enabled(),
+      wiped,
+    });
+  }
+
+  private deviceName(): string {
+    const os = Platform.isDesktopApp ? (window as unknown as { require?: (id: string) => { hostname?: () => string } }).require?.("os") : undefined;
+    return os?.hostname?.() || (Platform.isMobile ? "Mobilgerät" : "Obsidian");
+  }
+
+  private rememberPolicy(vaultId: string, policy: PluginPolicy): void {
+    const known = this.settings.pluginPolicies[vaultId];
+    if (JSON.stringify(known) !== JSON.stringify(policy)) {
+      this.settings.pluginPolicies[vaultId] = policy;
+      this.requestSettingsSave();
+    }
+    if (vaultId === this.settings.vaultId) {
+      this.governor.setPolicy(parsePolicy(policy));
+    }
+  }
+
+  /** Statusleiste und einmalige Meldung, wenn der Server dem Gerät die Synchronisation verweigert. */
+  private setDeviceBlock(error: DeviceGateError | null): void {
+    this.activity.update({ blocked: error?.message ?? null });
+    if (error && Date.now() - this.gateNoticeAt > GATE_NOTICE_INTERVAL_MS) {
+      this.gateNoticeAt = Date.now();
+      new Notice(`StoneIntelligence: ${error.message}`, 15_000);
+    }
+    this.updateStatusBar();
+  }
+
+  /** Jede Minute: Richtlinie durchsetzen; alle zehn Minuten melden, solange verbunden. */
+  private governanceCount = 0;
+  private async governanceTick(): Promise<void> {
+    await this.governor.enforce();
+    if (++this.governanceCount % GOVERNANCE_REPORT_EVERY === 0 && this.isReady() && this.activity.connection === "online") {
+      try {
+        await this.prepareDevice();
+      } catch (error) {
+        debugLog("StoneIntelligence: Geräte-Meldung fehlgeschlagen", error);
+        this.transport?.reconnectNow();
+      }
+    }
+  }
+
+  /**
+   * Löschauftrag der Verwaltung: die lokale Kopie des Vaults endgültig löschen (nicht in den Papierkorb, nichts davon
+   * an den Server melden), den Sync-Stand vergessen und abmelden.
+   */
+  private async wipeLocalCopy(): Promise<void> {
+    const vaultId = this.settings.vaultId;
+    if (!vaultId) {
+      return;
+    }
+    const state = this.vaultState();
+    const noteIds = Object.values(state.noteIds);
+    const folders = [...(state.knownFolders ?? [])].sort((a, b) => b.length - a.length);
+    const paths = [...Object.keys(state.noteIds), ...Object.keys(state.fileIds ?? {})];
+    this.stopSyncEngine();
+    for (const path of paths) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      this.detachLive(path);
+      if (file instanceof TFile) {
+        this.serverDrivenPaths.add(path);
+        try {
+          await this.app.vault.delete(file, true);
+        } catch (error) {
+          debugLog(`StoneIntelligence: ${path} ließ sich nicht löschen`, error);
+        } finally {
+          this.serverDrivenPaths.delete(path);
+        }
+      }
+    }
+    for (const path of folders) {
+      const folder = this.app.vault.getAbstractFileByPath(path);
+      if (folder instanceof TFolder && folder.children.length === 0) {
+        this.serverDrivenPaths.add(path);
+        try {
+          await this.app.vault.delete(folder, true);
+        } catch (error) {
+          debugLog(`StoneIntelligence: Ordner ${path} ließ sich nicht löschen`, error);
+        } finally {
+          this.serverDrivenPaths.delete(path);
+        }
+      }
+    }
+    await Promise.all(noteIds.map((id) => this.stateStore.remove(vaultId, id)));
+    this.settings.vaults[vaultId] = emptyVaultState();
+    this.settings.tokens = null;
+    this.settings.displayName = null;
+    await this.saveSettings();
+    new Notice("StoneIntelligence: Die Verwaltung hat dieses Gerät gesperrt, die Daten des Vaults wurden hier gelöscht.", 0);
   }
 
   // ---------------------------------------------------------------------------------------------
