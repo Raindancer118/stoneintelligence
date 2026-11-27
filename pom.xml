@@ -38,7 +38,7 @@
     <pdfbox.version>3.0.8</pdfbox.version>
     <!-- Lokale Embeddings im Worker (ADR 0012): Modell per ONNX Runtime, Tokenizer von Hugging Face. -->
     <onnxruntime.version>1.30.0</onnxruntime.version>
-    <djl-tokenizers.version>0.38.0</djl-tokenizers.version>
+    <djl-tokenizers.version>0.40.0</djl-tokenizers.version>
   </properties>
 
   <dependencyManagement>
