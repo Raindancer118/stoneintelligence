@@ -2,4 +2,5 @@ node_modules
 dist
 test-results
 playwright-report
-.env*
+# .env bleibt drin: Vite liest daraus beim Build die öffentlichen VITE_-Werte, ins Image kommt nur dist/.
+.env.*
